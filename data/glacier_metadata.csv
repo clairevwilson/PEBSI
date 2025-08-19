@@ -1,0 +1,15 @@
+﻿RGI_ID,name,timezone,AWS_fn,start,end
+00.00000,test,0,data/sample_aws.csv,,
+01.00570,gulkana,-8,gulkana2024.csv,4/20/2024,8/20/2024
+01.01104,lemoncreek,-8,LemonCreek1285_hourly.csv,5/5/2008,9/13/2008
+01.00709,mendenhall,-8,,5/11/2016,7/18/2016
+01.01390,taku,-8,,,
+01.00704,gilkey,-8,,,
+01.16195,south,-8,south/south2280_2008.csv,,
+08.00213,storglaciaren,,Storglaciaren/SITES_MET_TRS_SGL_dates_15MIN.csv,,
+11.03674,saintsorlin,,saintsorlin/saintsorlin_hourly.csv,,
+16.02444,artesonraju,-6,artesonraju/Artesonraju_hourly.csv,,
+16.01345,cayambe,-6,cayambe/cayambe.csv,,
+02.12001,kwadacha,-5,kwadacha/kwadacha.csv,,
+01.16201,kaskawulsh,-7,kaskawulsh/kaskawulsh.csv,,
+01.16545,naluday,-7,naluday/naluday2021.csv,,

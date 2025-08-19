@@ -1,0 +1,3 @@
+glacier	station	elevation	latitude	longitude	type
+test		1500	63.5	-145.625	test
+gulkana		1682	63.285514	-145.410336	on-ice
