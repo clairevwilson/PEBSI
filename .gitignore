@@ -1,7 +1,7 @@
 # Local (MAKE EDITS HERE)
 shading/plots
 biosnicar-py/
-# data/by_glacier
+data/by_glacier
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

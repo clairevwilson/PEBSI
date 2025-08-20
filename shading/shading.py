@@ -65,8 +65,8 @@ dem_fp = f'../../Data/dems/{glacier_name}_dem.tif'   # DEM containing glacier + 
 # RGI for glacier shapefile
 rgi_fp = f'../../RGI/rgi60/'
 # output filepath
-data_fp = os.getcwd().split('PyGEM-EB')[0]
-fp_base = data_fp + 'PyGEM-EB/shading/'
+data_fp = os.getcwd().split('PEBSI')[0]
+fp_base = data_fp + 'PEBSI/shading/'
 fp_out = fp_base + f'../data/by_glacier/'
 # optional: site constants file
 site_fp = fp_out + 'GLACIER/site_constants.csv'

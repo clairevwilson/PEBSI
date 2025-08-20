@@ -218,7 +218,7 @@ class Climate():
         if 'bc' in var or 'oc' in var or 'dust' in var:
             if prms.reanalysis == 'ERA5-hourly':
                 lat_vn,lon_vn = ['lat','lon']
-        if '__iter__' in ds.lat.values:
+        if ds.coords[lat_vn].values.size > 1:
             ds = ds.sel({lat_vn:self.lat,lon_vn:self.lon}, method='nearest')[vn]
         else:
             ds = ds[vn]
