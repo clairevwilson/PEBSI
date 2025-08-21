@@ -432,6 +432,7 @@ class Climate():
         """
         # open .csv with quantile mapping
         bias_fp = prms.bias_fp.replace('METHOD','quantile_mapping').replace('VAR',var)
+        bias_fp = bias_fp.replace('GLACIER', self.args.glac_name)
         assert os.path.exists(bias_fp), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fp)
         
@@ -475,6 +476,9 @@ class Climate():
         flat = str(int(np.floor(self.lat/10)*10))
         flon = str(int(np.floor(self.lon/10)*10))
         tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
+
+        print('firn branch always uses long dataset')
+        tag = self.args.glac_name + '_alltime'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp

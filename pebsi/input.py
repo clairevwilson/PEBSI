@@ -7,7 +7,7 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '00.00000'    # RGI glacier ID
+glac_no = '01.09162'    # RGI glacier ID
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
@@ -33,7 +33,7 @@ initial_LAP_fp = 'data/sample_initial_laps.csv'             # Initial LAP conten
 dem_fp = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fp = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-bias_fp = 'data/bias_adjustment/METHOD_VAR.csv'             # Generalized bias adjustment filepath
+bias_fp = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 climate_fp = '../climate_data/'                             # Climate data filepath
 # OUTPUT
 output_filepath = '../Output/'                              # Output filepath
