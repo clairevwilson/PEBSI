@@ -26,16 +26,16 @@ import pebsi.massbalance as mb
 from objectives import *
 
 # OPTIONS
-repeat_run = True   # True if restarting an already begun run
+repeat_run = False   # True if restarting an already begun run
 # Define sets of parameters
 # params = {'Boone_c5':[0.018,0.02,0.022,0.024,0.026,0.028,0.03], # 
 #           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5]} # 
-params = {'Boone_c5':[0.01, 0.012, 0.014,0.016,0.018,0.02,0.022,0.024], # 
-          'kp':[0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]} # 
+params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],
+          'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
 
 # Read command line args
 parser = sim.get_args(parse=False)
-parser.add_argument('-run_type', default='long', type=str)
 args = parser.parse_args()
 n_processes = args.n_simultaneous_processes
 
@@ -56,6 +56,9 @@ else:
 # Create output directory
 if 'trace' in eb_prms.machine:
     eb_prms.output_filepath = '/trace/group/rounce/cvwilson/Output/'
+# Store all variables
+args.store_data = True
+eb_prms.store_vars = ['MB','layers','temp','EB']
 
 if repeat_run:
     date = '08_01' if args.run_type == 'long' else '08_02'
@@ -73,20 +76,6 @@ else:
         out_fp = f'{date}_{args.site}_{n_today}/'
     os.mkdir(eb_prms.output_filepath + out_fp)
 
-# Force some args
-args.store_data = True     # Ensures output is stored
-if args.run_type == '2024': # Short AWS run
-    args.use_AWS = True
-    eb_prms.AWS_fn = '../climate_data/AWS/Preprocessed/gulkana2024.csv'
-    eb_prms.store_vars = ['MB','EB','layers','climate']
-    args.startdate = pd.to_datetime('2024-04-18 00:00:00')
-    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
-else: # Long MERRA-2 run
-    args.use_AWS = False
-    eb_prms.store_vars = ['MB','layers','climate','EB']
-    args.startdate = pd.to_datetime('2000-04-15 00:00:00')
-    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
-
 # Transform params to strings for comparison
 for key in params:
     for v,value in enumerate(params[key]):
@@ -101,21 +90,25 @@ set_no = 0  # Index for the parallel process
 all_runs = []
 missing_fn = eb_prms.output_filepath + out_fp + 'missing.txt'
 
-# Special dates for low sites
-if args.run_type == 'long':
-    if args.site == 'A':
-        args.enddate = pd.to_datetime('2015-05-20 00:00:00')
-    elif args.site == 'AU':
-        args.startdate = pd.to_datetime('2012-04-20 00:00:00')
+# Dates depend on the site
+if args.site == 'Z' and args.glac_no == '01.00570':
+    args.startdate = '2021-08-01'
+    args.enddate = '2025-05-01'
+if args.site == 'T' and args.glac_no == '01.00570':
+    args.startdate = '2012-08-01'
+    args.enddate = '2025-05-01'
+if args.site == 'EC' and args.glac_no == '01.09162':
+    args.startdate = '2015-08-01'
+    args.enddate = '2025-05-01'
 
 # Loop through parameters
 for kp in params['kp']:
-    for c5 in params['Boone_c5']:
+    for lr in params['lapse_rate']:
         # Copy over args
         args_run = copy.deepcopy(args)
 
         # Set parameters
-        args_run.Boone_c5 = c5
+        args_run.lapse_rate = lr
         args_run.kp = kp
 
         # Get the climate
@@ -123,10 +116,10 @@ for kp in params['kp']:
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
-        all_runs.append((args.site, c5, kp, args_run.out))
+        all_runs.append((args.site, lr, kp, args_run.out))
 
         # Specify attributes for output file
-        store_attrs = {'c5':c5,'kp':kp,'site':args.site}
+        store_attrs = {'lapse_rate':lr,'kp':kp}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -175,7 +168,7 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with lapserate =',args.lapse_rate,'kp =',args.kp,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(eb_prms.output_filepath + args.out + '0.nc')
     return

@@ -1068,7 +1068,6 @@ class massBalance():
         # get classes
         layers = self.layers
         surface = self.surface
-        enbal = self.enbal
 
         # CONSTANTS
         LV_SUB = prms.Lv_sub
@@ -1077,10 +1076,13 @@ class massBalance():
         # get initial mass for conservation check
         initial_mass = np.sum(layers.lice + layers.lwater)
 
+        # get latent heat from enbal
+        latent = self.enbal.lat
+
         # get mass fluxes from latent heat
         if surface.stemp < 0.:
             # SUBLIMATION / DEPOSITION
-            dm = enbal.lat*self.dt/(LV_SUB) # kg m-2
+            dm = latent*self.dt/(LV_SUB) # kg m-2
             # yes solid-vapor fluxes
             sublimation = -1*min(dm,0)
             deposition = max(dm,0)
@@ -1090,18 +1092,35 @@ class massBalance():
 
             # check if dm causes negativity
             if layers.lice[0] + dm < 0: 
-                # remove mass from next layer
-                remaining_dm = -(np.abs(dm) - layers.lice)
-                layers.lice[1] += remaining_dm
-                layers.lheight[1] += remaining_dm / layers.ldensity[1]
-                layers.lice[0] = 0
-                layers.remove_layer(0)
+                layer = 0
+                while np.abs(dm) > 0 and layer < layers.nlayers:
+                    # calculate the maximum mass loss possible for the current layer
+                    change = min(np.abs(dm), layers.lice[layer])
+                    layers.lice[layer] -= change
+                    layers.lheight[layer] -= change / layers.ldensity[layer]
+                    
+                    # reduce the absolute magnitude of dm
+                    if dm < 0:
+                        dm += change  # increase dm towards 0 when negative
+                    else:
+                        dm -= change  # decrease dm towards 0 when positive
+
+                    # remove or advance layer
+                    if layers.lice[layer] == 0:
+                        # layer fully sublimated: move liquid water to next layer and remove
+                        if layers.lwater[layer] > 0:
+                            layers.lwater[layer+1] += layers.lwater[layer]
+                        layers.remove_layer(0)
+                    else:
+                        # no layer was removed: advance layer
+                        layer += 1
+                
             else:
-                # add mass to layer if it doesn't cause negativity
+                # add water to layer if it doesn't cause negativity
                 layers.lice[0] += dm
         else:
             # EVAPORATION / CONDENSATION
-            dm = enbal.lat*self.dt/(LV_VAP) # kg m-2
+            dm = latent*self.dt/(LV_VAP) # kg m-2
             # no solid-vapor fluxes
             sublimation = 0
             deposition = 0

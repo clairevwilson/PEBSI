@@ -7,7 +7,7 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '01.09162'    # RGI glacier ID
+glac_no = '01.00570'    # RGI glacier ID WOLV: 09162
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
@@ -45,7 +45,7 @@ startdate = pd.to_datetime('2024-04-20 00:00:00')
 enddate = pd.to_datetime('2025-04-20 00:00:00')
 
 # WEATHER STATION
-use_AWS_site = False                        # True to override site (lat, lon, etc.) to the AWS site
+use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
@@ -111,7 +111,7 @@ sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
 precgrad = 0.000130         # Precipitation gradient with elevation [% m-1]
-lapserate = -0.0065         # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [C m-1]
+lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
