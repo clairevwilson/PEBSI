@@ -208,12 +208,10 @@ def plot_quantile(X_train, y_train, y_all, timed,
     else:
         return ax1,ax2
     
-def select_random_48hr_window(df):
+def select_random_48hr_window(df, window_size=48):
     # Ensure timestamps are sorted
     df = df.sort_index()
     df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq='h'))
-
-    window_size = 48
 
     # Slide through the DataFrame
     for i in range(len(df) - window_size + 1):
