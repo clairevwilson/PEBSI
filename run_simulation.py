@@ -83,6 +83,8 @@ def get_args(parse=True):
                         help='Parameter for Boone densification scheme')
     parser.add_argument('-a_ice',default=prms.albedo_ice,action='store',type=float,
                         help='Bare ice albedo')
+    parser.add_argument('-lapse_rate',default=prms.lapserate,action='store',type=float,
+                        help='Temperature lapse rate [K km-1]')
     
     # FILEPATHS
     parser.add_argument('-initial_temp_fp',default=prms.initial_temp_fp,type=str,

@@ -7,13 +7,14 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '01.09162'    # RGI glacier ID
+glac_no = '01.00570'    # RGI glacier ID     WOLV: 09162    KAH: 22193
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
 
 # ========== DIRECTORIES AND FILEPATHS ========== 
 machine = socket.gethostname()
+# All filepaths are relative to PEBSI/
 # GLACIER
 metadata_fp = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 site_fp = 'data/by_glacier/GLACIER/site_constants.csv'      # Generalized glacier site info filepath
@@ -45,7 +46,7 @@ startdate = pd.to_datetime('2024-04-20 00:00:00')
 enddate = pd.to_datetime('2025-04-20 00:00:00')
 
 # WEATHER STATION
-use_AWS_site = False                        # True to override site (lat, lon, etc.) to the AWS site
+use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
@@ -67,7 +68,7 @@ initial_ice_depth = 200             # default amount of initial ice [m]
 # OUTPUT
 store_vars = ['MB','EB','temp','layers']  # Variables to store of the possible set: ['MB','EB','temp','layers','SW]
 store_bands = False         # Store spectral albedo .csv
-store_climate = False       # Store climate dataset .nc
+store_climate = True        # Store climate dataset .nc
 
 # METHODS
 method_turbulent = 'BulkRichardson'     # 'MO-similarity' or 'BulkRichardson' 
@@ -111,7 +112,7 @@ sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
 precgrad = 0.000130         # Precipitation gradient with elevation [% m-1]
-lapserate = -0.0065         # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [C m-1]
+lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]

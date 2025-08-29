@@ -255,7 +255,7 @@ class Climate():
         (temperature, precip, surface pressure).
         """
         # CONSTANTS
-        LAPSE_RATE = prms.lapserate
+        LAPSE_RATE = float(self.args.lapse_rate)
         PREC_GRAD = prms.precgrad
         PREC_FACTOR = float(self.args.kp)
         GRAVITY = prms.gravity
@@ -264,7 +264,7 @@ class Climate():
 
         # TEMPERATURE: correct according to lapserate
         temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
-        new_temp = self.cds.temp.values + LAPSE_RATE*(self.elev - temp_elev)
+        new_temp = self.cds.temp.values + LAPSE_RATE*(self.elev - temp_elev)/1000
             
         # PRECIP: correct according to precipitation gradient
         tp_elev = self.median_elev
@@ -477,7 +477,7 @@ class Climate():
         flon = str(int(np.floor(self.lon/10)*10))
         tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
 
-        print('firn branch always uses long dataset')
+        
         tag = self.args.glac_name + '_alltime'
 
         # update filenames for MERRA-2 (need grid lat/lon)

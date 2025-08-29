@@ -158,7 +158,7 @@ class energyBalance():
         # TURBULENT FLUXES (Qs and Ql)
         Qs, Ql = self.get_turbulent(surftemp)
         self.sens = Qs[0] if '__iter__' in dir(Qs) else Qs
-        self.lat = Ql[0] if '__iter__' in dir(Qs) else Ql
+        self.lat = Ql[0] if '__iter__' in dir(Ql) else Ql
 
         # OUTPUTS
         Qm = NR + Qp + Qs + Ql + Qg

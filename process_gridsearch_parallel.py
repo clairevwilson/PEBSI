@@ -15,14 +15,16 @@ parser.add_argument('-redo',default=True,type=bool)
 args = parser.parse_args()
 
 n_processes = args.n_processes
+args.redo = True
 
 def process_run(runs):
     for run in runs:
         run_type,fn = run
         gsproc.process_run(run_type, fn)
 
-for run_type in ['long','2024']:
-    for site in gsproc.sitedict[run_type]:
+# for run_type in ['long','2024']:
+for run_type in ['firn']:
+    for site in ['EC']: #gsproc.sitedict[run_type]:
         start_site = time.time()
         date = gsproc.run_info[run_type]['date']
         idx = gsproc.run_info[run_type]['idx']
@@ -50,7 +52,7 @@ for run_type in ['long','2024']:
 
         for i in range(n_runs):
             fn = fp + f'grid_{date}_set{i}_run0_0.nc'
-            packed_vars[set_no].append((run_type,fn))
+            packed_vars[set_no].append((run_type, fn))
 
             # Check if moving to the next set of runs
             n_runs_set = n_runs_per_process + (1 if set_no < n_process_with_extra else 0)
