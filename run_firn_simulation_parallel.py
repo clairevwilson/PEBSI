@@ -10,7 +10,7 @@ import pebsi.massbalance as mb
 import pebsi.input as prms
 
 # User info
-sites = ['D','T','Z'] # Sites to run in parallel
+sites = ['EC','T','Z'] # Sites to run in parallel
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 n_runs_ahead = 0    # Step if you're going to run this script more than once
 
@@ -18,8 +18,6 @@ n_runs_ahead = 0    # Step if you're going to run this script more than once
 args = sim.get_args()
 args.startdate = '1980-04-15 00:00'
 args.enddate = '2025-04-20 12:00'
-args.kp = 2.75
-args.Boone_c5 = 0.018
 args.store_data = True              # Ensures output is stored
 args.glac_no = '01.00570'
 args.use_AWS = False
@@ -39,11 +37,26 @@ def pack_vars():
         args_run = copy.deepcopy(args)
         args_run.site = site
 
+        # Parse different glaciers
+        if site == 'EC':
+            # Wolverine
+            args_run.glac_no = '01.09162'
+            args_run.kp = 1.75
+            args_run.lapse_rate = -7
+            glacier = 'Wolverine'
+        else:
+            # Gulkana
+            args_run.glac_no = '01.00570'
+            args_run.kp = 3
+            args_run.lapse_rate = -7
+            glacier = 'Gulkana'
+
         # Output name
-        args_run.out = f'Gulkana_{run_date}_long{site}_'
+        args_run.out = f'{glacier}_{run_date}_long{site}_'
 
         # Store model parameters
-        store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5)}
+        store_attrs = {'kp':str(args_run.kp), 'lapse_rate':str(args_run.lapse_rate),
+                       'c5':str(args_run.Boone_c5)}
 
         # Set task ID for SNICAR input file
         args_run.task_id = run_no + n_runs_ahead*n_processes

@@ -13,13 +13,13 @@ mpl.rcParams['font.family'] = 'Liberation Sans'
 machine = socket.gethostname()
 if 'trace' in machine:
     base_fp = '/trace/group/rounce/cvwilson/Output/'
-    pygem_fp = '/trace/home/cvwilson/research/PyGEM-EB/'
+    pygem_fp = '/trace/home/cvwilson/research/PEBSI/'
 elif os.path.exists('/mnt/d/grid_search'):
     base_fp = '/mnt/d/grid_search/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
+    pygem_fp = '/home/claire/research/PEBSI/'
 else:
     base_fp = '/home/claire/research/Output/EB/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
+    pygem_fp = '/home/claire/research/PEBSI/'
 sys.path.append(pygem_fp)
 from objectives import *
 from pebsi.processing.plotting_fxns import *
@@ -188,14 +188,16 @@ def plot_pareto_PMF(error_list, pareto_fronts, result_dict,
         error_dict[error] = []
     
     # Store c5 and kp of pareto fronts
-    params_list = {'c5':[],'kp':[]}
-    for (c5,kp) in pareto_fronts:
-        c5 = str(c5)
-        kp = str(kp).replace('.0','')
-        params_list['c5'].append(c5)
-        params_list['kp'].append(kp)
+    parameter_1 = list(gsproc.params.keys())[0]
+    parameter_2 = list(gsproc.params.keys())[0]
+    params_list = {parameter_1:[],parameter_1:[]}
+    for (p1,p2) in pareto_fronts:
+        p1 = str(p1)
+        p2 = str(p2).replace('.0','')
+        params_list[parameter_1].append(p1)
+        params_list[parameter_2].append(p2)
         for error in error_dict:
-            error_dict[error].append(result_dict[c5][kp][site][error+'_'+metric])
+            error_dict[error].append(result_dict[p1][p2][site][error+'_'+metric])
     
     # Create axes
     n_plots = len(error_list)
@@ -1913,6 +1915,7 @@ def find_precip_gradient():
                 plt.plot(year_elev, year_elev * gradient+b, color=colors(norm(year)))
     
     gradient ,b = np.polyfit(all_elev, all_bw, 1)
-    print(gradient)
+    plt.plot(all_elev, np.array(all_elev) * gradient+b, color='red')
     
-    return np.nanmean(grads)
+    return gradient
+    # return np.nanmean(grads)

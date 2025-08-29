@@ -40,11 +40,10 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
     The stake data comes directly from the USGS Data
     Release (Input_Glaciological_Data.csv).
     """
-    global USGS_fp
     # Determine the site
     site = ds.attrs['site']
-    glacier = ds.attrs['glacier']
-    USGS_fp = USGS_fp.replace('GLACIER',glacier.capitalize())
+    glacier = ds.attrs['glacier'].capitalize()
+    USGS_fp = f'../MB_data/{glacier}/Input_{glacier}_Glaciological_Data.csv'
 
     # Load dataset
     df_mb = pd.read_csv(USGS_fp)
@@ -152,11 +151,10 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,label=None,plot_var='mb',color='
     """
     plot_var : 'mb' (default), 'bw','bs','ba'
     """
-    global USGS_fp
     # Determine the site
     site = ds.attrs['site']
-    glacier = ds.attrs['glacier']
-    USGS_fp = USGS_fp.replace('GLACIER',glacier.capitalize())
+    glacier = ds.attrs['glacier'].capitalize()
+    USGS_fp = f'../MB_data/{glacier}/Input_{glacier}_Glaciological_Data.csv'
 
     # Make or get plot ax
     if plot_ax:
@@ -204,8 +202,11 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,label=None,plot_var='mb',color='
 
         # Sum model mass balance
         if summer_dates[-1] not in ds.time.values:
+            years_summer = years[:-1]
             summer_dates = pd.date_range(summer_dates[0], ds.time.values[-1],freq='h')
             annual_dates = pd.date_range(annual_dates[0], ds.time.values[-1],freq='h')
+        else:
+            years_summer = years
         wds = ds.sel(time=winter_dates).sum()
         sds = ds.sel(time=summer_dates).sum()
         ads = ds.sel(time=annual_dates).sum()
@@ -243,19 +244,22 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,label=None,plot_var='mb',color='
     elif plot_var == 'bs':
         csummer = color
 
+    if len(years_summer) != len(years):
+        summer_data = summer_data[:-1]
+        mb_dict['bs'] = np.array(mb_dict['bs'])[:-1]
     if plot_var in ['mb','bw']:
         ax.plot(years,mb_dict['bw'],label='Winter',color=cwinter,linewidth=2)
         ax.plot(years,winter_data,'o--',color=cwinter,)
     if plot_var in ['mb','bs']:
-        ax.plot(years,mb_dict['bs'],label='Summer',color=csummer,linewidth=2)
-        ax.plot(years,summer_data,'o--',color=csummer)
+        ax.plot(years_summer,mb_dict['bs'],label='Summer',color=csummer,linewidth=2)
+        ax.plot(years_summer,summer_data,'o--',color=csummer)
     if plot_var in ['ba']:
         ax.plot(years,mb_dict['ba'],color=cannual,linewidth=2)
         ax.plot(years,annual_data,color=cannual,linestyle='--')
     ax.axhline(0,color='grey',linewidth=0.5)
     if plot_var in ['mb','bw','bs']:
-        min_all = np.nanmin(np.array([mb_dict['bw'],mb_dict['bs'],winter_data,summer_data]))
-        max_all = np.nanmax(np.array([mb_dict['bw'],mb_dict['bs'],winter_data,summer_data]))
+        min_all = np.nanmin(np.concat([mb_dict['bw'],mb_dict['bs'],winter_data,summer_data]))
+        max_all = np.nanmax(np.concat([mb_dict['bw'],mb_dict['bs'],winter_data,summer_data]))
     else:
         min_all = np.nanmin(np.array([mb_dict['ba'],annual_data]))
         max_all = np.nanmax(np.array([mb_dict['ba'],annual_data]))

@@ -7,13 +7,14 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '01.00570'    # RGI glacier ID WOLV: 09162
+glac_no = '01.00570'    # RGI glacier ID     WOLV: 09162    KAH: 22193
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
 
 # ========== DIRECTORIES AND FILEPATHS ========== 
 machine = socket.gethostname()
+# All filepaths are relative to PEBSI/
 # GLACIER
 metadata_fp = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 site_fp = 'data/by_glacier/GLACIER/site_constants.csv'      # Generalized glacier site info filepath
@@ -67,7 +68,7 @@ initial_ice_depth = 200             # default amount of initial ice [m]
 # OUTPUT
 store_vars = ['MB','EB','temp','layers']  # Variables to store of the possible set: ['MB','EB','temp','layers','SW]
 store_bands = False         # Store spectral albedo .csv
-store_climate = False       # Store climate dataset .nc
+store_climate = True        # Store climate dataset .nc
 
 # METHODS
 method_turbulent = 'BulkRichardson'     # 'MO-similarity' or 'BulkRichardson' 

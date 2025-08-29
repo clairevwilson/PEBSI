@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pebsi.processing.plotting_fxns import *
 from objectives import *
+from seasonal_error import seasonal_mass_balance as seasonal_error
 import pickle
 import os
 import copy
@@ -20,7 +21,7 @@ else:
     base_fp = '/home/claire/research/Output/EB/'
 
 # Create some dictionaries with useful information
-labels = {'kp':'Precipitation factor','kw':'Wind factor','c5':'Densification c$_5$'}      # Labels for the different parameters we varied
+labels = {'kp':'Precipitation factor','kw':'Wind factor','c5':'Densification c$_5$','lapse_rate':'Lapse rate (K km$^{-1}$)'}      # Labels for the different parameters we varied
 methodlabels = {'MAE':'MAE','ME':'Bias','RMSE':'RMSE','MdAE':'MdAE'}                                          # Labels for the different error methods
 errorlabels = {'seasonal':'Seasonal mass balance (m w.e.)',                                     # Labels for the different error metrics with units
                'winter':'Winter mass balance (m w.e.)', 
@@ -34,16 +35,21 @@ shorterrorlabels = {'2024':'2024 surface height','snowdensity':'Snow density','s
                     'seasonal':'Seasonal MB','winter':'Winter MB','summer':'Summer MB','annual':'Annual MB'}
 param_labels = {'kp':'Precipitation factor','c5':'Densification parameter'}
 sitedict = {'2024':['AB','ABB','B','BD','D','T'],'long':['A','AU','B','D'],
-            'firn':['EC','Z','T']}      # Dictionary of sites in the 2024 and long run
+            'firn':['Z','T']}      # Dictionary of sites in the 2024 and long run 'EC'
 all_sites = sitedict['long']+sitedict['2024']+['mean','median']                  # List all sites
 
 # USER OPTIONS
-run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search (12_04) (01_16) (02_11) (03_05)
-            '2024':{'date':'08_02', 'idx':'0'},                     # (12_06) (03_06)
+run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search
+            '2024':{'date':'08_02', 'idx':'0'},
             'firn':{'date':'08_27','idx':'0'}
             }
-params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],  # 0.01, 0.012,
-          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}  # 0.25,0.5,0.75,
+
+# PARAMETERS
+# params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
+#           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
+params = {
+            'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],               # Firn core site calibration
+            'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]}
 for key in params:                                                  # Convert params to strings for processing
     for v,value in enumerate(params[key]):
         params[key][v] = str(value)
@@ -53,18 +59,15 @@ error_lims = {'2024':0.5,'snowdensity':100,
               'winter':0.4,'summer':0.9,
               'snowdepth':1,'annual':1}
 
-def get_any(result_dict,c5='0.018',kp='2',site='B',run_type='long',out='ds'):
+def get_any(result_dict,p1='0.018',p2='2',site='B',run_type='long',out='ds'):
     """
     Grabs the dataset for a given parameter combination and site
     """
-    setno = result_dict[c5][kp][site]['set_no']
-    runno = result_dict[c5][kp][site]['run_no']
-    if run_type == '2024':
-        date = run_info['2024']['date']
-        idx = run_info['2024']['idx']
-    else:
-        date = run_info['long']['date']
-        idx = run_info['long']['idx']
+    setno = result_dict[p1][p2][site]['set_no']
+    runno = result_dict[p1][p2][site]['run_no']
+    date = run_info[run_type]['date']
+    idx = run_info[run_type]['idx']
+
     if out == 'ds':
         ds,_,_ = getds(f'/trace/group/rounce/cvwilson/Output/{date}_{site}_{idx}/grid_{date}_set{setno}_run{runno}_0.nc')
         return ds
@@ -75,14 +78,16 @@ def get_any(result_dict,c5='0.018',kp='2',site='B',run_type='long',out='ds'):
 
 def get_percentile(result_dict, error, percentile=50, method='MAE',plot=False):
     all_error = []
-    for c5 in params['c5']:
-        for kp in params['kp']:
+    parameter_1 = list(params.keys())[0]
+    parameter_2 = list(params.keys())[1]
+    for p1 in params[parameter_1]:
+        for p2 in params[parameter_2]:
             if '2024' in error:
                 sites = sitedict['2024'] + ['mean']
             else:
-                sites = sitedict['long'] + ['mean']
+                sites = sitedict['firn'] + ['mean']
             for site in sites:
-                all_error.append(result_dict[c5][kp][site][error+'_'+method])
+                all_error.append(result_dict[p1][p2][site][error+'_'+method])
     if plot:
         fig, ax = plt.subplots(figsize=(2,2))
         sorted_list = np.sort(all_error)
@@ -109,7 +114,7 @@ def process_run(run_type, fn):
 
     if run_type in ['long','firn']:
         # Seasonal mass balance
-        years,wmod,wmeas,smod,smeas,amod,ameas = seasonal_mass_balance(ds, out='data')
+        years,wmod,wmeas,smod,smeas,amod,ameas = seasonal_error(ds, out='data')
         results['years'] = years
         results['winter_mod'] = wmod
         results['winter_meas'] = np.array(wmeas)
@@ -119,7 +124,7 @@ def process_run(run_type, fn):
         results['annual_meas'] = np.array(ameas)
 
         # Seasonal error
-        error_dict = seasonal_mass_balance(ds,method=['MAE','MdAE','ME'])
+        error_dict = seasonal_error(ds,method=['MAE','MdAE','ME'])
         winter_MAE, winter_MdAE, winter_ME = error_dict['winter']
         summer_MAE, summer_MdAE, summer_ME = error_dict['summer']
         annual_MAE, annual_MdAE, annual_ME = error_dict['annual']
@@ -221,7 +226,7 @@ def create_dict(run_type):
                 p1 = str(run_dict[parameter_1])
                 p2 = str(run_dict[parameter_2])
                 for var in run_dict:
-                    if p1 in grid_dict and p2 in grid_dict[parameter_1]:
+                    if p1 in grid_dict and p2 in grid_dict[p1]:
                         grid_dict[p1][p2][site][var] = run_dict[var]
                         grid_dict[p1][p2][site]['set_no'] = set_no
                         grid_dict[p1][p2][site]['run_no'] = run_no
@@ -239,7 +244,10 @@ def add_site_means(result_dict):
     """
     # ===== Find site means of each error type =====
     # List out all error types
-    all_error = list(result_dict['0.018']['2.5']['B'].keys())
+    param_1 = list(params.keys())[0]
+    param_2 = list(params.keys())[1]
+    site = list(result_dict[params[param_1][0]][params[param_2][0]].keys())[0]
+    all_error  = list(result_dict[params[param_1][0]][params[param_2][0]][site].keys())
         
     # Create dictionary to store site means
     sites_error_dict = {}
@@ -257,17 +265,17 @@ def add_site_means(result_dict):
                         for site in sitedict['2024']:
                             sites_error_dict[error_type].append(result_dict[p1][p2][site][error_type])
                     else:
-                        for site in sitedict['long']:
+                        for site in sitedict['firn']:
                             try:
                                 sites_error_dict[error_type].append(result_dict[p1][p2][site][error_type])
                             except:
-                                print(site, p2, p1, error_type,' failed')
+                                print(site, p2, p1, error_type,'failed')
                     if len(sites_error_dict[error_type]) > 0:
                         result_dict[p1][p2]['mean'][error_type] = np.mean(sites_error_dict[error_type])
                         result_dict[p1][p2]['median'][error_type] = np.median(sites_error_dict[error_type])
     return result_dict
 
-def get_result_dict(force_redo=False):
+def get_result_dict(force_redo=False,parse_runs=['long','2024']):
     """
     Grabs result dictionary. If force_redo or if the .pkl doesn't exist,
     runs create_dict to combine the individual run dictionaries.
@@ -286,7 +294,6 @@ def get_result_dict(force_redo=False):
     """
     # ===== Open or parse output dictionary for both runs =====
     both_dict = {}
-    parse_runs = ['long','2024']
     for run_type in parse_runs:  
         date = run_info[run_type]['date']
         idx = run_info[run_type]['idx']
@@ -302,7 +309,7 @@ def get_result_dict(force_redo=False):
         both_dict[run_type] = grid_dict
 
     # Condense long and 2024 runs into to a single result_dict
-    result_dict = both_dict['long']
+    result_dict = both_dict[parse_runs[0]]
     parameter_1 = list(params.keys())[0]
     parameter_2 = list(params.keys())[1]
     if '2024' in parse_runs:
@@ -597,7 +604,7 @@ def get_all_error(ds, run_type):
 
     return results
 
-def add_normalized(result_dict, error_lims=error_lims, pareto=False):
+def add_normalized(result_dict, error_lims=error_lims, pareto=False, run_type='long'):
     """
     Normalizes error between 0-1 for the min-max of a given metric
     
@@ -605,31 +612,38 @@ def add_normalized(result_dict, error_lims=error_lims, pareto=False):
     """
 
     # Grab list of all error metrics
-    all_error = list(result_dict['0.018']['2.5']['B'].keys())
+    param_1 = list(params.keys())[0]
+    param_2 = list(params.keys())[1]
+
+    all_error = list(result_dict[params[param_1][0]][params[param_2][0]]['Z'].keys())
     all_error.remove('run_no')
     all_error.remove('set_no')
 
     # Divide each value by the minimum to get error_norm
-    for c5 in params['c5']:
-        for kp in params['kp']:
+    parameter_1 = list(params.keys())[0]
+    parameter_2 = list(params.keys())[1]
+    for p1 in params[parameter_1]:
+        for p2 in params[parameter_2]:
             if pareto:
-                include = True if (c5,kp) in pareto else False
+                include = True if (p1,p2) in pareto else False
             else:
                 include = True
+            if run_type == 'firn':
+                all_sites = sitedict['firn'] + ['mean']
             for site in all_sites:
-                if site in result_dict[c5][kp]:
-                    list_errors = copy.deepcopy(result_dict[c5][kp][site])
+                if site in result_dict[p1][p2]:
+                    list_errors = copy.deepcopy(result_dict[p1][p2][site])
                     for error_type in list_errors:
                         if error_type.split('_M')[0] in error_lims:
-                            current_value = result_dict[c5][kp][site][error_type]
+                            current_value = result_dict[p1][p2][site][error_type]
                             min_value = error_lims[error_type.split('_M')[0]][0]
                             max_value = error_lims[error_type.split('_M')[0]][1]
                             
                             if include and np.abs(max_value - min_value) > 0:
                                 scaled_value = (current_value - min_value) / (max_value - min_value)
-                                result_dict[c5][kp][site][error_type+'_norm'] = scaled_value
+                                result_dict[p1][p2][site][error_type+'_norm'] = scaled_value
                             else:
-                                result_dict[c5][kp][site][error_type+'_norm'] = np.inf
+                                result_dict[p1][p2][site][error_type+'_norm'] = np.inf
     
     return result_dict
 
@@ -675,14 +689,17 @@ def get_best_normalized(error_list, result_dict, add_weights=None, site='mean', 
     for weight in weights:
         assert np.abs(np.sum(weight) - 1) < 1e-3
         weighted_list = [np.inf]
-        for c5 in params['c5']:
-            for kp in params['kp']:
+        parameter_1 = list(params.keys())[0]
+        parameter_2 = list(params.keys())[1]
+
+        for p1 in params[parameter_1]:
+            for p2 in params[parameter_2]:
                 errors = []
                 for error in error_list:
-                    errors.append(result_dict[c5][kp][site][error+'_MAE_norm'])
+                    errors.append(result_dict[p1][p2][site][error+'_MAE_norm'])
                 weighted_error = np.sum(np.array(weight) * np.array(errors))
                 if len(weighted_list) > 0 and weighted_error < np.nanmin(weighted_list):
-                    best = (c5,kp)
+                    best = (p1,p2)
                 weighted_list.append(weighted_error)
         if prints:
             print(' '.join(f'{x:>10}' for x in weight),'    ',best)
