@@ -44,6 +44,12 @@ def pack_vars():
             args_run.kp = 1.75
             args_run.lapse_rate = -7
             glacier = 'Wolverine'
+        elif site == 'KPS':
+            # Kahiltna
+            args_run.glac_no = '01.22193'
+            args_run.kp = 4
+            args_run.lapse_rate = -7
+            glacier = 'Kahiltna'
         else:
             # Gulkana
             args_run.glac_no = '01.00570'
