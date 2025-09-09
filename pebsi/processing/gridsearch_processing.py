@@ -35,21 +35,23 @@ shorterrorlabels = {'2024':'2024 surface height','snowdensity':'Snow density','s
                     'seasonal':'Seasonal MB','winter':'Winter MB','summer':'Summer MB','annual':'Annual MB'}
 param_labels = {'kp':'Precipitation factor','c5':'Densification parameter'}
 sitedict = {'2024':['AB','ABB','B','BD','D','T'],'long':['A','AU','B','D'],
-            'firn':['Z','T']}      # Dictionary of sites in the 2024 and long run 'EC'
+            'firn':['KPS']}      # Dictionary of sites in the 2024 and long run 'EC'
 all_sites = sitedict['long']+sitedict['2024']+['mean','median']                  # List all sites
 
 # USER OPTIONS
 run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search
             '2024':{'date':'08_02', 'idx':'0'},
-            'firn':{'date':'08_27','idx':'0'}
+            'firn':{'date':'09_08','idx':'0'} # 08_27
             }
 
 # PARAMETERS
 # params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
 #           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
 params = {
-            'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],               # Firn core site calibration
-            'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]}
+            # 'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],               # Firn core site calibration
+            # 'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]}
+            'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5], # KPS
+          'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
 for key in params:                                                  # Convert params to strings for processing
     for v,value in enumerate(params[key]):
         params[key][v] = str(value)
@@ -85,7 +87,7 @@ def get_percentile(result_dict, error, percentile=50, method='MAE',plot=False):
             if '2024' in error:
                 sites = sitedict['2024'] + ['mean']
             else:
-                sites = sitedict['firn'] + ['mean']
+                sites = ['KPS'] + ['mean'] # sitedict['long']
             for site in sites:
                 all_error.append(result_dict[p1][p2][site][error+'_'+method])
     if plot:
@@ -305,7 +307,7 @@ def get_result_dict(force_redo=False,parse_runs=['long','2024']):
             with open(base_fp + f'{date}_{idx}_out.pkl', 'rb') as file:
                 grid_dict = pickle.load(file)
         
-        # Store the dictionary under the run type (long or 2024)
+        # Store the dictionary under the run type (long, firn, or 2024)
         both_dict[run_type] = grid_dict
 
     # Condense long and 2024 runs into to a single result_dict
@@ -323,7 +325,7 @@ def get_result_dict(force_redo=False,parse_runs=['long','2024']):
                     # Add the 2024 error stats
                     for var in both_dict['2024'][p1][p2][site]:
                         result_dict[p1][p2][site][var] = both_dict['2024'][p1][p2][site][var]
-    
+
     result_dict = add_site_means(result_dict)
     return result_dict
 
@@ -615,7 +617,8 @@ def add_normalized(result_dict, error_lims=error_lims, pareto=False, run_type='l
     param_1 = list(params.keys())[0]
     param_2 = list(params.keys())[1]
 
-    all_error = list(result_dict[params[param_1][0]][params[param_2][0]]['Z'].keys())
+    site_0 = list(result_dict[params[param_1][0]][params[param_2][0]].keys())[0]
+    all_error = list(result_dict[params[param_1][0]][params[param_2][0]][site_0].keys())
     all_error.remove('run_no')
     all_error.remove('set_no')
 

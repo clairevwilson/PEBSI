@@ -31,8 +31,8 @@ repeat_run = False   # True if restarting an already begun run
 # params = {'Boone_c5':[0.018,0.02,0.022,0.024,0.026,0.028,0.03], # 
 #           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5]} # 
 params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
-          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],
-          'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
+          'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
 
 # Read command line args
 parser = sim.get_args(parse=False)
@@ -97,9 +97,13 @@ if args.site == 'Z' and args.glac_no == '01.00570':
 if args.site == 'T' and args.glac_no == '01.00570':
     args.startdate = '2012-08-01'
     args.enddate = '2025-05-01'
-if args.site == 'EC' and args.glac_no == '01.09162':
+if args.site == 'EC':
     args.startdate = '2015-08-01'
     args.enddate = '2025-05-01'
+if args.site == 'KPS':
+    args.startdate = '2015-08-01'
+    args.enddate = '2025-05-01'
+    eb_prms.bias_vars = ['wind','temp','rh','SWin']
 
 # Loop through parameters
 for kp in params['kp']:

@@ -147,7 +147,7 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
             out_dict['annual'].append(objective(annual_model,annual_data,mm))
         return out_dict
 
-def plot_seasonal_mass_balance(ds,plot_ax=False,label=None,plot_var='mb',color='default'):
+def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
     """
     plot_var : 'mb' (default), 'bw','bs','ba'
     """

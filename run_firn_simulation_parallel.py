@@ -10,14 +10,14 @@ import pebsi.massbalance as mb
 import pebsi.input as prms
 
 # User info
-sites = ['EC','T','Z'] # Sites to run in parallel
+sites = ['KPS'] # Sites to run in parallel 'EC','T','Z'
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 n_runs_ahead = 0    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 args.startdate = '1980-04-15 00:00'
-args.enddate = '2025-04-20 12:00'
+args.enddate = '2025-05-20 12:00'
 args.store_data = True              # Ensures output is stored
 args.glac_no = '01.00570'
 args.use_AWS = False
@@ -47,8 +47,8 @@ def pack_vars():
         elif site == 'KPS':
             # Kahiltna
             args_run.glac_no = '01.22193'
-            args_run.kp = 4
-            args_run.lapse_rate = -7
+            args_run.kp = 2
+            args_run.lapse_rate = -6.5
             glacier = 'Kahiltna'
         else:
             # Gulkana
