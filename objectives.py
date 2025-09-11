@@ -660,7 +660,7 @@ def snow_temperature(ds,method='RMSE',plot=False,plot_heights=[0.5]):
 
     # Load dataset
     year = pd.to_datetime(ds.time.values[0]).year
-    data_fp = f'../Data/iButtons/iButtons_{year}_{site}.csv'
+    data_fp = f'../data/iButtons/iButtons_{year}_{site}.csv'
     temp_df = pd.read_csv(data_fp,index_col=0)
     temp_df.index = pd.to_datetime(temp_df.index)
     temp_df = temp_df.resample('30min').interpolate()

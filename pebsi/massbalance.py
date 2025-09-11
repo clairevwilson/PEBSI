@@ -480,6 +480,8 @@ class massBalance():
             # wet metamorphism
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize/1e6)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
+            # cap runaway wet metamorphosis
+            drwet[drwet > 50] = 50
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
@@ -735,11 +737,11 @@ class massBalance():
             vol_f_liq = lw / (lh*DENSITY_WATER)
             vol_f_ice = lm / (lh*DENSITY_ICE)
             porosity = 1 - vol_f_ice
-            vol_f_liq[vol_f_liq > porosity] = porosity[vol_f_liq > porosity]
 
             # remove / move snow melt to layer water
             lm -= layermelt_sf
             lh -= layermelt_sf / layers.ldensity[snow_firn_idx]
+            # layermelt_sf = np.array([np.sum(layermelt_sf) / len(snow_firn_idx)]*len(snow_firn_idx)).flatten()
             lw += layermelt_sf
 
             # reduce layer refreeze (refreeze melts first)
@@ -756,7 +758,7 @@ class massBalance():
 
                 # calculate flow out of layer i
                 q_out = DENSITY_WATER*lh[layer]/dt * (
-                        vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
+                            vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
                 
                 # check limits on flow out (q_out)
                 # first check underlying layer holding capacity
@@ -997,10 +999,10 @@ class massBalance():
         # Boone / Anderson (1976) method (COSIPY)
         if prms.method_densification in ['Boone']:
             # EMPIRICAL PARAMETERS
-            c1 = 2.7e-6     # s-1 (2.7e-6)
-            c2 = 0.042      # K-1 (0.042)
-            c3 = 0.046      # m3 kg-1 (0.046)
-            c4 = 0.081      # K-1 (0.081)
+            c1 = prms.Boone_c1
+            c2 = prms.Boone_c2
+            c3 = prms.Boone_c3
+            c4 = prms.Boone_c4
             c5 = float(self.args.Boone_c5)
 
             for layer in snowfirn_idx:

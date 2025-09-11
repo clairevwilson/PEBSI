@@ -46,6 +46,7 @@ varprops = {'surftemp':{'label':'Temperature','type':'Temperature','units':'C'},
            'ground':{'label':'Heat fluxes','type':'Flux','units':'W m$^{-2}$'},
            'layertemp':{'label':'Temperature','type':'Layers','units':'C'},
            'layerdensity':{'label':'Density','type':'Layers','units':'kg m$^{-3}$'},
+           'layerice':{'label':'Mass','type':'Layers','units':'kg m$^{-2}$'},
            'layerwater':{'label':'Water content','type':'Layers','units':'kg m$^{-2}$'},
            'layerBC':{'label':'Black carbon','type':'Layers','units':'ppb'},
            'layerOC':{'label':'Organic carbon','type':'Layers','units':'ppb'},
@@ -1163,7 +1164,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layergrainsize']:
             bounds = [50,1500]
         elif var in ['layerrefreeze']:
-            bounds = [0,0.4]
+            bounds = [-0.02,0.1]
         dens_lim = 890 if plot_firn else 600
         dens_lim = 1000 if plot_ice else dens_lim
         assert 'layer' in var, 'choose layer variable'
@@ -1261,7 +1262,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
     # Show plot
     # plt.show()
     if not plot_ax:
-        return fig,ax
+        return fig,axes
     else:
         plt.close()
         return axes

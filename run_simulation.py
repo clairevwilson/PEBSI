@@ -283,11 +283,6 @@ def check_inputs(glac_no, args):
         startdate = pd.to_datetime(cdf.index[0])
         enddate = pd.to_datetime(cdf.index.to_numpy()[-1])
 
-        # have to offset by 30 minutes for MERRA-2
-        if prms.reanalysis == 'MERRA2' and startdate.minute != 30:
-            startdate += pd.Timedelta(minutes=30)
-            enddate -= pd.Timedelta(minutes=30)
-
         # add dates to args
         args.startdate = startdate
         args.enddate = enddate

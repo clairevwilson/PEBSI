@@ -68,7 +68,7 @@ initial_ice_depth = 200             # default amount of initial ice [m]
 # OUTPUT
 store_vars = ['MB','EB','temp','layers']  # Variables to store of the possible set: ['MB','EB','temp','layers','SW]
 store_bands = False         # Store spectral albedo .csv
-store_climate = True        # Store climate dataset .nc
+store_climate = False       # Store climate dataset .nc
 
 # METHODS
 method_turbulent = 'BulkRichardson'     # 'MO-similarity' or 'BulkRichardson' 
@@ -163,6 +163,10 @@ pressure_std = 101325       # Standard pressure [Pa]
 temp_std = 293.15           # Standard temperature [K]
 density_std = 1.225         # Air density at sea level [kg m-3]
 # <<<<<< Model parameterizations >>>>>
+Boone_c1 = 2.7e-6           # Densification c1 [s-1]
+Boone_c2 = 0.042            # Densification c2 [K-1]
+Boone_c3 = 0.046            # Densification c3 [m3 kg-1]
+Boone_c4 = 0.081            # Densification c4 [K-1]
 Boone_c5 = 0.016            # Densification parameter [m3 kg-1]
 roughness_fresh_snow = 0.24 # Surface roughness length for fresh snow [mm] (Moelg et al. 2012, TC)
 roughness_aged_snow = 10    # Surface roughness length for aged snow [mm]
@@ -180,7 +184,7 @@ grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koc
 # <<<<<< Constants for switch runs >>>>>
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
 average_grainsize = 300     # Grainsize to treat as constant if switch_melt is 0 [um]
-albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-] (Moelg et al. 2012, TC)
+albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 albedo_firn = 0.5           # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1

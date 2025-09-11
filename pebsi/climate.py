@@ -130,6 +130,12 @@ class Climate():
         # get AWS elevation
         metadata_df = pd.read_csv(prms.AWS_metadata_fn, sep='\t', index_col='glacier')
         self.AWS_elev = metadata_df.loc[self.args.glac_name, 'elevation']
+        # can have duplicates for a glacier
+        if '__iter__' in dir(self.AWS_elev):
+            station = fp.split(self.args.glac_name)[-1].split('.csv')[0]
+            assert station in metadata_df['station'].values, f'specify station name as {station} in aws_metadata.txt'
+            glac_df = metadata_df.loc[self.args.glac_name]
+            self.AWS_elev = glac_df.loc[glac_df['station'] == station, 'elevation'].values[0]
 
         # get the available variables
         all_AWS_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
@@ -207,7 +213,8 @@ class Climate():
     
     def get_var_data(self, fn, var, result_dict):
         # get dates
-        dates = self.dates_UTC
+        dates = self.dates_UTC # - pd.Timedelta(days=365)
+        # print('REMOVE THE TIME CHANGE')
 
         # open and check units of climate data
         ds = xr.open_dataset(fn)

@@ -325,6 +325,8 @@ class Surface():
         AVG_GRAINSIZE = prms.average_grainsize
         DIFFUSE_CLOUD_LIMIT = prms.diffuse_cloud_limit
         DENSITY_FIRN = prms.density_firn
+        DENSITY_ICE = prms.density_ice
+        FRAC_IRREDUC = prms.Sr
 
         # get layers to include in the calculation (top 1m of non-ice layers)
         nlayers = np.where(layers.ldepth >= 1)[0][0] + 1
@@ -402,13 +404,17 @@ class Surface():
             list_doc['ICE']['LAYER_TYPE'][0] = 4
             list_doc['ICE']['LWC'] = lwater.tolist()
         else:
+            list_doc['ICE']['LAYER_TYPE'][0] = 0
             list_doc['ICE']['LWC'] = [0]*nlayers
 
         # the following variables are constants for the n layers
         ice_variables = ['LAYER_TYPE','SHP','HEX_SIDE','HEX_LENGTH',
                          'SHP_FCTR','WATER_COATING','AR','CDOM']
         # option to change shape in inputs
-        list_doc['ICE']['SHP'][0] = prms.grainshape_SNICAR
+        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
+        no_water = lwater[0] < porosity * FRAC_IRREDUC
+        list_doc['ICE']['SHP'][0] = 2 if no_water else 0
+        list_doc['ICE']['AR'][0] = 0.01 if no_water else 0
         for var in ice_variables:
             list_doc['ICE'][var] = [list_doc['ICE'][var][0]] * nlayers
 
