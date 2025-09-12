@@ -1,6 +1,6 @@
 ﻿RGI_ID,name,timezone,AWS_fn,start,end
 00.00000,test,0,data/sample_aws.csv,,
-01.00570,gulkana,-8,gulkanaB2025.csv,,
+01.00570,gulkana,-8,gulkana2024.csv,,
 01.01104,lemoncreek,-8,LemonCreek1285_hourly.csv,5/5/2008,9/13/2008
 01.00709,mendenhall,-8,,5/11/2016,7/18/2016
 01.01390,taku,-8,,,

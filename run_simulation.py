@@ -87,13 +87,13 @@ def get_args(parse=True):
                         help='Temperature lapse rate [K km-1]')
     
     # FILEPATHS
-    parser.add_argument('-initial_temp_fp',default=prms.initial_temp_fp,type=str,
+    parser.add_argument('-initial_temp_fn',default=prms.initial_temp_fn,type=str,
                         action='store',help='Filepath for initializing temperature')
-    parser.add_argument('-initial_density_fp',default=prms.initial_density_fp,type=str,
+    parser.add_argument('-initial_density_fn',default=prms.initial_density_fn,type=str,
                         action='store',help='Filepath for initializing density')
-    parser.add_argument('-initial_grains_fp',default=prms.initial_grains_fp,type=str,
+    parser.add_argument('-initial_grains_fn',default=prms.initial_grains_fn,type=str,
                         action='store',help='Filepath for initializing grain size')
-    parser.add_argument('-initial_LAP_fp',default=prms.initial_LAP_fp,type=str,
+    parser.add_argument('-initial_LAP_fn',default=prms.initial_LAP_fn,type=str,
                         action='store',help='Filepath for initializing LAPs')
     
     # PARALLELIZATION
@@ -148,6 +148,21 @@ def get_site_table(site_df, args):
         if args.debug:
             print(f'~ Using AWS site: ({args.lat}, {args.lon}) at {args.elev} m a.s.l.')
 
+    # Check if initial data exists
+    initial_fns = {'temp':args.initial_temp_fn,
+                   'density':args.initial_density_fn,
+                   'grains':args.initial_grains_fn,
+                   'LAP':args.initial_LAP_fn}
+    for prop in initial_fns:
+        if prop in os.listdir(args.glac_fp):
+            fn_prop = f'{prop}/{args.glac_name}{args.site}{prop}.csv'
+            if os.path.exists(args.glac_fp + fn_prop):
+                initial_fns[prop] = args.glac_fp + fn_prop
+    args.initial_temp_fn = initial_fns['temp']
+    args.initial_density_fn = initial_fns['density']
+    args.initial_grains_fn = initial_fns['grains']
+    args.initial_LAP_fn = initial_fns['LAP']
+
     # *****Special HARD-CODED handling for Gulkana*****
     if args.glac_name == 'gulkana' and args.site != 'center':
         # set scaling albedo
@@ -159,13 +174,13 @@ def get_site_table(site_df, args):
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
             if pd.to_datetime(args.startdate) > pd.to_datetime('2023-12-31'):
-                args.initial_density_fp = f'data/by_glacier/gulkana/density/gulkana{args.site}density24.csv'
+                args.initial_density_fn = f'data/by_glacier/gulkana/density/gulkana{args.site}density24.csv'
             else:
-                args.initial_density_fp = f'data/by_glacier/gulkana/density/gulkana{args.site}meandensity.csv'
+                args.initial_density_fn = f'data/by_glacier/gulkana/density/gulkana{args.site}meandensity.csv'
         elif args.site in ['ABB','BD']:
-            args.initial_density_fp = 'data/by_glacier/gulkana/density/gulkanaBdensity24.csv'
+            args.initial_density_fn = 'data/by_glacier/gulkana/density/gulkanaBdensity24.csv'
         elif args.site in ['AB']:
-            args.initial_density_fp = 'data/by_glacier/gulkana/density/gulkanaAUdensity24.csv'
+            args.initial_density_fn = 'data/by_glacier/gulkana/density/gulkanaAUdensity24.csv'
     return args
 
 def get_shading(args):
@@ -190,7 +205,7 @@ def get_shading(args):
     args.store = ['result','result_plot','search_plot']
 
     # check if we can index the lat/lon for this site
-    site_fp = prms.site_fp.replace('GLACIER', args.glac_name)
+    site_fp = args.glac_fp + 'site_constants.csv'
     if os.path.exists(site_fp):
         # open site constants file and check if our site is there
         site_df = pd.read_csv(site_fp,index_col='site')
@@ -262,13 +277,14 @@ def check_inputs(glac_no, args):
     # specify filepaths to args
     args.shading_fp = prms.shading_fp.replace('GLACIER',args.glac_name).replace('SITE',args.site)
     args.dem_fp = prms.dem_fp.replace('GLACIER', args.glac_name)
+    args.glac_fp = prms.glac_fp.replace('GLACIER', args.glac_name)
 
     # check if the shading file exists
     if not os.path.exists(args.shading_fp):
         args = get_shading(args)
     
     # load site constants table
-    site_fp = prms.site_fp.replace('GLACIER', args.glac_name)
+    site_fp = args.glac_fp + 'site_constants.csv'
     site_df = pd.read_csv(site_fp,index_col='site')
 
     # update args from the site table

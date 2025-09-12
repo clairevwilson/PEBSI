@@ -190,9 +190,9 @@ class Layers():
         ice_idx = self.ice_idx
 
         # read in depth profiles
-        temp_data = pd.read_csv(self.args.initial_temp_fp)
-        density_data = pd.read_csv(self.args.initial_density_fp)
-        grainsize_data = pd.read_csv(self.args.initial_grains_fp)
+        temp_data = pd.read_csv(self.args.initial_temp_fn)
+        density_data = pd.read_csv(self.args.initial_density_fn)
+        grainsize_data = pd.read_csv(self.args.initial_grains_fn)
 
         # TEMPERATURE [C]
         if prms.initialize_temp == 'interpolate':
@@ -270,7 +270,7 @@ class Layers():
             ldust = np.ones(n)*DUST_FRESH*lheight 
         elif prms.initialize_LAPs in ['interpolate']:
             # read in LAP data
-            lap_data = pd.read_csv(self.args.initial_LAP_fp,index_col=0)
+            lap_data = pd.read_csv(self.args.initial_LAP_fn,index_col=0)
 
             # add boundaries for interpolation
             lap_data.loc[0,'BC'] = BC_FRESH

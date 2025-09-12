@@ -761,8 +761,8 @@ def snow_temperature(ds,method='RMSE',plot=False,plot_heights=[0.5]):
     return error
 
 # ========== 4. ALBEDO ==========
-def daily_albedo(bds,method='MAE',out=None):
-    df = pd.read_csv('/trace/home/cvwilson/research/climate_data/AWS/Processed/gulkana2024_bothalbedo.csv',index_col=0)
+def daily_albedo(bds,method='MAE',out=None, fn='../climate_data/AWS/Processed/gulkana/gulkana2024_bothalbedo.csv'):
+    df = pd.read_csv(fn,index_col=0)
     df.index = pd.to_datetime(df.index) # - pd.Timedelta(hours=8)
     
     # Sample dataset to daily
@@ -772,7 +772,7 @@ def daily_albedo(bds,method='MAE',out=None):
     daily_albedo = []
 
     # Manually specify summer dates and ice dates
-    dates = pd.date_range('2024-04-20','2024-08-20',freq='d')
+    dates = pd.date_range(bds.time.values[0], bds.time.values[-1],freq='d')
     for date in dates:
         start = pd.to_datetime(str(date.date())+' 12:00')
         end = pd.to_datetime(str(date.date())+' 16:00')

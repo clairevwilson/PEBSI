@@ -101,7 +101,7 @@ class massBalance():
                 if self.args.switch_melt == 2 and layers.nlayers > 2:
                     self.get_grain_size()
 
-            if time.hour in prms.albedo_TOD:
+            if time.hour in prms.albedo_TOD and enbal.nanalbedo:
                 # update albedo
                 surface.get_albedo(layers,time)
 
@@ -291,8 +291,6 @@ class massBalance():
             # height and age of new layer
             new_height = snowfall/new_density
             new_age = self.time
-            if type(layers.lage[0]) == int:
-                print('new age', layers.lage[0])
 
             # wet deposition occurs in snowfall
             new_BC = enbal.bcwet * enbal.dt
@@ -316,7 +314,7 @@ class massBalance():
         small_surf_layer = layers.lheight[0] < 1e-3
 
         # check conditions
-        if np.any(new_layer_cond) and not small_surf_layer:
+        if True: #np.any(new_layer_cond) and not small_surf_layer:
             # check if there is enough snow to create a new layer (1 mm cutoff)
             if new_height < 1e-3:
                 # delay small amounts of snowfall: avoids computational issues
@@ -330,8 +328,6 @@ class massBalance():
                 # add the layer and reset delayed_snow to 0
                 layers.add_layers(new_layer)
                 layers.delayed_snow = 0
-                if type(layers.lage[0]) == int:
-                    print('htfffere', layers.lage[0], new_age)
         else:
             # get new layers mass
             new_layermass = layers.lice[0] + snowfall
@@ -415,15 +411,15 @@ class massBalance():
             f_liq = layers.lwater[idx] / (layers.lwater[idx] + layers.lice[idx])
 
             # define values for lookup table
-            dz = layers.lheight.copy()[idx]
-            T = layers.ltemp.copy()[idx] + 273.15
-            p = layers.ldensity.copy()[idx]
-            grainsize = layers.lgrainsize.copy()[idx]
-            surftempK = surftemp + 273.15
+            dz = layers.lheight.copy()[idx]             # in m
+            T = layers.ltemp.copy()[idx] + 273.15       # in K
+            p = layers.ldensity.copy()[idx]             # in kg m-3
+            grainsize = layers.lgrainsize.copy()[idx]   # in um
+            surftempK = surftemp + 273.15               # in K
 
             # dry metamorphism
             if prms.constant_drdry:
-                drdry = np.ones(len(idx))*prms.constant_drdry * dt # um
+                drdry = np.ones(len(idx)) * prms.constant_drdry * dt # um
                 drdry[np.where(grainsize>RFZ_GRAINSIZE)[0]] = 0
             else:
                 # calculate temperature gradient (central in space)
@@ -442,7 +438,7 @@ class massBalance():
                     dTdz = (surftemp - layers.ltemp[1]) / layers.ldepth[1]
                     dTdz = np.array([dTdz])
 
-                # take absolute value of gradient (direction does not matter)
+                # direction of temp gradient does not matter
                 dTdz = np.abs(dTdz)
 
                 # force values to be within lookup table ranges
@@ -478,7 +474,8 @@ class massBalance():
                 drdry = np.array(drdrydt) * dt
 
             # wet metamorphism
-            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize/1e6)**2)
+            grainsize_m = grainsize / 1e6   # in m
+            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # cap runaway wet metamorphosis
             drwet[drwet > 50] = 50
@@ -741,7 +738,7 @@ class massBalance():
             # remove / move snow melt to layer water
             lm -= layermelt_sf
             lh -= layermelt_sf / layers.ldensity[snow_firn_idx]
-            # layermelt_sf = np.array([np.sum(layermelt_sf) / len(snow_firn_idx)]*len(snow_firn_idx)).flatten()
+            # layermelt_sf = np.array([np.sum(layermelt_sf) / len(snow_firn_idx)] * len(snow_firn_idx)).flatten()
             lw += layermelt_sf
 
             # reduce layer refreeze (refreeze melts first)
@@ -948,8 +945,9 @@ class massBalance():
 
                 # add refreeze to layer ice mass
                 lm[layer] += dm_ref
-                # update layer temperature from latent heat
-                lT[layer] = min(0,-(E_cold-dm_ref*LH_RF)/(HEAT_CAPACITY_ICE*lm[layer]))
+                # update layer temperature from latent heat (cannot exceed 0)
+                T_new = lT[layer] + dm_ref*LH_RF/(HEAT_CAPACITY_ICE*lm[layer])
+                lT[layer] = min(0,T_new)
 
                 # update water content
                 lw[layer] = max(0,lw[layer]-dm_ref)

@@ -278,10 +278,11 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+        SIGMA_SB = prms.sigma_SB
         if self.nanLWout:
             # calculate LWout frmo surftemp
             surftempK = surftemp+273.15
-            LWout = -prms.sigma_SB*surftempK**4
+            LWout = -SIGMA_SB*surftempK**4
         else:
             # take LWout from data
             LWout = -self.LWout_ds/self.dt
@@ -292,7 +293,7 @@ class energyBalance():
             Ecs = .23+ .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
             Ecl = 0.984               # cloud emissivity, Klok and Oerlemans, 2002
             Esky = Ecs*(1-self.tcc**2)+Ecl*self.tcc**2    # sky emissivity
-            LWin = prms.sigma_SB*(Esky*self.tempK**4)
+            LWin = SIGMA_SB*(Esky*self.tempK**4)
         elif not self.nanLWin:
             # take LWin from data
             LWin = self.LWin_ds/self.dt

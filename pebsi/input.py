@@ -17,7 +17,7 @@ machine = socket.gethostname()
 # All filepaths are relative to PEBSI/
 # GLACIER
 metadata_fp = 'data/glacier_metadata.csv'                   # Glacier metadata filename
-site_fp = 'data/by_glacier/GLACIER/site_constants.csv'      # Generalized glacier site info filepath
+glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
 RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
 AWS_fp = '../climate_data/AWS/Processed/'                   # Weather station data filepath
 AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
@@ -26,10 +26,10 @@ grainsize_fp = 'data/grainsize/drygrainsize(SSAin=##).nc'   # Grain size evoluti
 snicar_input_fp = 'biosnicar-py/biosnicar/inputs.yaml'      # SNICAR input filepath
 clean_ice_fp = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 # INITIAL CONDITIONS
-initial_temp_fp = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
-initial_density_fp = 'data/sample_initial_density.csv'      # Initial density profile filepath
-initial_grains_fp = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
-initial_LAP_fp = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
+initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
+initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
+initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
+initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
 # SHADING
 dem_fp = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fp = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
@@ -45,7 +45,7 @@ albedo_out_fp = '../Output/EB/albedo.csv'                   # Output spectral al
 startdate = pd.to_datetime('2024-04-20 00:00:00') 
 enddate = pd.to_datetime('2025-04-20 00:00:00')
 
-# WEATHER STATION
+# SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
 
 # REANALYSIS DATA
