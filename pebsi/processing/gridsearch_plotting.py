@@ -7,7 +7,6 @@ import socket
 import copy
 import os,sys
 import pickle
-mpl.rcParams['font.family'] = 'Liberation Sans'
 
 # Get the base filepath
 machine = socket.gethostname()
@@ -17,9 +16,14 @@ if 'trace' in machine:
 elif os.path.exists('/mnt/d/grid_search'):
     base_fp = '/mnt/d/grid_search/'
     pygem_fp = '/home/claire/research/PEBSI/'
-else:
+elif os.path.exists('/home/claire/research/PEBSI/'):
     base_fp = '/home/claire/research/Output/EB/'
     pygem_fp = '/home/claire/research/PEBSI/'
+    mpl.rcParams['font.family'] = 'Liberation Sans'
+else:
+    base_fp = 'C:/users/cvw30/Research/Model/Output/'
+    pygem_fp = 'C:/users/cvw30/Research/Model/PEBSI/'
+    mpl.rcParams['font.family'] = 'sans-serif'
 sys.path.append(pygem_fp)
 from objectives import *
 from pebsi.processing.plotting_fxns import *
@@ -1880,33 +1884,37 @@ def plot_fluxes(savefig=False):
         plt.savefig(base_fp + 'fluxes.png',dpi=200,bbox_inches='tight')
     plt.show()
 
-def find_precip_gradient():
-    data = pd.read_csv('../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv')
+def find_precip_gradient(med_site='B',fn='../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv'):
+    data = pd.read_csv(fn)
     grads = []
     colors = plt.get_cmap('Grays')
     norm = mpl.colors.Normalize(vmin=1990, vmax=2025)
     all_elev = []
     all_bw = []
     for year in np.unique(data['Year']):
-        if year > 1999:
+        if year > 2015:
             year_data = data.loc[data['Year'] == year]
             year_elev = year_data['elevation'].values[~np.isnan(year_data['bw'].values)]
             year_bw = year_data['bw'].values[~np.isnan(year_data['bw'].values)]
             try:
-                year_B_bw = year_data.loc[year_data['site_name'] == 'B']['bw'].values
-                winter_abl_B =  year_data.loc[year_data['site_name'] == 'B']['winter_ablation'].values
-                winter_abl_B = 0 if np.isnan(winter_abl_B) else 0
-                year_acc_B = year_B_bw - winter_abl_B
+                year_med_bw = year_data.loc[year_data['site_name'] == med_site]['bw'].values
+                winter_abl_med =  year_data.loc[year_data['site_name'] == med_site]['winter_ablation'].values
+                winter_abl_med = 0 if np.isnan(winter_abl_med) else 0
+                year_acc_med = year_med_bw - winter_abl_med
             except:
-                print('no site B for',year)
+                print(f'no site {med_site} for {year}')
                 continue
             winter_abl = year_data['winter_ablation'].values[~np.isnan(year_data['bw'].values)]
             winter_abl[np.isnan(winter_abl)] = 0
             year_acc = year_bw - winter_abl
-            percentage_acc = year_acc / year_acc_B
+            percentage_acc = year_acc / year_acc_med
+            percentage_acc = percentage_acc[~np.isnan(year_elev)]
+            year_elev = year_elev[~np.isnan(year_elev)]
             for i in range(len(percentage_acc)):
                 all_bw.append(percentage_acc[i])
                 all_elev.append(year_elev[i])
+            if len(year_elev) < 2:
+                continue
             # gradient = np.sum(year_elev * year_acc) / np.sum(year_elev**2)
             gradient ,b = np.polyfit(year_elev, percentage_acc , 1)
             if gradient > 0:

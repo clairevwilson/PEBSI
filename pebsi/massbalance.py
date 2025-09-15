@@ -167,6 +167,7 @@ class massBalance():
             self.melt = melt / DENSITY_WATER
             self.refreeze = refreeze / DENSITY_WATER
             self.accum = snowfall / DENSITY_WATER
+            self.rainfall = rainfall / DENSITY_WATER
 
             # store timestep data
             self.output.store_timestep(self,enbal,surface,layers,time)   
@@ -1535,8 +1536,8 @@ class Output():
         # create variable name dict
         vn_dict = {'EB':['SWin','SWout','LWin','LWout','rain','ground',
                          'sensible','latent','meltenergy','albedo'],
-                   'MB':['melt','refreeze','runoff','accum','cumrefreeze','dh',
-                         'vaporsolid','vaporliquid'],
+                   'MB':['melt','refreeze','runoff','cumrefreeze','dh',
+                         'vaporsolid','vaporliquid','accum','rainfall'],
                    'temp':['airtemp','surftemp'],
                    'layers':['layertemp','layerdensity','layerwater','layerheight',
                              'layerage','layertype','layergrainsize','layerrefreeze',
@@ -1563,6 +1564,7 @@ class Output():
                 cumrefreeze = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 runoff = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 accum = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                rainfall = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 vaporliquid = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 vaporsolid = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 airtemp = (['time'],zeros[:,0],{'units':'C'}),
@@ -1617,6 +1619,7 @@ class Output():
         self.refreeze_output = []       # refreeze by timestep [m w.e.]
         self.cumrefreeze_output = []    # cumulative refreeze by timestep [m w.e.]
         self.accum_output = []          # accumulation by timestep [m w.e.]
+        self.rainfall_output = []          # accumulation by timestep [m w.e.]
         self.runoff_output = []         # runoff by timestep [m w.e.]
         self.dh_output = []             # surface height change by timestep [m]
         self.vaporliquid_output = []    # liquid-vapor mass flux [m w.e.]  
@@ -1659,7 +1662,11 @@ class Output():
         step : pd.Datetime
             Current timestamp
         """
+        # CONSTANTS
+        DENSITY_WATER = prms.density_water
         step = str(step)
+
+        # ENERGY BALANCE OUTPUTS
         self.SWin_output.append(float(enbal.SWin))
         self.SWout_output.append(float(enbal.SWout))
         self.LWin_output.append(float(enbal.LWin))
@@ -1671,19 +1678,23 @@ class Output():
         self.meltenergy_output.append(float(surface.Qm))
         self.albedo_output.append(float(surface.bba))
         
+        # TEMPERATURE OUTPUTS
         self.surftemp_output.append(float(surface.stemp))
         self.airtemp_output.append(float(enbal.tempC))
 
+        # MASS BALANCE OUTPUTS
         self.melt_output.append(float(massbal.melt))
         self.refreeze_output.append(float(massbal.refreeze))
-        self.cumrefreeze_output.append(float(np.sum(layers.lrefreeze))/prms.density_water)
+        self.cumrefreeze_output.append(float(np.sum(layers.lrefreeze))/DENSITY_WATER)
         self.runoff_output.append(float(massbal.runoff))
         self.accum_output.append(float(massbal.accum))
+        self.rainfall_output.append(float(massbal.rainfall))
         self.dh_output.append(np.sum(layers.lheight)-self.last_height)
         self.last_height = np.sum(layers.lheight)
-        self.vaporliquid_output.append(massbal.vapor_liquid/prms.density_water)
-        self.vaporsolid_output.append(massbal.vapor_solid/prms.density_water)
+        self.vaporliquid_output.append(massbal.vapor_liquid/DENSITY_WATER)
+        self.vaporsolid_output.append(massbal.vapor_solid/DENSITY_WATER)
 
+        # LAYER OUTPUTS
         self.layertemp_output[step] = layers.ltemp.copy()
         self.layerwater_output[step] = layers.lwater.copy()
         self.layerheight_output[step] = layers.lheight.copy()
@@ -1697,9 +1708,11 @@ class Output():
         mapping = {'snow': 0, 'firn': 1, 'ice': 2}
         self.layertype_output[step] = [mapping[l] for l in layers.ltype]
 
+        # DETAILED SHORTWAVE OUTPUTS
         self.vis_albedo_output.append(float(surface.vis_a))
         self.SWin_sky_output.append(float(enbal.SWin_sky))
         self.SWin_terr_output.append(float(enbal.SWin_terr))
+        return
 
     def store_data(self):
         """
@@ -1725,6 +1738,7 @@ class Output():
                 ds['refreeze'].values = self.refreeze_output
                 ds['runoff'].values = self.runoff_output
                 ds['accum'].values = self.accum_output
+                ds['rainfall'].values = self.rainfall_output
                 ds['dh'].values = self.dh_output
                 ds['cumrefreeze'].values = self.cumrefreeze_output
                 ds['vaporliquid'].values = self.vaporliquid_output
@@ -1837,7 +1851,7 @@ class Output():
         time_elapsed = f'{time_elapsed:.1f} s'
         elev = str(args.elev)+' m a.s.l.'
 
-        # get information on variable sources
+        # get information on variable sources (AWS or reanalysis)
         which_re = prms.reanalysis
         re_str = ''
         if args.use_AWS:
@@ -1857,6 +1871,13 @@ class Output():
             AWS_str = 'none'
             which_AWS = 'none'
         
+        # get information about bias correction
+        if args.use_AWS:
+            corr_vars = [v for v in prms.bias_vars if v not in measured]
+        else:
+            corr_vars = prms.bias_vars
+        corr_str = ', '.join(corr_vars)
+        
         # store new attributes
         with xr.open_dataset(self.out_fn) as dataset:
             ds = dataset.load()
@@ -1867,6 +1888,7 @@ class Output():
                                  which_AWS=which_AWS,
                                  from_reanalysis=re_str,
                                  which_re=which_re,
+                                 bias_corrected=corr_str,
                                  run_start=str(args.startdate),
                                  run_end=str(args.enddate),
                                  model_run_date=str(pd.Timestamp.today()),

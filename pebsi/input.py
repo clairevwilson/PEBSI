@@ -51,7 +51,7 @@ use_AWS_site = False                        # True to override site (lat, lon, e
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','SWin','temp','rh']     # Vars to correct by quantile mapping
+bias_vars = ['wind','temp','rh']     # Vars to correct by quantile mapping
     
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
@@ -111,7 +111,7 @@ grainsize_ds = xr.open_dataset(grainsize_fp.replace('##',str(initSSA)))
 sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
-precgrad = 0.000130         # Precipitation gradient with elevation [% m-1]
+precgrad = 0.000699         # Precipitation gradient with elevation [% m-1] GULKANA 0.000130 WOLVERINE 0.001462
 lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]

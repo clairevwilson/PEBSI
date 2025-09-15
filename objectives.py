@@ -223,8 +223,8 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,label=None,plot_var='mb',color='
         sds = ds.sel(time=summer_dates).sum()
         ads = ds.sel(time=annual_dates).sum()
         winter_mb = wds.accum + wds.refreeze - wds.melt
-        internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values
-        internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values - previous_internal
+        internal_acc = ds.sel(time=summer_dates[-1]).cumrefreeze.values
+        internal_acc = ds.sel(time=summer_dates[-1]).cumrefreeze.values - previous_internal
         previous_internal = internal_acc
         summer_mb = sds.accum + sds.refreeze - sds.melt - internal_acc
         annual_mb = ads.accum + ads.refreeze - ads.melt - internal_acc
