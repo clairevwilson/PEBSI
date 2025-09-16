@@ -439,16 +439,7 @@ class Climate():
         """
         # open .csv with quantile mapping
         bias_fp = prms.bias_fp.replace('METHOD','quantile_mapping').replace('VAR',var)
-        if self.args.glac_no == '01.00570' and var == 'temp':
-            bias_fp = bias_fp.replace('GLACIER', 'wolverine_elevgulkana')
-        elif self.args.glac_no == '01.00570':
-            bias_fp = bias_fp.replace('GLACIER', 'wolverine')
-        elif self.args.glac_no == '01.09162' and var == 'temp':
-            bias_fp = bias_fp.replace('GLACIER','gulkana_elevwolverine')
-        elif self.args.glac_no == '01.09162':
-            bias_fp = bias_fp.replace('GLACIER','gulkana')
-        else:
-            bias_fp = bias_fp.replace('GLACIER', self.args.glac_name)
+        bias_fp = bias_fp.replace('GLACIER', self.args.glac_name)
         assert os.path.exists(bias_fp), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fp)
         
