@@ -51,7 +51,7 @@ use_AWS_site = False                        # True to override site (lat, lon, e
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','temp','rh']     # Vars to correct by quantile mapping
+bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping
     
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
