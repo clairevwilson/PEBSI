@@ -95,14 +95,17 @@ if args.site == 'Z':
     args.glac_no = '01.00570'
     args.startdate = '2021-08-01'
     args.enddate = '2025-05-01'
+    eb_prms.bias_vars = ['wind','temp','rh','SWin']
 if args.site == 'T':
     args.glac_no = '01.00570'
     args.startdate = '2012-08-01'
     args.enddate = '2025-05-01'
+    eb_prms.bias_vars = ['wind','temp','rh','SWin']
 if args.site == 'EC':
     args.glac_no = '01.09162'
     args.startdate = '2015-08-01'
     args.enddate = '2025-05-01'
+    eb_prms.bias_vars = ['wind','temp','rh','SWin']
 if args.site == 'KPS':
     args.glac_no = '01.22193'
     args.startdate = '2015-08-01'
