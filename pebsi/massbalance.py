@@ -315,7 +315,7 @@ class massBalance():
         small_surf_layer = layers.lheight[0] < 1e-3
 
         # check conditions
-        if True: #np.any(new_layer_cond) and not small_surf_layer:
+        if np.any(new_layer_cond) and not small_surf_layer:
             # check if there is enough snow to create a new layer (1 mm cutoff)
             if new_height < 1e-3:
                 # delay small amounts of snowfall: avoids computational issues

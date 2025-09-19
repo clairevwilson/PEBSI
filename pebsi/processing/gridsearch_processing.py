@@ -41,7 +41,7 @@ all_sites = sitedict['long']+sitedict['2024']+['mean','median']                 
 # USER OPTIONS
 run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search
             '2024':{'date':'08_02', 'idx':'0'},
-            'firn':{'date':'09_08','idx':'0'} # 08_27
+            'firn':{'date':'09_15','idx':'0'} # 08_27
             }
 
 # PARAMETERS
@@ -87,7 +87,7 @@ def get_percentile(result_dict, error, percentile=50, method='MAE',plot=False):
             if '2024' in error:
                 sites = sitedict['2024'] + ['mean']
             else:
-                sites = ['KPS'] + ['mean'] # sitedict['long']
+                sites = sitedict['firn'] + ['mean'] # sitedict['long']
             for site in sites:
                 all_error.append(result_dict[p1][p2][site][error+'_'+method])
     if plot:

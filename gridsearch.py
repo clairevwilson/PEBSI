@@ -127,7 +127,7 @@ for kp in params['kp']:
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
-        all_runs.append((args.site, lr, kp, args_run.out))
+        all_runs.append((args_run.site, lr, kp, args_run.out))
 
         # Specify attributes for output file
         store_attrs = {'lapse_rate':lr,'kp':kp}

@@ -10,7 +10,7 @@ import pebsi.massbalance as mb
 import pebsi.input as prms
 
 # User info
-sites = ['Z'] # Sites to run in parallel 'EC','T','Z'
+sites = ['KPS','EC','T','Z'] # Sites to run in parallel 'EC','T','Z'
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 n_runs_ahead = 0    # Step if you're going to run this script more than once
 
@@ -19,7 +19,6 @@ args = sim.get_args()
 args.startdate = '1980-04-15 00:00'
 args.enddate = '2025-05-20 12:00'
 args.store_data = True              # Ensures output is stored
-args.glac_no = '01.00570'
 args.use_AWS = False
 if 'trace' in prms.machine:
     prms.output_filepath = '/trace/group/rounce/cvwilson/Output/'
@@ -40,26 +39,24 @@ def pack_vars():
         # Parse different glaciers
         if site == 'EC':
             # Wolverine
+            prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.09162'
             args_run.kp = 1.75
-            args_run.lapse_rate = -7
+            args_run.lapse_rate = -8.5
             glacier = 'Wolverine'
         elif site == 'KPS':
             # Kahiltna
-            args_run.startdate = '2015-08-01'
-            args_run.enddate = '2025-05-01'
+            prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
             args_run.kp = 2
-            args_run.lapse_rate = -7
+            args_run.lapse_rate = -4.5
             glacier = 'Kahiltna'
         else:
             # Gulkana
-            args_run.startdate = '2021-08-01'
             prms.bias_vars = ['wind','temp','SWin','rh']
-            args_run.enddate = '2025-05-01'
             args_run.glac_no = '01.00570'
-            args_run.kp = 3
-            args_run.lapse_rate = -7
+            args_run.kp = 3.5
+            args_run.lapse_rate = -5
             glacier = 'Gulkana'
 
         # Output name
@@ -84,6 +81,7 @@ def run_model_parallel(list_inputs):
     # Loop through the variable sets
     for inputs in list_inputs:
         # Unpack inputs
+        assert 1==0
         args,climate,store_attrs = inputs
         
         # Start timer
