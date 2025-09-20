@@ -1877,6 +1877,7 @@ class Output():
         else:
             corr_vars = prms.bias_vars
         corr_str = ', '.join(corr_vars)
+        corr_str = 'none' if corr_str == '' else corr_str
         
         # store new attributes
         with xr.open_dataset(self.out_fn) as dataset:
@@ -1887,7 +1888,7 @@ class Output():
                                  from_AWS=AWS_str,
                                  which_AWS=which_AWS,
                                  from_reanalysis=re_str,
-                                 which_re=which_re,
+                                 which_reanalysis=which_re,
                                  bias_corrected=corr_str,
                                  run_start=str(args.startdate),
                                  run_end=str(args.enddate),
