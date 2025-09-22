@@ -90,17 +90,18 @@ class Climate():
             else:
                 # load data and tell the model to skip getting climate
                 self.loaded_climate = True
-                self.cds = xr.open_dataset(fn_data)
+                cds = xr.open_dataset(fn_data)
 
                 # replace dates with dates from cds
-                args.startdate = pd.to_datetime(self.cds.time.values[0])
-                args.enddate = pd.to_datetime(self.cds.time.values[-1])
+                args.startdate = pd.to_datetime(cds.time.values[0])
+                args.enddate = pd.to_datetime(cds.time.values[-1])
                 self.dates = pd.date_range(args.startdate,args.enddate,freq='h')
                 self.dates_UTC = self.dates - args.timezone
                 self.n_time = len(self.dates)
+                self.cds = cds
 
                 # check which variables are stored as measured in cds
-                self.measured_vars = [var for var in self.cds.variables if 'measured' in self.cds[var].attrs]
+                self.measured_vars = [v for v in cds.variables if 'measured' in cds[v].attrs]
                 return
 
         # did not load dataset so need to make it
