@@ -59,8 +59,10 @@ def get_args(parse=True):
                         help='use dates from input AWS data?')
     
     # USER OPTIONS
-    parser.add_argument('-use_AWS', action='store_true',
-                        default=prms.use_AWS,help='use AWS or just reanalysis?')
+    parser.add_argument('-use_AWS', action='store_true',default=prms.use_AWS,
+                        help='use AWS or just reanalysis?')
+    parser.add_argument('-cds','--input_climate',action='store_true',
+                        help='use existing cds?')
     parser.add_argument('-store_data', action='store_true',
                         default=prms.store_data, help='store the model output?')
     parser.add_argument('-debug', action='store_true',
@@ -205,11 +207,11 @@ def get_shading(args):
     args.store = ['result','result_plot','search_plot']
 
     # check if we can index the lat/lon for this site
-    site_fp = args.glac_fp + 'site_constants.csv'
-    if os.path.exists(site_fp):
+    site_fn = args.glac_fp + 'site_constants.csv'
+    if os.path.exists(site_fn):
         # open site constants file and check if our site is there
-        site_df = pd.read_csv(site_fp,index_col='site')
-        assert args.site in site_df.index, f'Add lat/lon for {args.site} in site_constants.csv'
+        site_df = pd.read_csv(site_fn,index_col='site')
+        assert args.site in site_df.index, f'Add lat/lon for {args.site} in {args.glacier}/site_constants.csv'
         
         # grab the lat/lon from site_constants
         args.lat = site_df.loc[args.site,'lat']
@@ -257,7 +259,7 @@ def check_inputs(glac_no, args):
     args : command line arguments
     """
     # check if the RGI ID is in the metadata file
-    all_df = pd.read_csv(prms.metadata_fp,index_col=0,converters={0: str})
+    all_df = pd.read_csv(prms.metadata_fn,index_col=0,converters={0: str})
     assert glac_no in all_df.index, f'Add {glac_no} to data/glacier_metadata.csv'
 
     # load the metadata for the glacier
@@ -275,23 +277,23 @@ def check_inputs(glac_no, args):
             args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
 
     # specify filepaths to args
-    args.shading_fp = prms.shading_fp.replace('GLACIER',args.glac_name).replace('SITE',args.site)
-    args.dem_fp = prms.dem_fp.replace('GLACIER', args.glac_name)
+    args.shading_fn = prms.shading_fn.replace('GLACIER',args.glac_name).replace('SITE',args.site)
+    args.dem_fn = prms.dem_fn.replace('GLACIER', args.glac_name)
     args.glac_fp = prms.glac_fp.replace('GLACIER', args.glac_name)
 
     # check if the shading file exists
-    if not os.path.exists(args.shading_fp):
+    if not os.path.exists(args.shading_fn):
         args = get_shading(args)
     
     # load site constants table
-    site_fp = args.glac_fp + 'site_constants.csv'
-    site_df = pd.read_csv(site_fp,index_col='site')
+    site_fn = args.glac_fp + 'site_constants.csv'
+    site_df = pd.read_csv(site_fn,index_col='site')
 
     # update args from the site table
     args = get_site_table(site_df, args)
 
     # check if time should be taken from AWS data
-    if args.dates_from_data:
+    if args.dates_from_data and args.use_AWS:
         cdf = pd.read_csv(args.AWS_fn,index_col=0)
         cdf.index = pd.to_datetime(cdf.index)
 
@@ -307,6 +309,11 @@ def check_inputs(glac_no, args):
     if args.out == '':
         model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
         args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
+        i = 0
+        while os.path.exists(args.out+f'{i}.nc'):
+            i += 1
+        args.out += str(i)
+        args.out += '.nc'
     
     if args.debug:
         print('~ Inputs verified ~')
@@ -335,13 +342,15 @@ def initialize_model(glac_no,args):
     # initialize the climate class
     climate = Climate(args)
 
-    # load in available AWS data, then reanalysis
-    if args.use_AWS:
-        need_vars = climate.get_AWS(args.AWS_fn)
-        if len(need_vars) > 1:
-            climate.get_reanalysis(need_vars)
-    else:
-        climate.get_reanalysis(climate.all_vars)
+    # check if already loaded cds
+    if not climate.loaded_climate:
+        # load in available AWS data, then reanalysis
+        if args.use_AWS:
+            need_vars = climate.get_AWS(args.AWS_fn)
+            if len(need_vars) > 1:
+                climate.get_reanalysis(need_vars)
+        else:
+            climate.get_reanalysis(climate.all_vars)
 
     # check the climate dataset is ready to go
     climate.check_ds()

@@ -186,7 +186,7 @@ class massBalance():
 
         # optionally store spectral albedo
         if prms.store_bands:
-            surface.albedo_df.to_csv(prms.albedo_out_fp.replace('.csv',f'_{self.args.elev}.csv'))
+            surface.albedo_df.to_csv(prms.albedo_out_fn.replace('.csv',f'_{self.args.elev}.csv'))
         
         # delete temporary files
         self.delete_temp_files()
@@ -1481,8 +1481,8 @@ class massBalance():
                 os.remove(self.surface.snicar_fn)
 
         # delete ice spectrum file
-        if os.path.exists(self.surface.ice_spectrum_fp):
-            os.remove(self.surface.ice_spectrum_fp)
+        if os.path.exists(self.surface.ice_spectrum_fn):
+            os.remove(self.surface.ice_spectrum_fn)
         return
 
     def exit(self,failed=True):
@@ -1523,11 +1523,6 @@ class Output():
         """
         # get unique filename
         self.out_fn = prms.output_filepath + args.out
-        i = 0
-        while os.path.exists(self.out_fn+f'{i}.nc'):
-            i += 1
-        self.out_fn += str(i)
-        self.out_fn += '.nc'
 
         # info needed to create the output file
         self.n_timesteps = len(time)

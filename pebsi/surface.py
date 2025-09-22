@@ -47,7 +47,7 @@ class Surface():
         self.spectral_weights = np.ones(1)
 
         # get shading df and initialize surrounding albedo
-        self.shading_df = pd.read_csv(args.shading_fp,index_col=0)
+        self.shading_df = pd.read_csv(args.shading_fn,index_col=0)
         self.shading_df.index = pd.to_datetime(self.shading_df.index)
         self.albedo_surr = prms.albedo_fresh_snow
 
@@ -57,18 +57,18 @@ class Surface():
             self.albedo_df = pd.DataFrame(np.zeros((0,480)),columns=bands)
 
         # get the underlying ice spectrum
-        clean_ice = pd.read_csv(prms.clean_ice_fp,names=[''])
+        clean_ice = pd.read_csv(prms.clean_ice_fn,names=[''])
         # find albedo of the base spectrum from the filename
-        albedo_string = prms.clean_ice_fp.split('bba')[-1].split('.')[0]
+        albedo_string = prms.clean_ice_fn.split('bba')[-1].split('.')[0]
         bba = int(albedo_string) / (10 ** len(albedo_string))
         # scale the new spectrum by the ice albedo
         ice_point_spectrum = clean_ice * args.a_ice / bba
         # name file for ice spectrum
-        clean_ice_fn = prms.clean_ice_fp.split('/')[-1]
-        self.ice_spectrum_fp = prms.clean_ice_fp.replace(clean_ice_fn,f'gulkana{args.site}_ice_spectrum_{args.task_id}.csv')
+        clean_ice_fn = prms.clean_ice_fn.split('/')[-1]
+        self.ice_spectrum_fn = prms.clean_ice_fn.replace(clean_ice_fn,f'gulkana{args.site}_ice_spectrum_{args.task_id}.csv')
         # store new spectrum (will be deleted after run completion)
         df_spectrum = pd.DataFrame(ice_point_spectrum)
-        df_spectrum.to_csv(self.ice_spectrum_fp, index=False, header=False)
+        df_spectrum.to_csv(self.ice_spectrum_fn, index=False, header=False)
 
         # parallel runs need separate input files to access
         if args.task_id != -1:
@@ -85,7 +85,7 @@ class Surface():
                 # problem in the SNICAR input file: create a new one
                 self.reset_SNICAR(self.snicar_fn)
         else:
-            self.snicar_fn = prms.snicar_input_fp
+            self.snicar_fn = prms.snicar_input_fn
 
         # need some initial value for cloud cover
         self.tcc = 0.5
@@ -419,7 +419,7 @@ class Surface():
             list_doc['ICE'][var] = [list_doc['ICE'][var][0]] * nlayers
 
         # filepath for ice albedo
-        list_doc['PATHS']['SFC'] = self.ice_spectrum_fp.split('biosnicar-py/')[-1]
+        list_doc['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
 
         # solar zenith angle
         lat = self.climate.lat
@@ -447,7 +447,7 @@ class Surface():
         self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
         return albedo,spectral_weights
     
-    def reset_SNICAR(self,fp):
+    def reset_SNICAR(self,fn):
         """
         Checks if SNICAR inputs file is functional.
         If not, generates a new one from a default
@@ -455,19 +455,19 @@ class Surface():
 
         Parameters
         ----------
-        fp : str
+        fn : str
             Filepath to the inputs.yaml file
         """
         # remove old file if it exists
-        if os.path.exists(fp):
-            os.remove(fp)
+        if os.path.exists(fn):
+            os.remove(fn)
 
         # open the base inputs file
-        with open(prms.snicar_input_fp, 'rb') as src_file:
+        with open(prms.snicar_input_fn, 'rb') as src_file:
             file_contents = src_file.read()
 
-        # copy the base inputs file to fp
-        with open(fp, 'wb') as dest_file:
+        # copy the base inputs file to fn
+        with open(fn, 'wb') as dest_file:
             dest_file.write(file_contents)
         return
     

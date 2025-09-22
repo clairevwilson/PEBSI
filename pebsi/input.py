@@ -16,29 +16,31 @@ store_data = False      # Default to saving data?
 machine = socket.gethostname()
 # All filepaths are relative to PEBSI/
 # GLACIER
-metadata_fp = 'data/glacier_metadata.csv'                   # Glacier metadata filename
+metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
 RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
 AWS_fp = '../climate_data/AWS/Processed/'                   # Weather station data filepath
 AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # SNICAR
-grainsize_fp = 'data/grainsize/drygrainsize(SSAin=##).nc'   # Grain size evolution lookup table filepath
-snicar_input_fp = 'biosnicar-py/biosnicar/inputs.yaml'      # SNICAR input filepath
-clean_ice_fp = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
+grainsize_fn = 'data/grainsize/drygrainsize(SSAin=##).nc'   # Grain size evolution lookup table filepath
+snicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'      # SNICAR input filepath
+clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 # INITIAL CONDITIONS
 initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
 initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
 initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
 initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
 # SHADING
-dem_fp = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
-shading_fp = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
+dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
+shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-bias_fp = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
+bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 climate_fp = '../climate_data/'                             # Climate data filepath
+cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load (see climate_out_fn)
 # OUTPUT
 output_filepath = '../Output/'                              # Output filepath
-albedo_out_fp = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
+albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
+cds_output_fn = 'default'                                   # 'default' or climate dataset filename for reproducibility
 
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME
@@ -51,8 +53,8 @@ use_AWS_site = False                        # True to override site (lat, lon, e
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','temp','rh']     # Vars to correct by quantile mapping # ,'SWin'
-    
+bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping # ,'SWin'
+
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
 initialize_temp = 'interpolate'     # 'interpolate' or 'ripe'
@@ -104,7 +106,7 @@ band_indices = {}           # dictionary for storing spectral albedo
 for i in np.arange(0,480):
     band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
-grainsize_ds = xr.open_dataset(grainsize_fp.replace('##',str(initSSA)))
+grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA)))
 
 # ========== PARAMETERS and CONSTANTS ==========
 # <<<<<< Climate downscaling >>>>>

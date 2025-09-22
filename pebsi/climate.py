@@ -47,13 +47,16 @@ class Climate():
         self.args = args
         self.dates = pd.date_range(args.startdate,args.enddate,freq='h')
         self.dates_UTC = self.dates - args.timezone
-        n_time = len(self.dates)
 
         # specify glacier and time information
         self.lat = args.lat
         self.lon = args.lon
-        self.n_time = n_time
+        self.n_time = len(self.dates)
         self.elev = args.elev
+
+        # list all required variables
+        self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
+                            'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
 
         # find median elevation of the glacier from RGI
         RGI_region = args.glac_no.split('.')[0]
@@ -67,10 +70,44 @@ class Climate():
         else:
             self.median_elev = self.elev
 
-        # define reanalysis variables
+        # set output filename for storing .nc
+        self.store_cds = prms.store_climate
+        if prms.cds_output_fn == 'default':
+            cds_fn = args.out.replace('.nc','_climate.nc')
+            self.cds_output_fn = prms.climate_fp + cds_fn
+        else:
+            self.cds_output_fn = prms.climate_fp + prms.cds_output_fn
+
+        # get data from existing .nc or from AWS/MERRA-2
+        if str(bool(args.input_climate)) != 'False':
+            # open data from existing .nc
+            cds_input_fn = prms.cds_input_fn.replace('GLACIER', args.glac_name)
+            fn_data = prms.climate_fp + cds_input_fn.replace('SITE', args.site)
+            if not os.path.exists(fn_data):
+                print(f'Climate data not found: getting new cds and saving to {fn_data}')
+                self.store_cds = True
+                self.cds_output_fn = fn_data
+            else:
+                # load data and tell the model to skip getting climate
+                self.loaded_climate = True
+                self.cds = xr.open_dataset(fn_data)
+
+                # replace dates with dates from cds
+                args.startdate = pd.to_datetime(self.cds.time.values[0])
+                args.enddate = pd.to_datetime(self.cds.time.values[-1])
+                self.dates = pd.date_range(args.startdate,args.enddate,freq='h')
+                self.dates_UTC = self.dates - args.timezone
+                self.n_time = len(self.dates)
+
+                # check which variables are stored as measured in cds
+                self.measured_vars = [var for var in self.cds.variables if 'measured' in self.cds[var].attrs]
+                return
+
+        # did not load dataset so need to make it
+        self.loaded_climate = False
+
+        # create dictionary containing reanalysis filenames
         self.get_vardict()
-        self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
-                            'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
         if not self.args.use_AWS:
             self.measured_vars = []
 
@@ -100,6 +137,7 @@ class Climate():
                 sp = (['time'],nans,{'units':'Pa'})
                 ),
                 coords = dict(time=(['time'],self.dates)))
+            
         return
     
     def get_AWS(self,fp):
@@ -305,21 +343,22 @@ class Climate():
         self.cds['wind'].values = wind
         self.cds['winddir'].values = winddir
 
-        if prms.reanalysis == 'MERRA2':
-            # correct MERRA-2 variables in inputs list
-            if self.args.debug and len(prms.bias_vars) > 0:
-                print('~ Applying quantile mapping for:',prms.bias_vars)
-            for var in prms.bias_vars:
-                from_MERRA = True if not self.args.use_AWS else var in self.need_vars
-                if from_MERRA:
-                    self.bias_adjust_qm(var)
+        if not self.loaded_climate:
+            if prms.reanalysis == 'MERRA2':
+                # correct MERRA-2 variables in inputs list
+                if self.args.debug and len(prms.bias_vars) > 0:
+                    print('~ Applying quantile mapping for:',prms.bias_vars)
+                for var in prms.bias_vars:
+                    from_MERRA = True if not self.args.use_AWS else var in self.need_vars
+                    if from_MERRA:
+                        self.bias_adjust_qm(var)
 
-        # adjust elevation dependent variables
-        self.adjust_to_elevation()
-        
-        # adjust MERRA-2 deposition by reduction coefficient
-        if prms.reanalysis == 'MERRA2' and prms.adjust_deposition:
-            self.adjust_dep()
+            # adjust elevation dependent variables
+            self.adjust_to_elevation()
+            
+            # adjust MERRA-2 deposition by reduction coefficient
+            if prms.reanalysis == 'MERRA2' and prms.adjust_deposition:
+                self.adjust_dep()
 
         # check all variables are there
         failed = []
@@ -338,10 +377,15 @@ class Climate():
             self.exit()
 
         # store the dataset as a netCDF
-        if prms.store_climate:
-            out_fp = prms.output_filepath + self.args.out + 'climate'
-            self.cds.to_netcdf(out_fp+'.nc')
-            print('Climate dataset saved to',out_fp+'.nc')
+        if self.store_cds:
+            # add measured boolean to output
+            for var in self.cds.variables:
+                if var in self.measured_vars:
+                    self.cds[var].attrs['measured'] = 'True'
+            
+            # store cds
+            self.cds.to_netcdf(self.cds_output_fn)
+            print(f'Climate dataset saved to {self.cds_output_fn}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
@@ -438,10 +482,10 @@ class Climate():
             Variable to bias correct
         """
         # open .csv with quantile mapping
-        bias_fp = prms.bias_fp.replace('METHOD','quantile_mapping').replace('VAR',var)
-        bias_fp = bias_fp.replace('GLACIER', self.args.glac_name)
-        assert os.path.exists(bias_fp), f'Quantile mapping file does not exist for {var}'
-        bias_df = pd.read_csv(bias_fp)
+        bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
+        bias_fn = bias_fn.replace('GLACIER', self.args.glac_name)
+        assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
+        bias_df = pd.read_csv(bias_fn)
         
         # interpolate values according to quantile mapping
         values = self.cds[var].values
@@ -483,8 +527,8 @@ class Climate():
         flat = str(int(np.floor(self.lat/10)*10))
         flon = str(int(np.floor(self.lon/10)*10))
         tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
-
         
+        ####### FIRN THING ************
         tag = self.args.glac_name + '_alltime'
 
         # update filenames for MERRA-2 (need grid lat/lon)
