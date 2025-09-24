@@ -309,11 +309,13 @@ def check_inputs(glac_no, args):
     if args.out == '':
         model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
         args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
-        i = 0
-        while os.path.exists(args.out+f'{i}.nc'):
-            i += 1
-        args.out += str(i)
-        args.out += '.nc'
+    
+    # make file name unique by adding an indexer
+    i = 0
+    while os.path.exists(args.out+f'{i}.nc'):
+        i += 1
+    args.out += str(i)
+    args.out += '.nc'
     
     if args.debug:
         print('~ Inputs verified ~')

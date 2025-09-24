@@ -12,7 +12,7 @@ import pebsi.input as prms
 # User info
 sites = ['T','Z','EC','KPS'] # Sites to run in parallel 
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
-n_runs_ahead = 8    # Step if you're going to run this script more than once
+n_runs_ahead = 1    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
@@ -45,8 +45,8 @@ def pack_vars():
             # Wolverine
             # prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.09162'
-            args_run.kp = 1.75
-            args_run.lapse_rate = -8.5
+            args_run.kp = 1.650 # 1.75
+            args_run.lapse_rate = -6.5 # -8.5
             glacier = 'Wolverine'
             if test_run:
                 args_run.startdate = '2015-08-01'
@@ -55,8 +55,8 @@ def pack_vars():
             # Kahiltna
             # prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
-            args_run.kp = 2
-            args_run.lapse_rate = -4.5
+            args_run.kp = 2.470 # 2
+            args_run.lapse_rate = -6.5 # -4.5
             glacier = 'Kahiltna'
             if test_run:
                 args_run.startdate = '2015-08-01'
@@ -65,8 +65,11 @@ def pack_vars():
             # Gulkana
             # prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.00570'
-            args_run.kp = 3.5
-            args_run.lapse_rate = -5
+            if site == 'T':
+                args_run.kp = 3.665 # 3.5
+            elif site == 'Z':
+                args_run.kp = 3.774
+            args_run.lapse_rate = -6.5 # -5
             glacier = 'Gulkana'
             if test_run and args_run.site == 'Z':
                 args_run.startdate = '2021-08-01'

@@ -113,7 +113,7 @@ class Climate():
             self.measured_vars = []
 
         # create empty dataset
-        nans = np.ones(n_time)*np.nan
+        nans = np.ones(self.n_time)*np.nan
         self.cds = xr.Dataset(data_vars = dict(
                 SWin = (['time'],nans,{'units':'J m-2'}),
                 SWout = (['time'],nans,{'units':'J m-2'}),

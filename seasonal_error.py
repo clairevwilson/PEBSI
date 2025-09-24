@@ -188,10 +188,11 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
         else:
             last_fall_date = np.nan
         # Fill nans
-        if glacier == 'Gulkana':
-            spring_date = str(year)+'-04-20 00:00'
-        else:
-            spring_date = str(year) + '-05-20 00:00'
+        if str(spring_date) == 'nan':
+            if glacier == 'Gulkana':
+                spring_date = str(year)+'-04-20 00:00'
+            else:
+                spring_date = str(year) + '-05-20 00:00'
         if str(fall_date) == 'nan':
             fall_date = str(year)+'-08-20 00:00'
         if str(last_fall_date) == 'nan':
