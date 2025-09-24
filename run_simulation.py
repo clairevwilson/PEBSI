@@ -355,7 +355,6 @@ def initialize_model(glac_no,args):
 
     # check the climate dataset is ready to go
     climate.check_ds()
-    climate.cds['LWin'] *= 0.9
 
     # ===== PRINT MODEL RUN INFO =====
     start = pd.to_datetime(args.startdate)
