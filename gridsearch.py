@@ -55,7 +55,7 @@ else:
 
 # Create output directory
 if 'trace' in eb_prms.machine:
-    eb_prms.output_filepath = '/trace/group/rounce/cvwilson/Output/'
+    eb_prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
 # Store all variables
 args.store_data = True
 eb_prms.store_vars = ['MB','layers','temp','EB']
@@ -65,16 +65,16 @@ if repeat_run:
     print('Forcing run date to be', date)
     n_today = '0'
     out_fp = f'{date}_{args.site}_{n_today}/'
-    if not os.path.exists(eb_prms.output_filepath + out_fp):
-        os.mkdir(eb_prms.output_filepath + out_fp)
+    if not os.path.exists(eb_prms.output_fp + out_fp):
+        os.mkdir(eb_prms.output_fp + out_fp)
 else:
     date = str(pd.Timestamp.today()).replace('-','_')[5:10]
     n_today = 0
     out_fp = f'{date}_{args.site}_{n_today}/'
-    while os.path.exists(eb_prms.output_filepath + out_fp):
+    while os.path.exists(eb_prms.output_fp + out_fp):
         n_today += 1
         out_fp = f'{date}_{args.site}_{n_today}/'
-    os.mkdir(eb_prms.output_filepath + out_fp)
+    os.mkdir(eb_prms.output_fp + out_fp)
 
 # Transform params to strings for comparison
 for key in params:
@@ -88,7 +88,7 @@ set_no = 0  # Index for the parallel process
 
 # Storage for failed runs
 all_runs = []
-missing_fn = eb_prms.output_filepath + out_fp + 'missing.txt'
+missing_fn = eb_prms.output_fp + out_fp + 'missing.txt'
 
 # Dates depend on the site
 if args.site == 'Z':
@@ -156,7 +156,7 @@ def run_model_parallel(list_inputs):
         args,climate,store_attrs = inputs
 
         # Check if model run should be performed
-        if not os.path.exists(eb_prms.output_filepath + args.out + '0.nc'):
+        if not os.path.exists(eb_prms.output_fp + args.out + '0.nc'):
             try:
                 # Start timer
                 start_time = time.time()
@@ -181,7 +181,7 @@ def run_model_parallel(list_inputs):
             except Exception as e:
                 print('An error occurred at site',args.site,'with lapserate =',args.lapse_rate,'kp =',args.kp,' ... removing',args.out)
                 traceback.print_exc()
-                os.remove(eb_prms.output_filepath + args.out + '0.nc')
+                os.remove(eb_prms.output_fp + args.out + '0.nc')
     return
 
 # Run model in parallel
@@ -191,7 +191,7 @@ with Pool(n_processes) as processes_pool:
 missing = []
 for run in all_runs:
     fn = run[-1]
-    if not os.path.exists(eb_prms.output_filepath + fn + '0.nc'):
+    if not os.path.exists(eb_prms.output_fp + fn + '0.nc'):
         missing.append(run)
 n_missing = len(missing)
 

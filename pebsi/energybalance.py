@@ -289,11 +289,12 @@ class energyBalance():
         
         if self.nanLWin and self.nanNR:
             # calculate LWin from air temperature
-            ezt = self.vapor_pressure(self.tempC)    # vapor pressure in hPa
+            ezt = self.sat_vapor_pressure(self.tempC) / 100   # vapor pressure in hPa
             Ecs = .23+ .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
             Ecl = 0.984               # cloud emissivity, Klok and Oerlemans, 2002
             Esky = Ecs*(1-self.tcc**2)+Ecl*self.tcc**2    # sky emissivity
             LWin = SIGMA_SB*(Esky*self.tempK**4)
+            print('! Using untested LWin method')
         elif not self.nanLWin:
             # take LWin from data
             LWin = self.LWin_ds/self.dt
@@ -387,8 +388,8 @@ class energyBalance():
             wind_2m = self.wind
 
         # transform humidity into mixing ratio (q) 
-        Ewz = self.vapor_pressure(self.tempC)  # vapor pressure at 2m
-        Ew0 = self.vapor_pressure(surftemp)    # vapor pressure at the surface
+        Ewz = self.sat_vapor_pressure(self.tempC)  # saturation vapor pressure at 2m
+        Ew0 = self.sat_vapor_pressure(surftemp)    # saturation vapor pressure at the surface
         qz = (self.rh/100)*0.622*(Ewz/(self.sp-Ewz))
         q0 = 1.0*0.622*(Ew0/(self.sp-Ew0))
 
@@ -520,7 +521,7 @@ class energyBalance():
         self.roughness = sigma / 1000
         return 
     
-    def vapor_pressure(self,airtemp,method='ARM'):
+    def sat_vapor_pressure(self,airtemp,method='ARM'):
         """
         Calculates vapor pressure [Pa] 
         from air temperature 

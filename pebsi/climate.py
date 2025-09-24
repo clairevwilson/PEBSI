@@ -300,32 +300,23 @@ class Climate():
         Adjusts elevation-dependent climate variables 
         (temperature, precip, surface pressure).
         """
-        # CONSTANTS
-        LAPSE_RATE = float(self.args.lapse_rate)
-        PREC_GRAD = prms.precgrad
-        PREC_FACTOR = float(self.args.kp)
-        GRAVITY = prms.gravity
-        R_GAS = prms.R_gas
-        MM_AIR = prms.molarmass_air
+        # Set copies of un-edited variables
+        self.original_temp = self.cds.temp.copy(deep=True).values
+        self.original_tp = self.cds.tp.copy(deep=True).values
+        self.original_sp = self.cds.sp.copy(deep=True).values
+        self.original_LWin = self.cds.LWin.copy(deep=True).values
 
         # TEMPERATURE: correct according to lapserate
-        temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
-        new_temp = self.cds.temp.values + LAPSE_RATE*(self.elev - temp_elev)/1000
+        self.temp_to_elevation()
             
         # PRECIP: correct according to precipitation gradient
-        tp_elev = self.median_elev
-        new_tp = self.cds.tp.values*(1+PREC_GRAD*(self.elev-tp_elev))*PREC_FACTOR
+        self.precip_to_elevation()
 
         # SURFACE PRESSURE: correct according to barometric law
-        sp_elev = self.AWS_elev if 'sp' in self.measured_vars else self.reanalysis_elev
-        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - self.elev) + 273.15
-        ratio = ((new_temp + 273.15) / temp_sp_elev) ** (-GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE))
-        new_sp = self.cds.sp.values * ratio
+        self.sp_to_elevation()
 
-        # Store adjusted values
-        self.cds.temp.values = new_temp.ravel()
-        self.cds.tp.values = new_tp.ravel()
-        self.cds.sp.values = new_sp.ravel()
+        # LONGWAVE: correct with elevation-dependent emissivity 
+        self.LWin_to_elevation()  
         return
     
     def check_ds(self):
@@ -471,6 +462,103 @@ class Climate():
         self.cds['bcdry'].values *= f
         self.cds['bcwet'].values *= f
         return
+
+    def temp_to_elevation(self):
+        """
+        Corrects air temperature at the site elevation
+        based on a linear lapse rate
+        """
+        # CONSTANTS
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+
+        # Get elevation of the original temperature data
+        temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
+        new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
+
+        # Update temperature in the cds
+        self.cds.temp.values = new_temp.ravel()
+        return
+
+    def precip_to_elevation(self):
+        """
+        Corrects precipitation at the site elevation
+        based on a % gradient
+        """
+        # CONSTANTS
+        PREC_GRAD = prms.precgrad
+        PREC_FACTOR = self.args.kp
+
+        # Get elevation of the precipitation data
+        tp_elev = self.median_elev
+        new_tp = self.original_tp*(1+PREC_GRAD*(self.elev-tp_elev))*PREC_FACTOR
+
+        # Update precip in the cds
+        self.cds.tp.values = new_tp.ravel()
+        return
+
+    def sp_to_elevation(self):
+        """
+        Corrects surface pressure according to barometric law
+        """
+        # CONSTANTS
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        GRAVITY = prms.gravity
+        R_GAS = prms.R_gas
+        MM_AIR = prms.molarmass_air
+        
+        # Get elevation of surface pressure data
+        sp_elev = self.AWS_elev if 'sp' in self.measured_vars else self.reanalysis_elev
+
+        # Adjust temperature from elevation of the site to elevation of the sp data
+        new_temp = self.cds.temp.values
+        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - self.elev) + 273.15
+
+        # Calculate new surface pressure with barometric law
+        ratio = ((new_temp + 273.15) / temp_sp_elev) ** (-GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE))
+        new_sp = self.original_sp * ratio
+
+        # Update surface pressure in the cds
+        self.cds.sp.values = new_sp.ravel()
+        return
+
+    def LWin_to_elevation(self):
+        """
+        Corrects incoming longwave by determining a
+        theoretical difference in longwave under clear 
+        sky conditions using the Brutsaert (1975) 
+        parameterization of emissivity (based on 
+        temperature and vapor pressure) and applying
+        this difference to the MERRA-2 longwave data.
+        """
+        # CONSTANTS
+        SIGMA_SB = prms.sigma_SB
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+
+        # Get temperature and RH data at the site and data location
+        rh = self.cds.rh.values             # RH assumed constant with elevation
+        temp_site = self.cds.temp.values    # Temperature already updated to self.elev
+        LW_elev = self.AWS_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
+        temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
+
+        # Store versions in Kelvin
+        temp_site_K = temp_site + 273.15
+        temp_LW_elev_K = temp_LW_elev + 273.15
+
+        # Calculate emissivity from temperature at each elevation
+        eps_site = self.emissivity_brutsaert(temp_site, rh)
+        eps_LW_elev = self.emissivity_brutsaert(temp_LW_elev, rh)
+
+        # Compute clear-sky longwave radiation at each elevation [W m-2]
+        LWin_clear_site = eps_site * SIGMA_SB * temp_site_K**4
+        LWin_clear_MERRA2 = eps_LW_elev * SIGMA_SB * temp_LW_elev_K**4
+
+        # Apply difference in clear-sky radiation to longwave data
+        delta_LW = (LWin_clear_site - LWin_clear_MERRA2) * 3600
+        new_LWin = self.original_LWin + delta_LW
+
+        # Update surface pressure in the cds
+        self.cds.LWin.values = new_LWin.ravel()
+        return
     
     def bias_adjust_qm(self,var):
         """
@@ -496,18 +584,48 @@ class Climate():
         self.cds[var].values = adjusted
         return
 
-    def getVaporPressure(self,airtemp):
+    def sat_vapor_pressure(self,airtemp,method='ARM'):
         """
-        Returns vapor pressure from air temperature.
+        Returns saturation vapor pressure [Pa] 
+        from air temperature 
 
         Parameters
         ==========
         airtemp : float
             Air temperature [C]
         """
-        return 610.94*np.exp(17.625*airtemp/(airtemp+243.04))
+        if method in ['ARM']:
+            P = 0.61094*np.exp(17.625*airtemp/(airtemp+243.04)) # kPa
+        elif method in ['Sonntag']:
+            # follows COSIPY
+            airtemp += 273.15
+            if airtemp > 273.15: # over water
+                P = 0.6112*np.exp(17.67*(airtemp-273.15)/(airtemp-29.66))
+            else: # over ice
+                P = 0.6112*np.exp(22.46*(airtemp-273.15)/(airtemp-0.55))
+        return P*1000
     
-    def getDewTemp(self,vap):
+    def emissivity_brutsaert(self, airtemp, rh):
+        """
+        Returns Brutsaert (1975) clear-sky atmospheric
+        emissivity from temperature and relative humidity
+        
+        Parameters
+        ==========
+        airtemp : float or np.array
+            Air temperature [C]
+        rh : float or np.array
+            Relative humidity [%]
+        """
+        # Get saturation vapor pressure
+        esat = self.sat_vapor_pressure(airtemp)
+
+        # Convert to actual vapor pressure (in hPa)
+        e_hPa = esat * (rh / 100) / 100
+
+        return 1.24 * (e_hPa / (airtemp + 273.15)) ** (1/7)
+    
+    def dew_point(self,vap):
         """
         Returns dewpoint air temperature from 
         vapor pressure.

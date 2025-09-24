@@ -21,11 +21,10 @@ args.enddate = '2025-05-20 12:00'
 args.store_data = True              # Ensures output is stored
 args.use_AWS = False
 if 'trace' in prms.machine:
-    prms.output_filepath = '/trace/group/rounce/cvwilson/Output/'
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
 
 # !!! CHANGE THESE
-prms.bias_vars = []
-test_run = False
+test_run = True
 
 # Determine number of runs for each process
 n_processes = len(sites)
@@ -43,7 +42,7 @@ def pack_vars():
         # Parse different glaciers
         if site == 'EC':
             # Wolverine
-            # prms.bias_vars = ['wind','temp','SWin','rh']
+            prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.09162'
             args_run.kp = 1.650 # 1.75
             args_run.lapse_rate = -6.5 # -8.5
@@ -53,7 +52,7 @@ def pack_vars():
                 args_run.enddate = '2025-05-01'
         elif site == 'KPS':
             # Kahiltna
-            # prms.bias_vars = ['wind','temp','rh']
+            prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
             args_run.kp = 2.470 # 2
             args_run.lapse_rate = -6.5 # -4.5
@@ -63,7 +62,7 @@ def pack_vars():
                 args_run.enddate = '2025-05-01'
         else:
             # Gulkana
-            # prms.bias_vars = ['wind','temp','SWin','rh']
+            prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.00570'
             if site == 'T':
                 args_run.kp = 3.665 # 3.5
@@ -79,7 +78,7 @@ def pack_vars():
                 args_run.enddate = '2025-05-01'
 
         # Output name
-        args_run.out = f'{glacier}_{run_date}_long{site}_noqm_'
+        args_run.out = f'{glacier}_{run_date}_long{site}_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'lapse_rate':str(args_run.lapse_rate),
