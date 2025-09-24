@@ -312,10 +312,9 @@ def check_inputs(glac_no, args):
     
     # make file name unique by adding an indexer
     i = 0
-    while os.path.exists(args.out+f'{i}.nc'):
+    while os.path.exists(prms.output_fp + args.out+f'{i}.nc'):
         i += 1
-    args.out += str(i)
-    args.out += '.nc'
+    args.out += str(i) + '.nc'
     
     if args.debug:
         print('~ Inputs verified ~')
@@ -356,6 +355,7 @@ def initialize_model(glac_no,args):
 
     # check the climate dataset is ready to go
     climate.check_ds()
+    climate.cds['LWin'] *= 0.9
 
     # ===== PRINT MODEL RUN INFO =====
     start = pd.to_datetime(args.startdate)

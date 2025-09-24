@@ -1522,7 +1522,7 @@ class Output():
         args : command-line args
         """
         # get unique filename
-        self.out_fn = prms.output_filepath + args.out
+        self.out_fn = prms.output_fp + args.out
 
         # info needed to create the output file
         self.n_timesteps = len(time)
@@ -1590,7 +1590,11 @@ class Output():
         
         # create the netcdf file to store output
         if args.store_data:
-            assert os.path.exists(prms.output_filepath), f'Create output folder at {prms.output_filepath}'
+            if not os.path.exists(prms.output_fp):
+                try:
+                    os.mkdir(prms.output_fp)
+                except:
+                    assert os.path.exists(prms.output_fp), f'Create output folder at {prms.output_filepath}'
             all_variables[self.vars_list].to_netcdf(self.out_fn)
 
         # ENERGY BALANCE OUTPUTS

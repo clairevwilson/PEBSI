@@ -27,10 +27,12 @@ from objectives import *
 
 # OPTIONS
 repeat_run = False   # True if restarting an already begun run
+n_runs_ahead = 0
 # Define items to vary
-vary = ['temp','wind','both']
-vary_by = [0.5, 0.8, 1, 1.25, 2]
-vary_by_temp = [-5, -2, 0, 2, 5]
+vary = ['both'] # 'both' for wind and temp
+vary_by = [1.5, 1.5, 2, 2]
+vary_by_temp = [-2, -5, -2, -5]
+# vary_by = ['none','wind','rh','temp','SWin']
 
 # Read command line args
 parser = sim.get_args(parse=False)
@@ -113,8 +115,16 @@ for var in vary:
         args_run = copy.deepcopy(args)
 
         # Set identifying output filename
-        args_run.out = out_fp + f'KPS_{date}_{var}{by}_'
+        by_mapped = vary_by_temp[bb]
+        args_run.out = out_fp + f'KPS_{date}_{var}{by}_{by_mapped}_'
         all_runs.append((args_run.site, var, by, args_run.out))
+
+        # Quantile mapping handled first
+        if var == 'qm':
+            if by == 'none':
+                eb_prms.bias_vars = []
+            else:
+                eb_prms.bias_vars = [by]
 
         # Get the climate
         climate_run, args_run = sim.initialize_model(args_run.glac_no,args_run)
@@ -126,8 +136,7 @@ for var in vary:
             by_mapped = vary_by_temp[bb]
             climate_run.cds['temp'] += by_mapped
             climate_run.cds['wind'] *= by
-            print(var, by_mapped, by)
-        else:
+        elif var != 'qm':
             climate_run.cds[var] *= by
 
         if var == 'rh':
@@ -137,7 +146,7 @@ for var in vary:
         store_attrs = {'varied':var,'by':by}
 
         # Set task ID for SNICAR input file
-        args_run.task_id = set_no
+        args_run.task_id = set_no + n_runs_ahead*n_processes
         args_run.run_id = run_no
 
         # Store model inputs

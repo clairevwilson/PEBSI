@@ -14,7 +14,7 @@ store_data = False      # Default to saving data?
 
 # ========== DIRECTORIES AND FILEPATHS ========== 
 machine = socket.gethostname()
-# All filepaths are relative to PEBSI/
+# ALL FILEPATHS ARE RELATIVE TO PEBSI/
 # GLACIER
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
@@ -38,7 +38,7 @@ bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias a
 climate_fp = '../climate_data/'                             # Climate data filepath
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load (see climate_out_fn)
 # OUTPUT
-output_filepath = '../Output/'                              # Output filepath
+output_fp = '../Output/'                                    # Output filepath
 albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
 cds_output_fn = 'default'                                   # 'default' or climate dataset filename for reproducibility
 
@@ -53,7 +53,7 @@ use_AWS_site = False                        # True to override site (lat, lon, e
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping # ,'SWin'
+bias_vars = ['wind','temp','rh']     # Vars to correct by quantile mapping # ,'SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
