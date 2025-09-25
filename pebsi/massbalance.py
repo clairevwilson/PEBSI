@@ -387,6 +387,7 @@ class massBalance():
         RFZ_GRAINSIZE = prms.rfz_grainsize
         FIRN_GRAINSIZE = prms.firn_grainsize
         ICE_GRAINSIZE = prms.ice_grainsize
+        CTOK = prms.celsius_to_kelvin
         dt = prms.daily_dt
 
         # get temperatures
@@ -413,10 +414,10 @@ class massBalance():
 
             # define values for lookup table
             dz = layers.lheight.copy()[idx]             # in m
-            T = layers.ltemp.copy()[idx] + 273.15       # in K
+            T = layers.ltemp.copy()[idx] + CTOK       # in K
             p = layers.ldensity.copy()[idx]             # in kg m-3
             grainsize = layers.lgrainsize.copy()[idx]   # in um
-            surftempK = surftemp + 273.15               # in K
+            surftempK = surftemp + CTOK               # in K
 
             # dry metamorphism
             if prms.constant_drdry:
@@ -431,7 +432,7 @@ class massBalance():
                             (T[1:-1]*dz[1:-1] + T[2:]*dz[2:]) / (dz[1:-1] + dz[2:])) / dz[1:-1]
                     dTdz[-1] = dTdz[-2] # bottom temp gradient isn't used, set to next layer up
                 elif len(idx) == 2: # use top ice layer for temp gradient
-                    T_2layer = np.array([surftempK,T[0],T[1],layers.ltemp[2]+273.15])
+                    T_2layer = np.array([surftempK,T[0],T[1],layers.ltemp[2]+CTOK])
                     depth_2layer = np.array([0,layers.ldepth[0],layers.ldepth[1],layers.ldepth[2]])
                     dTdz = (T_2layer[0:2] - T_2layer[2:]) / (depth_2layer[0:2] - depth_2layer[2:])
                 else: # single layer
@@ -983,6 +984,7 @@ class massBalance():
         rho = prms.constant_snowfall_density
         DENSITY_FRESH_SNOW = rho if rho else 50
         DENSITY_ICE = prms.density_ice
+        CTOK = prms.celsius_to_kelvin
         dt = prms.daily_dt
 
         # LAYERS IN
@@ -1022,7 +1024,7 @@ class massBalance():
             k = np.zeros_like(lp)
             b = np.zeros_like(lp)
             for layer,density in enumerate(lp[snowfirn_idx]):
-                lTK = lT[layer] + 273.15
+                lTK = lT[layer] + CTOK
                 if density < 550:
                     b[layer] = 1
                     k[layer] = 11*np.exp(-10160/(R*lTK))
@@ -1037,12 +1039,12 @@ class massBalance():
             NU_0 = 1e7      # Pa s
             RHO_0 = 50      # kg m-3
             k_S = 4000      # K
-            T_m = 0. + 273.15
+            T_m = 0. + CTOK
             for layer in snowfirn_idx:
                 weight_above = GRAVITY*np.sum(lm[:layer]+lw[:layer])
 
                 # get change in density
-                T_K = lT[layer] + 273.15
+                T_K = lT[layer] + CTOK
                 exp_term = np.exp(k_S/T_m - k_S/T_K - lp[layer]/RHO_0)
                 dRho = lp[layer]*weight_above/NU_0*exp_term
                 lp[layer] += dRho

@@ -10,9 +10,9 @@ import pebsi.massbalance as mb
 import pebsi.input as prms
 
 # User info
-sites = ['T','Z','EC','KPS'] # Sites to run in parallel 
+sites = ['KPS','T','Z','EC'] # Sites to run in parallel 'T','Z','EC',
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
-n_runs_ahead = 1    # Step if you're going to run this script more than once
+n_runs_ahead = 121    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
@@ -24,7 +24,7 @@ if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
 
 # !!! CHANGE THESE
-test_run = True
+test_run = False
 
 # Determine number of runs for each process
 n_processes = len(sites)
@@ -44,18 +44,22 @@ def pack_vars():
             # Wolverine
             prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.09162'
-            args_run.kp = 1.650 # 1.75
-            args_run.lapse_rate = -6.5 # -8.5
+            args_run.kp = 2 # 1.650 from data
+            args_run.lapse_rate = -8.5 # 
             glacier = 'Wolverine'
             if test_run:
                 args_run.startdate = '2015-08-01'
                 args_run.enddate = '2025-05-01'
+        # Gulkana parameters:     kp 3.5        lapse_rate -3.5
+        # Wolverine parameters:   kp 2      lapse_rate -8.5
+        # Kahiltna parameters:    kp 1.75      lapse_rate -4
+
         elif site == 'KPS':
             # Kahiltna
             prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
-            args_run.kp = 2.470 # 2
-            args_run.lapse_rate = -6.5 # -4.5
+            args_run.kp = 1.75 # 2.470 from data
+            args_run.lapse_rate = -4
             glacier = 'Kahiltna'
             if test_run:
                 args_run.startdate = '2015-08-01'
@@ -65,10 +69,10 @@ def pack_vars():
             prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.00570'
             if site == 'T':
-                args_run.kp = 3.665 # 3.5
+                args_run.kp = 3.665 # 3.665 from data
             elif site == 'Z':
-                args_run.kp = 3.774
-            args_run.lapse_rate = -6.5 # -5
+                args_run.kp = 3.5 # 3.774 from data
+            args_run.lapse_rate = -3.5
             glacier = 'Gulkana'
             if test_run and args_run.site == 'Z':
                 args_run.startdate = '2021-08-01'

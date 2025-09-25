@@ -36,6 +36,10 @@ class energyBalance():
             Timestamp to index the climate dataset.
         args : command-line arguments
         """
+        # CONSTANTS
+        SPH = prms.seconds_per_hour
+        CTOK = prms.celsius_to_kelvin
+
         # pull other classes from mass balance class
         climate = massbal.climate
         args = massbal.args
@@ -79,8 +83,8 @@ class energyBalance():
         self.args = args
 
         # define additional useful values
-        self.tempK = self.tempC + 273.15
-        self.prec =  self.tp / 3600     # tp is hourly total precip, prec is the rate in m/s
+        self.tempK = self.tempC + CTOK
+        self.prec =  self.tp / SPH     # tp is hourly total precip, prec is the rate in m/s
         self.rh = 100 if self.rh > 100 else self.rh
         self.get_roughness(surface.days_since_snowfall,layers)
 
@@ -278,10 +282,13 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+        # CONSTANTS
         SIGMA_SB = prms.sigma_SB
+        CTOK = prms.celsius_to_kelvin
+
         if self.nanLWout:
             # calculate LWout frmo surftemp
-            surftempK = surftemp+273.15
+            surftempK = surftemp + CTOK
             LWout = -SIGMA_SB*surftempK**4
         else:
             # take LWout from data
@@ -345,8 +352,10 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
-        # calculate ground flux from surface temperature
+        # CONSTANTS
         K_ICE = prms.k_ice
+        
+        # calculate ground flux from surface temperature
         if prms.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
         else:
@@ -531,15 +540,21 @@ class energyBalance():
         airtemp : float
             Air temperature [C]
         """
+        # CONSTANTS
+        CTOK = prms.celsius_to_kelvin
+
+        # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
             P = 0.61094*np.exp(17.625*airtemp/(airtemp+243.04)) # kPa
         elif method in ['Sonntag']:
             # follows COSIPY
-            airtemp += 273.15
-            if airtemp > 273.15: # over water
-                P = 0.6112*np.exp(17.67*(airtemp-273.15)/(airtemp-29.66))
+            airtemp += CTOK
+            if airtemp > CTOK: # over water
+                P = 0.6112*np.exp(17.67*(airtemp-CTOK)/(airtemp-29.66))
             else: # over ice
-                P = 0.6112*np.exp(22.46*(airtemp-273.15)/(airtemp-0.55))
+                P = 0.6112*np.exp(22.46*(airtemp-CTOK)/(airtemp-0.55))
+
+        # return vapor pressure in Pa
         return P*1000
 
     def diffuse_fraction(self,rad_glob,solar_zenith):

@@ -402,6 +402,12 @@ class Climate():
         ds : xr.Dataset
             Updated climate dataset
         """
+        # CONSTANTS
+        SPH = prms.seconds_per_hour
+        CTOK = prms.celsius_to_kelvin
+        GRAVITY = prms.gravity
+        DENSITY_WATER = prms.density_water
+
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
                        'rh':'%','sp':'Pa','tp':'m s-1','elev':'m',
@@ -417,18 +423,18 @@ class Climate():
         # check and make replacements
         if units_in != units_out:
             if var == 'temp' and units_in == 'K':
-                ds = ds - 273.15
+                ds = ds - CTOK
             elif var == 'rh' and units_in in ['-','0-1']:
                 ds  = ds * 100
             elif var == 'tp':
                 if units_in == 'kg m-2 s-1':
-                    ds = ds / 1000 * 3600
+                    ds = ds / DENSITY_WATER * SPH
                 elif units_in == 'm':
-                    ds = ds / 3600
+                    ds = ds / SPH
             elif var in ['SWin','LWin','NR'] and units_in == 'W m-2':
-                ds = ds * 3600
+                ds = ds * SPH
             elif var == 'elev' and units_in in ['m+2 s-2','m2 s-2']:
-                ds = ds / prms.gravity
+                ds = ds / GRAVITY
             else:
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
@@ -469,13 +475,13 @@ class Climate():
         based on a linear lapse rate
         """
         # CONSTANTS
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
 
-        # Get elevation of the original temperature data
+        # get elevation of the original temperature data
         temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
         new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
 
-        # Update temperature in the cds
+        # update temperature in the cds
         self.cds.temp.values = new_temp.ravel()
         return
 
@@ -486,13 +492,13 @@ class Climate():
         """
         # CONSTANTS
         PREC_GRAD = prms.precgrad
-        PREC_FACTOR = self.args.kp
+        PREC_FACTOR = float(self.args.kp)
 
-        # Get elevation of the precipitation data
+        # get elevation of the precipitation data
         tp_elev = self.median_elev
         new_tp = self.original_tp*(1+PREC_GRAD*(self.elev-tp_elev))*PREC_FACTOR
 
-        # Update precip in the cds
+        # update precip in the cds
         self.cds.tp.values = new_tp.ravel()
         return
 
@@ -501,23 +507,25 @@ class Climate():
         Corrects surface pressure according to barometric law
         """
         # CONSTANTS
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
         GRAVITY = prms.gravity
         R_GAS = prms.R_gas
         MM_AIR = prms.molarmass_air
+        CTOK = prms.celsius_to_kelvin
         
-        # Get elevation of surface pressure data
+        # get elevation of surface pressure data
         sp_elev = self.AWS_elev if 'sp' in self.measured_vars else self.reanalysis_elev
 
-        # Adjust temperature from elevation of the site to elevation of the sp data
+        # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.cds.temp.values
-        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - self.elev) + 273.15
+        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - self.elev) + CTOK
 
-        # Calculate new surface pressure with barometric law
-        ratio = ((new_temp + 273.15) / temp_sp_elev) ** (-GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE))
+        # calculate new surface pressure with barometric law
+        exponent = -GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE)
+        ratio = ((new_temp + CTOK) / temp_sp_elev) ** (exponent)
         new_sp = self.original_sp * ratio
 
-        # Update surface pressure in the cds
+        # update surface pressure in the cds
         self.cds.sp.values = new_sp.ravel()
         return
 
@@ -532,28 +540,30 @@ class Climate():
         """
         # CONSTANTS
         SIGMA_SB = prms.sigma_SB
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        SPH = prms.seconds_per_hour
+        CTOK = prms.celsius_to_kelvin
 
-        # Get temperature and RH data at the site and data location
+        # get temperature and RH data at the site and data location
         rh = self.cds.rh.values             # RH assumed constant with elevation
         temp_site = self.cds.temp.values    # Temperature already updated to self.elev
         LW_elev = self.AWS_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
         temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
 
-        # Store versions in Kelvin
-        temp_site_K = temp_site + 273.15
-        temp_LW_elev_K = temp_LW_elev + 273.15
+        # store temperature in Kelvin
+        temp_site_K = temp_site + CTOK
+        temp_LW_elev_K = temp_LW_elev + CTOK
 
-        # Calculate emissivity from temperature at each elevation
+        # calculate emissivity from temperature at each elevation
         eps_site = self.emissivity_brutsaert(temp_site, rh)
         eps_LW_elev = self.emissivity_brutsaert(temp_LW_elev, rh)
 
-        # Compute clear-sky longwave radiation at each elevation [W m-2]
+        # compute clear-sky longwave radiation at each elevation [W m-2]
         LWin_clear_site = eps_site * SIGMA_SB * temp_site_K**4
         LWin_clear_MERRA2 = eps_LW_elev * SIGMA_SB * temp_LW_elev_K**4
 
-        # Apply difference in clear-sky radiation to longwave data
-        delta_LW = (LWin_clear_site - LWin_clear_MERRA2) * 3600
+        # apply difference in clear-sky radiation to longwave data
+        delta_LW = (LWin_clear_site - LWin_clear_MERRA2) * SPH
         new_LWin = self.original_LWin + delta_LW
 
         # Update surface pressure in the cds
@@ -573,6 +583,8 @@ class Climate():
         # open .csv with quantile mapping
         bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
         bias_fn = bias_fn.replace('GLACIER', self.args.glac_name)
+        if var == 'temp':
+            bias_fn = bias_fn.replace('.csv',f'_{self.args.lapse_rate}.csv')
         assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fn)
         
@@ -594,15 +606,21 @@ class Climate():
         airtemp : float
             Air temperature [C]
         """
+        # CONSTANTS
+        CTOK = prms.celsius_to_kelvin
+
+        # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
             P = 0.61094*np.exp(17.625*airtemp/(airtemp+243.04)) # kPa
         elif method in ['Sonntag']:
             # follows COSIPY
-            airtemp += 273.15
-            if airtemp > 273.15: # over water
-                P = 0.6112*np.exp(17.67*(airtemp-273.15)/(airtemp-29.66))
+            airtemp += CTOK
+            if airtemp > CTOK: # over water
+                P = 0.6112*np.exp(17.67*(airtemp-CTOK)/(airtemp-29.66))
             else: # over ice
-                P = 0.6112*np.exp(22.46*(airtemp-273.15)/(airtemp-0.55))
+                P = 0.6112*np.exp(22.46*(airtemp-CTOK)/(airtemp-0.55))
+
+        # return vapor pressure in Pa
         return P*1000
     
     def emissivity_brutsaert(self, airtemp, rh):
@@ -617,13 +635,16 @@ class Climate():
         rh : float or np.array
             Relative humidity [%]
         """
-        # Get saturation vapor pressure
+        # CONSTANTS
+        CTOK = prms.celsius_to_kelvin
+
+        # get saturation vapor pressure
         esat = self.sat_vapor_pressure(airtemp)
 
-        # Convert to actual vapor pressure (in hPa)
+        # convert to actual vapor pressure (in hPa)
         e_hPa = esat * (rh / 100) / 100
 
-        return 1.24 * (e_hPa / (airtemp + 273.15)) ** (1/7)
+        return 1.24 * (e_hPa / (airtemp + CTOK)) ** (1/7)
     
     def dew_point(self,vap):
         """

@@ -138,11 +138,12 @@ class Surface():
         # CONSTANTS
         STEFAN_BOLTZMANN = prms.sigma_SB
         HEAT_CAPACITY_ICE = prms.Cp_ice
+        CTOK = prms.celsius_to_kelvin
         dt = prms.dt
 
         if not enbal.nanLWout:
             # CASE (1): surftemp from LW data
-            self.stemp = np.power(np.abs(enbal.LWout_ds/(dt*STEFAN_BOLTZMANN)),1/4) - 273.15
+            self.stemp = np.power(np.abs(enbal.LWout_ds/(dt*STEFAN_BOLTZMANN)),1/4) - CTOK
             Qm = enbal.surface_EB(self.stemp,self)
         else:
             Qm_check = enbal.surface_EB(0,self)

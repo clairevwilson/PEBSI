@@ -109,7 +109,7 @@ initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 
 grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA)))
 
 # ========== PARAMETERS and CONSTANTS ==========
-# <<<<<< Climate downscaling >>>>>
+# <<<<<< Climate downscaling >>>>>>
 sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
@@ -119,7 +119,7 @@ albedo_ice = 0.47           # Ice albedo [-]
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
 wind_ref_height = 10 if reanalysis in ['ERA5-hourly'] else 2  # Reference height for wind speed [m]
-# <<<<<< Numerical >>>>>
+# <<<<<< Numerical >>>>>>
 dz_toplayer = 0.03          # Thickness of the uppermost layer [m]
 layer_growth = 0.5          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
 max_nlayers = 80            # Maximum number of vertical layers allowed (more layers --> larger file size)
@@ -128,10 +128,10 @@ min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice [
 mb_threshold = 0.1          # Threshold to consider not conserving mass (kg m-2 = mm w.e.)
 min_glacier_depth = 2       # Minimum ice depth to end the model run [m]
 max_temp_change = 5         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
-# <<<<<< Boundary conditions >>>>>
+# <<<<<< Boundary conditions >>>>>>
 temp_temp = 0               # Temperature of temperate ice [C]
 temp_depth = 10             # Depth of temperate ice [m]
-# <<<<<< Physical properties of snow, ice, water and air >>>>>
+# <<<<<< Physical properties of snow, ice, water and air >>>>>>
 density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]
 density_firn = 700          # Density threshold for firn [kg m-3]
@@ -153,18 +153,21 @@ frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow 
 frac_absrad_ice = 0.8       # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]
 extinct_coef_ice = 2.5      # Extinction coefficient for ice/firn [-]
-# <<<<<< Universal constants >>>>>
+# <<<<<< Universal constants >>>>>>
 gravity = 9.81              # Gravity [m s-2]
 karman = 0.4                # von Karman's constant [-]
 sigma_SB = 5.67037e-8       # Stefan-Boltzmann constant [W m-2 K-4]
 solar_constant = 1367       # Solar constant [W m-2]
-# <<<<<< Ideal gas law >>>>>
+# <<<<<< Unit conversions >>>>>>
+celsius_to_kelvin = 273.15
+seconds_per_hour = 3600
+# <<<<<< Ideal gas law >>>>>>
 R_gas = 8.3144598           # Universal gas constant [J mol-1 K-1]
 molarmass_air = 0.0289644   # Molar mass of Earth's air [kg mol-1]
 pressure_std = 101325       # Standard pressure [Pa]
 temp_std = 293.15           # Standard temperature [K]
 density_std = 1.225         # Air density at sea level [kg m-3]
-# <<<<<< Model parameterizations >>>>>
+# <<<<<< Model parameterizations >>>>>>
 Boone_c1 = 2.7e-6           # Densification c1 [s-1]
 Boone_c2 = 0.042            # Densification c2 [K-1]
 Boone_c3 = 0.046            # Densification c3 [m3 kg-1]
