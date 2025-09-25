@@ -10,6 +10,7 @@ import numpy as np
 import scipy.stats as ss
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import random
 
 all_colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
               '#F77808','#298282','#999999','#FF89B0','#427801']
@@ -57,7 +58,8 @@ def quantile_mapping(data_AWS,data_MERRA,
 
     return data_MERRA_sorted, quantile_map
 
-def plot_scatter(X_train, y_train, lims, fn_store_quantiles=None, plot_kde=False, plot_axes=None):
+def plot_scatter(X_train, y_train, lims, fn_store_quantiles=None, 
+                 plot_kde=False, plot_axes=None):
     """
     Creates a scatter plot with a 1:1 line 
     to view the difference between uncorrected
@@ -181,6 +183,11 @@ def plot_quantile(X_train, y_train, y_all, timed,
     ax1.hist(X_train,bins=hist_bins,histtype='step',orientation='horizontal',label='Weather station',density=True,color=c3,linewidth=1.5)
     ax1.set_ylabel('Probability density', fontsize=12)
 
+    # Means
+    ax1.axhline(np.mean(y_all), linestyle=':',color=c1,linewidth=1.5)
+    ax1.axhline(np.mean(updated_all), linestyle=':',color=c2,linewidth=1.5)
+    ax1.axhline(np.mean(X_train), linestyle=':',color=c3,linewidth=1.5)
+
     # Timeseries
     time, raw, adj, aws = timed
     ax2.plot(time, raw, linestyle='--',label='Original MERRA-2',color=c1)
@@ -197,6 +204,7 @@ def plot_quantile(X_train, y_train, y_all, timed,
         ax3.plot(np.nan, np.nan,linestyle='--',label='Original MERRA-2',color=c1)
         ax3.plot(np.nan, np.nan,label='Corrected MERRA-2',color=c2)
         ax3.plot(np.nan, np.nan,label='Weather station',color=c3)
+        ax3.plot(np.nan, np.nan,label='Data mean',linestyle=':', color='gray')
         ax3.legend(loc='center')
 
     # All axes
@@ -214,7 +222,16 @@ def select_random_48hr_window(df, window_size=48):
     df = df.reindex(pd.date_range(df.index[0], df.index[-1], freq='h'))
 
     # Slide through the DataFrame
+    valid_starts = []
     for i in range(len(df) - window_size + 1):
         window = df.iloc[i:i + window_size]
         if not window.isnull().any().any():
-            return window.index
+            valid_starts.append(window.index[0])
+
+    # Randomly select one start time
+    if valid_starts:
+        start = random.choice(valid_starts)
+        return df.loc[start:start + pd.Timedelta(hours=window_size - 1)].index
+    else:
+        raise ValueError("No valid 48-hour windows found.")
+
