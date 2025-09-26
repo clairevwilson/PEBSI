@@ -61,7 +61,7 @@ buffer = 20             # min num of gridcells away from which horizon can be fo
 
 # ================ INPUT FILEPATHS =================
 # input filepath
-dem_fp = f'../../Data/dems/{glacier_name}_dem.tif'   # DEM containing glacier + surroundings # gulkana/Gulkana_DEM_20m
+dem_fn = f'../../Data/dems/{glacier_name}_dem.tif'   # DEM containing glacier + surroundings # gulkana/Gulkana_DEM_20m
 # RGI for glacier shapefile
 rgi_fp = f'../../RGI/rgi60/'
 # output filepath
@@ -125,12 +125,12 @@ class Shading():
 
         # check if the DEM exists; if not, print out the bounding box to manually retrieve one
         self.get_shapefile()
-        if not os.path.exists(args.dem_fp):
+        if not os.path.exists(args.dem_fn):
             minx, miny, maxx, maxy = self.shapefile.total_bounds
-            dem_not_found = 'DEM was not found: download for the box around:'
+            dem_not_found = f'DEM was not found for {args.glac_name}. Download for the box around:'
             bounding_box = f'      latitude: {miny:.6f} to {maxy:.6f}    longitude: {minx:.6f} to {maxx:.6f}'
-            move_to = f'                and move to {args.dem_fp}'
-            assert os.path.exists(args.dem_fp), f'{dem_not_found}\n{bounding_box}\n{move_to}'
+            move_to = f'                and move to {args.dem_fn}'
+            assert os.path.exists(args.dem_fn), f'{dem_not_found}\n{bounding_box}\n{move_to}'
 
         # Load the DEM
         self.load_dem()
@@ -156,7 +156,7 @@ class Shading():
         parser.add_argument('-latitude','--lat',action='store',default=lat)
         parser.add_argument('-longitude','--lon',action='store',default=lon)
         parser.add_argument('-glac_no',action='store',default=glac_no)
-        parser.add_argument('-dem_fp',action='store',default=dem_fp)
+        parser.add_argument('-dem_fn',action='store',default=dem_fn)
         parser.add_argument('-site',action='store',default=site)
         parser.add_argument('-timezone',action='store',default=timezone)
         parser.add_argument('-glac_name',action='store',default=glacier_name)
@@ -291,8 +291,8 @@ class Shading():
         Loads the DEM and calculates aspect and slope from it.
         """
         # open files
-        dem_fp = self.args.dem_fp
-        dem = rxr.open_rasterio(dem_fp,masked=True).isel(band=0)
+        dem_fn = self.args.dem_fn
+        dem = rxr.open_rasterio(dem_fn,masked=True).isel(band=0)
         
         # convert DEM to appropriate UTM coordinate system
         epsg = self.get_utm_epsg(self.args.lat, self.args.lon)

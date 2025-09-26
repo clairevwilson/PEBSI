@@ -144,7 +144,7 @@ for glacier in ['kahiltna','gulkana','wolverine']:
     data_AWS_copy = copy.deepcopy(data_AWS)
     data_MERRA2_copy = copy.deepcopy(data_MERRA2)
 
-    for lapse_rate in [-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]:
+    for lapse_rate in [0]:
         # ======== ELEVATION DEPENDENCE ========
         if var == 'temp':
             # lapse_rate = -6.5           # Lapse rate [K km-1]
