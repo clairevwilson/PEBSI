@@ -58,7 +58,7 @@ class Climate():
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
                             'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
 
-        # find median elevation of the glacier from RGI
+        # find median elevation of the glacier from RGI for precip gradient
         RGI_region = args.glac_no.split('.')[0]
         if float(RGI_region) > 0:
             for fn in os.listdir(prms.RGI_fp):
@@ -69,6 +69,10 @@ class Climate():
             self.median_elev = RGI_df.loc[args.glac_no,'Zmed']
         else:
             self.median_elev = self.elev
+
+        # find elevation of temperature data
+        if 'temp' in prms.bias_vars:
+            self.temp_elev = prms.station_elevation[self.args.glac_name]
 
         # set output filename for storing .nc
         self.store_cds = prms.store_climate
@@ -298,7 +302,8 @@ class Climate():
     def adjust_to_elevation(self):
         """
         Adjusts elevation-dependent climate variables 
-        (temperature, precip, surface pressure).
+        (temperature, precip, surface pressure, and
+        incoming longwave radiation).
         """
         # Set copies of un-edited variables
         self.original_temp = self.cds.temp.copy(deep=True).values
@@ -306,7 +311,7 @@ class Climate():
         self.original_sp = self.cds.sp.copy(deep=True).values
         self.original_LWin = self.cds.LWin.copy(deep=True).values
 
-        # TEMPERATURE: correct according to lapserate
+        # TEMPERATURE: correct according to lapse rate
         self.temp_to_elevation()
             
         # PRECIP: correct according to precipitation gradient
@@ -479,6 +484,8 @@ class Climate():
 
         # get elevation of the original temperature data
         temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
+        if 'temp' in prms.bias_vars:
+            temp_elev = self.temp_elev
         new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
 
         # update temperature in the cds
@@ -492,6 +499,8 @@ class Climate():
         """
         # CONSTANTS
         PREC_GRAD = prms.precgrad
+        if self.args.glac_name in prms.precgrads:
+            PREC_GRAD = prms.precgrads[self.args.glac_name]
         PREC_FACTOR = float(self.args.kp)
 
         # get elevation of the precipitation data
@@ -584,7 +593,8 @@ class Climate():
         bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
         bias_fn = bias_fn.replace('GLACIER', self.args.glac_name)
         if var == 'temp':
-            bias_fn = bias_fn.replace('.csv',f'_{self.args.lapse_rate}.csv')
+            # bias_fn = bias_fn.replace('.csv',f'_{self.args.lapse_rate}.csv')
+            bias_fn = bias_fn.replace('.csv','_0.0.csv')
         assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fn)
         

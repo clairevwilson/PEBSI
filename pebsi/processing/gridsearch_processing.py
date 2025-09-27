@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from pebsi.processing.plotting_fxns import *
 from objectives import *
 from seasonal_error import seasonal_mass_balance as seasonal_error
+from seasonal_error import firn_cores
 import pickle
 import os
 import copy
@@ -140,17 +141,28 @@ def process_run(run_type, fn):
         for var in all_seasonal:
             results[var] = all_seasonal[var]
 
-    elif run_type == 'long':
-        # Snowpits
-        years, data = snowpits(ds, out='data')
-        for var in data:
-            results[var] = data[var]
+        # Firn cores
+        if run_type == 'firn':
+            firn_dates, data = firn_cores(ds, out='data')
+            results['firn_dates'] = firn_dates
+            for var in data:
+                results[var] = data[var]
+            for method in ['MAE','ME','MdAE']:
+                core_dict = firn_cores(ds,method=method, out='mean_error')
+                for var in core_dict:
+                    results[var] = core_dict[var]
 
-        # Snowpit error
-        for method in ['MAE','ME','MdAE']:
-            snowpit_dict = snowpits(ds,method=method, out='mean_error')
-            for var in snowpit_dict:
-                results[var] = snowpit_dict[var]
+        elif run_type == 'long':
+            # Snowpits
+            years, data = snowpits(ds, out='data')
+            for var in data:
+                results[var] = data[var]
+
+            # Snowpit error
+            for method in ['MAE','ME','MdAE']:
+                snowpit_dict = snowpits(ds,method=method, out='mean_error')
+                for var in snowpit_dict:
+                    results[var] = snowpit_dict[var]
 
     elif run_type == '2024':
         # Cumulative mass balance
@@ -705,6 +717,6 @@ def get_best_normalized(error_list, result_dict, add_weights=None, site='mean', 
                     best = (p1,p2)
                 weighted_list.append(weighted_error)
         if prints:
-            print(' '.join(f'{x:>10}' for x in weight),'    ',best)
+            print(' '.join(f'{x:>10.2f}' for x in weight),'    ',best)
         best_all.append(best)
     return best_all
