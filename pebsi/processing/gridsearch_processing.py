@@ -42,7 +42,7 @@ all_sites = sitedict['long']+sitedict['2024']+['mean','median']                 
 # USER OPTIONS
 run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search
             '2024':{'date':'08_02', 'idx':'0'},
-            'firn':{'date':'09_24','idx':'1'} # 08_27
+            'firn':{'date':'09_30','idx':'0'} # 08_27
             }
 
 # PARAMETERS

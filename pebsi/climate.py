@@ -343,9 +343,10 @@ class Climate():
         if not self.loaded_climate:
             if prms.reanalysis == 'MERRA2':
                 # correct MERRA-2 variables in inputs list
-                if self.args.debug and len(prms.bias_vars) > 0:
-                    print('~ Applying quantile mapping for:',prms.bias_vars)
-                for var in prms.bias_vars:
+                self.bias_vars = prms.bias_vars
+                if self.args.debug and len(self.bias_vars) > 0:
+                    print('~ Applying quantile mapping for:',self.bias_vars)
+                for var in self.bias_vars:
                     from_MERRA = True if not self.args.use_AWS else var in self.need_vars
                     if from_MERRA:
                         self.bias_adjust_qm(var)

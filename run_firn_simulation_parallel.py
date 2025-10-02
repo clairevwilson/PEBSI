@@ -6,18 +6,22 @@ from multiprocessing import Pool
 import pandas as pd
 # Internal libraries
 import run_simulation as sim
-import pebsi.massbalance as mb
 import pebsi.input as prms
 
 # User info
-sites = ['KPS','T','Z','EC'] # Sites to run in parallel 'T','Z','EC',
+sites = ['KQU','KPS','T','Z','EC'] # Sites to run in parallel 'T','Z','EC',
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 n_runs_ahead = 0    # Step if you're going to run this script more than once
+
+# Load .csv with params for each site
+df_sites = pd.read_csv('gridsearch_params.csv', index_col=0)
+params_by = 'site'
 
 # Read command line args
 args = sim.get_args()
 args.startdate = '1980-04-15 00:00'
-args.enddate = '2025-06-01 00:00'
+# args.enddate = '2025-06-01 00:00'
+args.enddate = '1980-04-16 00:00'
 args.store_data = True              # Ensures output is stored
 args.use_AWS = False
 if 'trace' in prms.machine:
@@ -39,37 +43,46 @@ def pack_vars():
         args_run = copy.deepcopy(args)
         args_run.site = site
 
+        # Load site specific params
+        glacier = 'wolverine' if site == 'EC' else 'kahiltna' if site in ['KPS','KQU'] else 'gulkana'
+        if params_by == 'site':
+            args_run.kp = df_sites.loc[site, 'kp']
+            args_run.lapse_rate = df_sites.loc[site, 'lr']
+        elif params_by == 'glacier':
+            args_run.kp = df_sites.loc[glacier, 'kp']
+            args_run.lapse_rate = df_sites.loc[glacier, 'lr']
+
         # Parse different glaciers
         if site == 'EC':
             # Wolverine
             prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.09162'
-            args_run.kp = 2 # 1.650 from data
-            args_run.lapse_rate = -8.5 # 
+            # args_run.kp = 2 # 1.650 from data
+            # args_run.lapse_rate = -8.5 # 
             glacier = 'Wolverine'
             if test_run:
                 args_run.startdate = '2015-08-01'
-                args_run.enddate = '2025-05-01'
+                args_run.enddate = '2025-05-30'
 
-        elif site == 'KPS':
+        elif site in ['KPS', 'KQU']:
             # Kahiltna
             prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
-            args_run.kp = 2 # 2.470 from data
-            args_run.lapse_rate = -7
+            # args_run.kp = 2 # 2.470 from data
+            # args_run.lapse_rate = -7
             glacier = 'Kahiltna'
             if test_run:
                 args_run.startdate = '2015-08-01'
-                args_run.enddate = '2025-05-01'
+                args_run.enddate = '2025-05-30'
         else:
             # Gulkana
             prms.bias_vars = ['wind','temp','SWin','rh']
             args_run.glac_no = '01.00570'
-            if site == 'T':
-                args_run.kp = 3.5 # 3.665 from data
-            elif site == 'Z':
-                args_run.kp = 3.5 # 3.774 from data
-            args_run.lapse_rate = -3.5
+            # if site == 'T':
+            #     args_run.kp = 3.5 # 3.665 from data
+            # elif site == 'Z':
+            #     args_run.kp = 3.5 # 3.774 from data
+            # args_run.lapse_rate = -3.5
             glacier = 'Gulkana'
             if test_run and args_run.site == 'Z':
                 args_run.startdate = '2021-08-01'
@@ -79,7 +92,7 @@ def pack_vars():
                 args_run.enddate = '2025-05-01'
 
         # Output name
-        args_run.out = f'{glacier}_{run_date}_long{site}_'
+        args_run.out = f'{glacier}_{run_date}_long{site}_paramsby{params_by}_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'lapse_rate':str(args_run.lapse_rate),
@@ -99,6 +112,8 @@ def pack_vars():
 def run_model_parallel(list_inputs):
     # Loop through the variable sets
     for inputs in list_inputs:
+        import pebsi.massbalance as mb
+        
         # Unpack inputs
         args,climate,store_attrs = inputs
         

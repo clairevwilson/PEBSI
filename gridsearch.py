@@ -104,17 +104,17 @@ if args.site == 'T':
 if args.site == 'EC':
     args.glac_no = '01.09162'
     args.startdate = '2015-08-01'
-    args.enddate = '2025-05-01'
+    args.enddate = '2025-05-30'
     prms.bias_vars = ['wind','temp','rh','SWin']
 if args.site == 'KPS':
     args.glac_no = '01.22193'
     args.startdate = '2015-08-01'
-    args.enddate = '2025-05-01'
+    args.enddate = '2025-05-30'
     prms.bias_vars = ['wind','temp','rh']
 if args.site == 'KQU':
     args.glac_no = '01.22193'
     args.startdate = '2023-08-01'
-    args.enddate = '2025-05-01'
+    args.enddate = '2025-05-30'
     prms.bias_vars = ['wind','temp','rh']
 
 # Loop through parameters

@@ -21,16 +21,27 @@ all_colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
 
 # Objective function
 def objective(model,data,method):
-    if method == 'MSE':
-        return np.nanmean(np.square(model - data))
-    elif method == 'RMSE':
-        return np.sqrt(np.nanmean(np.square(model - data)))
-    elif method == 'MAE':
-        return np.nanmean(np.abs(model - data))
-    elif method == 'MdAE':
-        return np.nanmedian(np.abs(model - data))
-    elif method == 'ME':
-        return np.nanmean(model - data)
+    if len(model) > 0:
+        if method == 'MSE':
+            return np.nanmean(np.square(model - data))
+        elif method == 'RMSE':
+            return np.sqrt(np.nanmean(np.square(model - data)))
+        elif method == 'MAE':
+            return np.nanmean(np.abs(model - data))
+        elif method == 'MdAE':
+            return np.nanmedian(np.abs(model - data))
+        elif method == 'ME':
+            return np.nanmean(model - data)
+    else:
+        return []
+
+def get_glacier(site):
+    if site in ['KQU','KPS']:
+        return 'kahiltna'
+    elif site in ['Z','T']:
+        return 'gulkana'
+    elif site in ['EC']:
+        return 'wolverine'
     
 # ========== 1. SEASONAL MASS BALANCE ==========
 def seasonal_mass_balance(ds,method='MAE',out=None):
@@ -64,25 +75,29 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
     # Retrieve the model data
     mb_dict = {'bw':[],'bs':[],'ba':[]}
     for year in years:
-        # Get sample dates
         spring_date = df_mb.loc[year,'spring_date']
         fall_date = df_mb.loc[year,'fall_date']
         if year-1 in df_mb.index:
             last_fall_date = df_mb.loc[year-1,'fall_date']
         else:
             last_fall_date = np.nan
-
+        
         # Fill nans
         if str(spring_date) == 'nan':
-            if glacier == 'gulkana':
+            if glacier == 'Gulkana':
                 spring_date = str(year)+'-04-20 00:00'
             else:
                 spring_date = str(year) + '-05-20 00:00'
         if str(fall_date) == 'nan':
-            fall_date = str(year)+'-08-20 00:00'
+            if glacier == 'Gulkana':
+                fall_date = str(year)+'-08-20 00:00'
+            else:
+                fall_date = str(year)+ '-09-20 00:00'
         if str(last_fall_date) == 'nan':
-            last_fall_date = str(year-1)+'-08-20 00:00'
-
+            if glacier == 'Gulkana':
+                last_fall_date = str(year-1)+'-08-20 00:00'
+            else:
+                last_fall_date = str(year-1) + '-09-20 00:00'
         # Split into winter and summer
         summer_dates = pd.date_range(spring_date,fall_date,freq='h')
         winter_dates = pd.date_range(last_fall_date,spring_date,freq='h')
@@ -99,11 +114,23 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
             annual_dates = pd.date_range(annual_dates[0], ds.time.values[-1],freq='h')
         else:
             years_summer = years
+        if winter_dates[0] not in ds.time.values:
+            winter_dates = pd.date_range(ds.time.values[0], winter_dates[-1], freq='h')
+        elif winter_dates[-1] not in ds.time.values:
+            winter_dates = pd.date_range(winter_dates[0], ds.time.values[-1], freq='h')
         wds = ds.sel(time=winter_dates).sum()
-        sds = ds.sel(time=summer_dates).sum()
+        if len(summer_dates) == 0:
+            sds = ds.isel(time=-1)
+            internal_acc = sds.layerrefreeze.sum(dim='layer').max().values / 1000
+        else:
+            sds = ds.sel(time=summer_dates).sum()
+            internal_acc = ds.sel(time=summer_dates).layerrefreeze.sum(dim='layer').max().values / 1000
         ads = ds.sel(time=annual_dates).sum()
         winter_mb = wds.accum + wds.refreeze - wds.melt
-        internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values
+        # internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values
+        # print(site, 'winter days',(winter_dates[-1] - winter_dates[0]).days, winter_dates[0], winter_dates[-1],'summer', (summer_dates[-1] - summer_dates[0]).days)
+        # internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values - previous_internal
+        # previous_internal = internal_acc
         summer_mb = sds.accum + sds.refreeze - sds.melt - internal_acc
         annual_mb = ads.accum + ads.refreeze - ads.melt - internal_acc
         mb_dict['bw'].append(winter_mb.values)
@@ -134,6 +161,8 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
     if len(years_summer) != len(years):
         summer_model = summer_model[:-1] 
         summer_data = summer_data[:-1]
+        annual_model = annual_model[:-1]
+        annual_data = annual_data[:-1]
 
     # Assess error
     if isinstance(method, str) and out is None:
@@ -188,6 +217,7 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
             last_fall_date = df_mb.loc[year-1,'fall_date']
         else:
             last_fall_date = np.nan
+        
         # Fill nans
         if str(spring_date) == 'nan':
             if glacier == 'Gulkana':
@@ -220,13 +250,21 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
             annual_dates = pd.date_range(annual_dates[0], ds.time.values[-1],freq='h')
         else:
             years_summer = years
+        if winter_dates[0] not in ds.time.values:
+            winter_dates = pd.date_range(ds.time.values[0], winter_dates[-1], freq='h')
+        elif winter_dates[-1] not in ds.time.values:
+            winter_dates = pd.date_range(winter_dates[0], ds.time.values[-1], freq='h')
         wds = ds.sel(time=winter_dates).sum()
-        sds = ds.sel(time=summer_dates).sum()
+        if len(summer_dates) == 0:
+            sds = ds.isel(time=-1)
+            internal_acc = sds.layerrefreeze.sum(dim='layer').max().values / 1000
+        else:
+            sds = ds.sel(time=summer_dates).sum()
+            internal_acc = ds.sel(time=summer_dates).layerrefreeze.sum(dim='layer').max().values / 1000
         ads = ds.sel(time=annual_dates).sum()
         winter_mb = wds.accum + wds.refreeze - wds.melt
         # internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values
-        internal_acc = ds.sel(time=summer_dates).layerrefreeze.sum(dim='layer').max().values / 1000
-        print(site, 'winter days',(winter_dates[-1] - winter_dates[0]).days, winter_dates[0], winter_dates[-1],'summer', (summer_dates[-1] - summer_dates[0]).days)
+        # print(site, 'winter days',(winter_dates[-1] - winter_dates[0]).days, winter_dates[0], winter_dates[-1],'summer', (summer_dates[-1] - summer_dates[0]).days)
         # internal_acc = ds.sel(time=summer_dates[-2]).cumrefreeze.values - previous_internal
         # previous_internal = internal_acc
         summer_mb = sds.accum + sds.refreeze - sds.melt - internal_acc
@@ -236,7 +274,7 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
         mb_dict['ba'].append(annual_mb.values)
 
     # Index mass balance data
-    df_mb = df_mb[['bw','ba','winter_ablation','summer_accumulation']].astype(float).loc[years]
+    df_mb = df_mb.loc[years]
     this_winter_abl_data = df_mb['winter_ablation'].values
     past_summer_acc_data = np.append(np.zeros(1), df_mb['summer_accumulation'].values[:-1])
     this_summer_acc_data = df_mb['summer_accumulation'].values
@@ -246,6 +284,26 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
     winter_data = df_mb['bw'].values - past_summer_acc_data + this_winter_abl_data
     summer_data = df_mb['ba'].values - df_mb['bw'].values + this_summer_acc_data
     annual_data = winter_data + summer_data
+
+    # Clean up arrays
+    winter_model = np.array(mb_dict['bw'])
+    summer_model = np.array(mb_dict['bs'])
+    annual_model = np.array(mb_dict['ba'])
+    assert winter_model.shape == winter_data.shape
+    assert summer_model.shape == summer_data.shape    
+    assert annual_model.shape == annual_data.shape   
+
+    # Check if summer is missing for last summer
+    if len(years_summer) != len(years):
+        summer_model = summer_model[:-1] 
+        summer_data = summer_data[:-1]
+        annual_model = annual_model[:-1]
+        annual_data = annual_data[:-1]
+        summer_mb = sds.accum + sds.refreeze - sds.melt - internal_acc
+        annual_mb = ads.accum + ads.refreeze - ads.melt - internal_acc
+        mb_dict['bw'].append(winter_mb.values)
+        mb_dict['bs'].append(summer_mb.values)
+        mb_dict['ba'].append(annual_mb.values)
 
     cannual = 'orchid'
     if color == 'default' and plot_var == 'mb':
@@ -259,17 +317,18 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
     elif plot_var == 'bs':
         csummer = color
 
-    if len(years_summer) != len(years):
-        summer_data = summer_data[:-1]
-        mb_dict['bs'] = np.array(mb_dict['bs'])[:-1]
     if plot_var in ['mb','bw']:
-        ax.plot(years,mb_dict['bw'],label='Winter',color=cwinter,linewidth=2,marker='^')
+        if len(winter_model) > len(years):
+            winter_model = winter_model[:-1]
+        ax.plot(years,winter_model,label='Winter',color=cwinter,linewidth=2,marker='^')
         ax.plot(years,winter_data,'o--',color=cwinter,)
     if plot_var in ['mb','bs']:
-        ax.plot(years_summer,mb_dict['bs'],label='Summer',color=csummer,linewidth=2,marker='^')
+        if len(summer_model) > len(summer_model):
+            summer_model= summer_model[:-1]
+        ax.plot(years_summer,summer_model,label='Summer',color=csummer,linewidth=2,marker='^')
         ax.plot(years_summer,summer_data,'o--',color=csummer)
     if plot_var in ['ba']:
-        ax.plot(years,mb_dict['ba'],color=cannual,linewidth=2,marker='^')
+        ax.plot(years_summer,mb_dict['ba'],color=cannual,linewidth=2,marker='^')
         ax.plot(years,annual_data,color=cannual,linestyle='--')
     ax.axhline(0,color='grey',linewidth=0.5)
     if plot_var in ['mb','bw','bs']:
@@ -306,7 +365,7 @@ def firn_cores(ds, out='mean_error', method='MAE'):
 
     # Open the cores for this site
     site = ds.attrs['site']
-    glacier = 'wolverine' if site == 'EC' else 'kahiltna' if site == 'KPS' else 'gulkana'
+    glacier = get_glacier(site)
     cores_fp = '/trace/home/cvwilson/INTERN/CommunityFirnModel/Data/cores/'
     cores_fp += glacier + '/'
     all_files = os.listdir(cores_fp)
@@ -416,6 +475,6 @@ def plot_firn_cores(dates, data, site):
     cax.axis('off')
     axes[0].set_ylabel('Depth below surface [m]')
     fig.supxlabel('Density [kg m$^{-3}$]', y=-0.03)
-    glacier = 'kahiltna' if site == 'KPS' else 'wolverine' if site =='EC' else 'gulkana'
+    glacier = get_glacier(site)
     fig.suptitle(glacier.capitalize() +' '+site)
     return fig, axes

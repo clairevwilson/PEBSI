@@ -24,7 +24,7 @@ def process_run(runs):
 
 # for run_type in ['long','2024']:
 for run_type in ['firn']:
-    for site in ['KPS','EC','Z','T']: #gsproc.sitedict[run_type]:
+    for site in ['EC']: #gsproc.sitedict[run_type]:
         start_site = time.time()
         date = gsproc.run_info[run_type]['date']
         idx = gsproc.run_info[run_type]['idx']

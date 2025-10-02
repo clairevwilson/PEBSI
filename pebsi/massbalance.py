@@ -1874,9 +1874,9 @@ class Output():
         
         # get information about bias correction
         if args.use_AWS:
-            corr_vars = [v for v in prms.bias_vars if v not in measured]
+            corr_vars = [v for v in climate.bias_vars if v not in measured]
         else:
-            corr_vars = prms.bias_vars
+            corr_vars = climate.bias_vars
         corr_str = ', '.join(corr_vars)
         corr_str = 'none' if corr_str == '' else corr_str
         
