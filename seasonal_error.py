@@ -180,6 +180,52 @@ def seasonal_mass_balance(ds,method='MAE',out=None):
             out_dict['annual'].append(objective(annual_model,annual_data,mm))
         return out_dict
 
+def calibrate_kp_lr(grid_dict, sites):
+    """
+    Calibrate separate kps for the two
+    sites in sites using the same lapse rate
+    """
+    assert len(sites) == 2, 'this function is only for 2 sites'
+    # initialize things
+    best_combo = None
+    min_total_mae = np.inf
+    site1, site2 = sites
+
+    # generate lists of lapse_rate and kp values
+    lapse_rates = set()
+    kp_values = set(grid_dict.keys())
+    for kp in kp_values:
+        lapse_rates.update(grid_dict[kp].keys())
+
+    # loop through lapse rates
+    for lr in lapse_rates:
+        # loop through kp for the first site
+        for kp1 in kp_values:
+            # check the error for the first site with this lr and each kp
+            err1 = grid_dict[kp1][lr][site1]
+            mae1 = np.mean([err1['winter_MAE'],err1['summer_MAE']])
+
+            # loop through kp for the second site
+            for kp2 in kp_values:
+                # check the error for the second site with this lr and a unique kp
+                err2 = grid_dict[kp2][lr][site2]
+                mae2 = np.mean([err2['winter_MAE'],err2['summer_MAE']])
+
+                # average error across sites
+                total_mae = np.mean([mae1, mae2])
+
+                # check if error is less than the running minimum
+                if total_mae < min_total_mae:
+                    min_total_mae = total_mae
+                    best_combo = {
+                        'lapse_rate': lr,
+                        f'kp_{sites[0]}': kp1,
+                        f'kp_{sites[1]}': kp2,
+                        'total_mae': total_mae
+                    }
+
+    return best_combo
+
 def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
     """
     plot_var : 'mb' (default), 'bw','bs','ba'
@@ -284,6 +330,7 @@ def plot_seasonal_mass_balance(ds,plot_ax=False,plot_var='mb',color='default'):
     winter_data = df_mb['bw'].values - past_summer_acc_data + this_winter_abl_data
     summer_data = df_mb['ba'].values - df_mb['bw'].values + this_summer_acc_data
     annual_data = winter_data + summer_data
+    print(years, winter_data, summer_data)
 
     # Clean up arrays
     winter_model = np.array(mb_dict['bw'])
