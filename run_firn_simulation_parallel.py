@@ -4,12 +4,13 @@ import copy
 from multiprocessing import Pool
 # External libraries
 import pandas as pd
+import numpy as np
 # Internal libraries
 import run_simulation as sim
 import pebsi.input as prms
 
 # User info
-sites = ['KQU','KPS','T','Z','EC'] # Sites to run in parallel 'T','Z','EC',
+sites = ['T','Z','EC','KPS','KQU'] # Sites to run in parallel 'KT1','KT2','KT3'
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 n_runs_ahead = 0    # Step if you're going to run this script more than once
 
@@ -20,8 +21,8 @@ params_by = 'site'
 # Read command line args
 args = sim.get_args()
 args.startdate = '1980-04-15 00:00'
-# args.enddate = '2025-06-01 00:00'
-args.enddate = '1980-04-16 00:00'
+args.enddate = '2025-06-01 00:00'
+# args.enddate = '1980-04-16 00:00'
 args.store_data = True              # Ensures output is stored
 args.use_AWS = False
 if 'trace' in prms.machine:
@@ -29,6 +30,7 @@ if 'trace' in prms.machine:
 
 # !!! CHANGE THESE
 test_run = False
+args.debug = False
 
 # Determine number of runs for each process
 n_processes = len(sites)
@@ -45,7 +47,7 @@ def pack_vars():
 
         # Load site specific params
         glacier = 'wolverine' if site == 'EC' else 'kahiltna' if site in ['KPS','KQU'] else 'gulkana'
-        if params_by == 'site':
+        if params_by == 'site' and site not in ['KT1','KT2','KT3']:
             args_run.kp = df_sites.loc[site, 'kp']
             args_run.lapse_rate = df_sites.loc[site, 'lr']
         elif params_by == 'glacier':
@@ -64,12 +66,22 @@ def pack_vars():
                 args_run.startdate = '2015-08-01'
                 args_run.enddate = '2025-05-30'
 
-        elif site in ['KPS', 'KQU']:
+        elif 'K' in site:
             # Kahiltna
             prms.bias_vars = ['wind','temp','rh']
             args_run.glac_no = '01.22193'
             # args_run.kp = 2 # 2.470 from data
             # args_run.lapse_rate = -7
+            if site not in ['KQU','KPS']:
+                df = pd.read_csv('data/by_glacier/kahiltna/site_constants.csv', index_col='site')
+                elev_site = df.loc[site, 'elevation']
+                elevs = df.loc[['KQU','KPS'], 'elevation'].values
+                sdf = df.loc[['KQU','KPS']]
+                pdf = df_sites.loc[['KQU','KPS']]
+                args_run.kp = np.interp(elev_site, elevs, pdf['kp'].values)
+                args_run.lapse_rate = np.interp(elev_site, elevs, pdf['lr'].values)
+                args_run.initial_firn_depth = np.interp(elev_site, elevs, sdf['firndepth'].values)
+                args_run.initial_snow_depth = np.interp(elev_site, elevs, sdf['snowdepth'].values)
             glacier = 'Kahiltna'
             if test_run:
                 args_run.startdate = '2015-08-01'
@@ -92,7 +104,7 @@ def pack_vars():
                 args_run.enddate = '2025-05-01'
 
         # Output name
-        args_run.out = f'{glacier}_{run_date}_long{site}_paramsby{params_by}_'
+        args_run.out = f'{glacier}{site}_{run_date}_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'lapse_rate':str(args_run.lapse_rate),
@@ -102,7 +114,7 @@ def pack_vars():
         args_run.task_id = run_no + n_runs_ahead*n_processes
 
         # Store model inputs
-        climate, args_run = sim.initialize_model(args_run.glac_no,args_run)
+        climate, args_run = sim.initialize_model(args_run)
         packed_vars[run_no].append((args_run,climate,store_attrs))
 
         # Advance counter
@@ -116,6 +128,9 @@ def run_model_parallel(list_inputs):
         
         # Unpack inputs
         args,climate,store_attrs = inputs
+
+        # Get file name
+        args = sim.get_output_name(args, climate)
         
         # Start timer
         start_time = time.time()

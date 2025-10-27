@@ -211,7 +211,7 @@ def get_shading(args):
     if os.path.exists(site_fn):
         # open site constants file and check if our site is there
         site_df = pd.read_csv(site_fn,index_col='site')
-        assert args.site in site_df.index, f'Add lat/lon for {args.site} in {args.glacier}/site_constants.csv'
+        assert args.site in site_df.index, f'Add lat/lon for {args.site} in {args.glac_name}/site_constants.csv'
         
         # grab the lat/lon from site_constants
         args.lat = site_df.loc[args.site,'lat']
@@ -242,7 +242,7 @@ def get_shading(args):
     print(f'~ Calculated shading for {args.glac_name} {args.site} in {shading_elapsed_time:.1f} seconds ~')
     return args
     
-def check_inputs(glac_no, args):
+def check_inputs(args):
     """
     Checks that the glacier point has all required inputs.
     - Shading file: if not found, executes the shading 
@@ -254,10 +254,11 @@ def check_inputs(glac_no, args):
     
     Parameters
     ==========
-    glac_no : str
-        Individual glacier RGI ID
     args : command line arguments
     """
+    # get glac_no from args
+    glac_no = args.glac_no 
+
     # check if the RGI ID is in the metadata file
     all_df = pd.read_csv(prms.metadata_fn,index_col=0,converters={0: str})
     assert glac_no in all_df.index, f'Add {glac_no} to data/glacier_metadata.csv'
@@ -304,31 +305,18 @@ def check_inputs(glac_no, args):
         # add dates to args
         args.startdate = startdate
         args.enddate = enddate
-
-    # create model run name
-    if args.out == '':
-        model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
-        args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
-    
-    # make file name unique by adding an indexer
-    i = 0
-    while os.path.exists(prms.output_fp + args.out+f'{i}.nc'):
-        i += 1
-    args.out += str(i) + '.nc'
     
     if args.debug:
         print('~ Inputs verified ~')
     return args
 
-def initialize_model(glac_no,args):
+def initialize_model(args):
     """
     Loads glacier table and climate dataset for one
     glacier to initialize the model inputs.
 
     Parameters
     ==========
-    glac_no : str
-        RGI glacier ID
     args : command-line arguments
     
     Returns
@@ -337,7 +325,7 @@ def initialize_model(glac_no,args):
         Class object from climate.py
     """
     # ===== CHECK GLACIER INPUTS (LAT,LON,ELEV,...) =====
-    args = check_inputs(glac_no, args)
+    args = check_inputs(args)
 
     # ===== GET GLACIER CLIMATE =====
     # initialize the climate class
@@ -356,13 +344,45 @@ def initialize_model(glac_no,args):
     # check the climate dataset is ready to go
     climate.check_ds()
 
+    # adjust elevation-dependent variables
+    climate.adjust_to_elevation()
+
     # ===== PRINT MODEL RUN INFO =====
     start = pd.to_datetime(args.startdate)
     end = pd.to_datetime(args.enddate)
     n_months = np.round((end-start)/pd.Timedelta(days=30))
     start_fmtd = start.month_name()+', '+str(start.year)
-    print(f'~ Running {glac_no} at {args.elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
+    print(f'~ Running {args.glac_no} at {args.elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
     return climate, args
+
+def get_output_name(args, climate):
+    """
+    Finds a unique filename to store the output.
+    If store_climate is specified in input.py,
+    or if the args.cds = True and the cds does
+    not already exist for this simulation, stores
+    the climate dataset.
+
+    Parameters
+    ==========
+    args : command-line arguments
+    climate
+        Class object from climate.py
+    """
+    # get output name and store the climate data
+    if args.out == '':
+        model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
+        args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
+    # make file name unique by adding an indexer
+    i = 0
+    while os.path.exists(prms.output_fp + args.out+f'{i}.nc'):
+        i += 1
+    args.out += str(i) + '.nc'
+
+    # store climate if specified
+    if climate.store_cds:
+        climate.store()
+    return args
 
 def run_model(climate,args,store_attrs=None):
     """
@@ -378,6 +398,9 @@ def run_model(climate,args,store_attrs=None):
         Dictionary of additional metadata to store 
         in the model output .nc
     """
+    # get a unique filename to store the output
+    args = get_output_name(args,climate)
+
     # ===== RUN ENERGY BALANCE =====
     model = massBalance(args,climate)
     model.main()
@@ -413,7 +436,7 @@ if __name__ == '__main__':
     args = get_args()
 
     # initialize the model
-    climate, args = initialize_model(args.glac_no,args)
+    climate, args = initialize_model(args)
     
     # run the model
     run_model(climate,args)

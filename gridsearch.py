@@ -26,7 +26,7 @@ import pebsi.massbalance as mb
 from objectives import *
 
 # OPTIONS
-repeat_run = False   # True if restarting an already begun run
+repeat_run = True   # True if restarting an already begun run
 # Define sets of parameters
 # params = {'Boone_c5':[0.018,0.02,0.022,0.024,0.026,0.028,0.03], # 
 #           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5]} # 
@@ -61,7 +61,7 @@ args.store_data = True
 prms.store_vars = ['MB','layers','temp','EB']
 
 if repeat_run:
-    date = '08_01' if args.run_type == 'long' else '08_02'
+    date = '09_30' # if args.run_type == 'long' else '08_02'
     print('Forcing run date to be', date)
     n_today = '0'
     out_fp = f'{date}_{args.site}_{n_today}/'
@@ -132,7 +132,7 @@ for kp in params['kp']:
         all_runs.append((args_run.site, lr, kp, args_run.out))
 
         # Get the climate
-        climate_run, args_run = sim.initialize_model(args_run.glac_no,args_run)
+        climate_run, args_run = sim.initialize_model(args_run)
 
         # Specify attributes for output file
         store_attrs = {'lapse_rate':lr,'kp':kp}
@@ -165,6 +165,9 @@ def run_model_parallel(list_inputs):
             try:
                 # Start timer
                 start_time = time.time()
+
+                # Get unique filename
+                args = sim.get_output_name(args, climate)
 
                 # Initialize the mass balance / output
                 massbal = mb.massBalance(args,climate)
