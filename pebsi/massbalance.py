@@ -38,6 +38,9 @@ class massBalance():
         climate
             Class object frmo pebsi.climate
         """
+        # CONSTANTS
+        PRECIP_FACTOR = float(args.kp)
+
         # set up model time
         self.dt = prms.dt
         self.days_since_snowfall = 0
@@ -57,6 +60,9 @@ class massBalance():
         self.previous_mass = np.sum(self.layers.lice + self.layers.lwater)
         self.lice_before = np.sum(self.layers.lice)
         self.lwater_before = np.sum(self.layers.lwater)
+
+        # update climate variables with args parameters
+        self.climate.cds.tp.values *= PRECIP_FACTOR
         return
     
     def main(self):
@@ -1523,7 +1529,7 @@ class Output():
             List of times used in the simulation
         args : command-line args
         """
-        # get unique filename
+        # get filename
         self.out_fn = prms.output_fp + args.out
 
         # info needed to create the output file

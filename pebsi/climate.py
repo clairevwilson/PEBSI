@@ -74,13 +74,8 @@ class Climate():
         if 'temp' in prms.bias_vars:
             self.temp_elev = prms.station_elevation[self.args.glac_name]
 
-        # set output filename for storing .nc
-        self.store_cds = prms.store_climate
-        if prms.cds_output_fn == 'default':
-            cds_fn = args.out.replace('.nc','_climate.nc')
-            self.cds_output_fn = prms.climate_fp + cds_fn
-        else:
-            self.cds_output_fn = prms.climate_fp + prms.cds_output_fn
+        # check if storing the cds
+        self.store_cds = prms.store_climate 
 
         # get data from existing .nc or from AWS/MERRA-2
         if str(bool(args.input_climate)) != 'False':
@@ -298,31 +293,6 @@ class Climate():
 
         # return the result dict
         return result_dict
-
-    def adjust_to_elevation(self):
-        """
-        Adjusts elevation-dependent climate variables 
-        (temperature, precip, surface pressure, and
-        incoming longwave radiation).
-        """
-        # Set copies of un-edited variables
-        self.original_temp = self.cds.temp.copy(deep=True).values
-        self.original_tp = self.cds.tp.copy(deep=True).values
-        self.original_sp = self.cds.sp.copy(deep=True).values
-        self.original_LWin = self.cds.LWin.copy(deep=True).values
-
-        # TEMPERATURE: correct according to lapse rate
-        self.temp_to_elevation()
-            
-        # PRECIP: correct according to precipitation gradient
-        self.precip_to_elevation()
-
-        # SURFACE PRESSURE: correct according to barometric law
-        self.sp_to_elevation()
-
-        # LONGWAVE: correct with elevation-dependent emissivity 
-        self.LWin_to_elevation()  
-        return
     
     def check_ds(self):
         """
@@ -350,9 +320,6 @@ class Climate():
                     from_MERRA = True if not self.args.use_AWS else var in self.need_vars
                     if from_MERRA:
                         self.bias_adjust_qm(var)
-
-            # adjust elevation dependent variables
-            self.adjust_to_elevation()
             
             # adjust MERRA-2 deposition by reduction coefficient
             if prms.reanalysis == 'MERRA2' and prms.adjust_deposition:
@@ -373,22 +340,43 @@ class Climate():
         if len(failed) > 0:
             print('Missing data from',failed)
             self.exit()
-
-        # store the dataset as a netCDF
-        if self.store_cds:
-            # add measured boolean to output
-            for var in self.cds.variables:
-                if var in self.measured_vars:
-                    self.cds[var].attrs['measured'] = 'True'
-            
-            # store cds
-            self.cds.to_netcdf(self.cds_output_fn)
-            print(f'Climate dataset saved to {self.cds_output_fn}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
         if self.args.debug:
             print(f'~ Loaded climate dataset in {time_elapsed:.1f} seconds ~')
+        return
+
+    def adjust_to_elevation(self, temp=True, precip=True, sp=True, LWin=True):
+        """
+        Adjusts elevation-dependent climate variables 
+        (temperature, precip, surface pressure, and
+        incoming longwave radiation).
+        
+        Vars can be toggled using
+        temp / precip / sp / LWin = False
+        """
+        # Set copies of un-edited variables
+        self.original_temp = self.cds.temp.copy(deep=True).values
+        self.original_tp = self.cds.tp.copy(deep=True).values
+        self.original_sp = self.cds.sp.copy(deep=True).values
+        self.original_LWin = self.cds.LWin.copy(deep=True).values
+
+        # TEMPERATURE: correct according to lapse rate
+        if temp:
+            self.temp_to_elevation()
+            
+        # PRECIP: correct according to precipitation gradient
+        if precip:
+            self.precip_to_elevation()
+
+        # SURFACE PRESSURE: correct according to barometric law
+        if sp:
+            self.sp_to_elevation()
+
+        # LONGWAVE: correct with elevation-dependent emissivity 
+        if LWin:
+            self.LWin_to_elevation()  
         return
     
     def check_units(self,var,ds):
@@ -447,7 +435,24 @@ class Climate():
                 print('Make a manual change in check_units (climate.py)')
                 self.exit()
         return ds
-    
+
+    def store(self):
+        # set output filename for storing .nc
+        if prms.cds_output_fn == 'default':
+            cds_fn = self.args.out.replace('.nc','_climate.nc')
+            self.cds_output_fn = prms.climate_fp + cds_fn
+        else:
+            self.cds_output_fn = prms.climate_fp + prms.cds_output_fn
+
+        # add measured boolean to output
+        for var in self.cds.variables:
+            if var in self.measured_vars:
+                self.cds[var].attrs['measured'] = 'True'
+        
+        # store cds
+        self.cds.to_netcdf(self.cds_output_fn)
+        print(f'Climate dataset saved to {self.cds_output_fn}')
+
     def adjust_dep(self):
         """
         Updates deposition based on preprocessed 
@@ -502,11 +507,10 @@ class Climate():
         PREC_GRAD = prms.precgrad
         if self.args.glac_name in prms.precgrads:
             PREC_GRAD = prms.precgrads[self.args.glac_name]
-        PREC_FACTOR = float(self.args.kp)
 
         # get elevation of the precipitation data
         tp_elev = self.median_elev
-        new_tp = self.original_tp*(1+PREC_GRAD*(self.elev-tp_elev))*PREC_FACTOR
+        new_tp = self.original_tp*(1+PREC_GRAD*(self.elev-tp_elev))
 
         # update precip in the cds
         self.cds.tp.values = new_tp.ravel()
@@ -539,7 +543,7 @@ class Climate():
         self.cds.sp.values = new_sp.ravel()
         return
 
-    def LWin_to_elevation(self):
+    def LWin_to_elevation(self, temp_LW_elev=False):
         """
         Corrects incoming longwave by determining a
         theoretical difference in longwave under clear 
@@ -547,6 +551,10 @@ class Climate():
         parameterization of emissivity (based on 
         temperature and vapor pressure) and applying
         this difference to the MERRA-2 longwave data.
+
+        Temperature sensitivity runs require input temp 
+        at the MERRA-2 elevation. Base PEBSI does not use
+        arg temp_LW_elev
         """
         # CONSTANTS
         SIGMA_SB = prms.sigma_SB
@@ -558,7 +566,8 @@ class Climate():
         rh = self.cds.rh.values             # RH assumed constant with elevation
         temp_site = self.cds.temp.values    # Temperature already updated to self.elev
         LW_elev = self.AWS_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
-        temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
+        if type(temp_LW_elev) == bool and not temp_LW_elev:
+            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK
