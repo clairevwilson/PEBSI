@@ -18,11 +18,11 @@ import pebsi.massbalance as mb
 import pebsi.input as eb_prms
 
 # Redirect prints to a file
-sys.stdout = open('/trace/group/rounce/cvwilson/Output/longruns_test.txt', 'w')
+# sys.stdout = open('/trace/group/rounce/cvwilson/Output/longruns_test.txt', 'w')
 
 # User info
 use_AWS = False
-sites = ['D'] # Sites to run in parallel  'A','AU','B','D'
+sites = ['B'] # Sites to run in parallel  'A','AU','B','D'
 # False or filename of parameters .csv for run, relative to PyGEM-EB/
 params_fn = False # '../Output/params/11_26_best.csv'
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
@@ -58,6 +58,7 @@ def pack_vars():
 
         # Output name
         args_run.out = f'Gulkana_{run_date}_long{site}_'
+        args_run.out = 'gulkanaB_no_bias_correct_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5)}
@@ -101,4 +102,4 @@ if __name__ == '__main__':
     with Pool(n_processes) as processes_pool:
         processes_pool.map(run_model_parallel,packed_vars)
 
-sys.stdout.close()
+# sys.stdout.close()

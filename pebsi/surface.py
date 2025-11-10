@@ -262,7 +262,7 @@ class Surface():
                     self.spectral_weights = sw
             elif args.switch_melt == 1:
                 # BASIC DEGRADATION RATE
-                age = self.days_since_snowfall
+                age = (timestamp - pd.to_datetime(layers.lage[0])).total_seconds() / 3600 / 24 # self.days_since_snowfall
                 albedo_aging = (ALBEDO_FRESH_SNOW - ALBEDO_FIRN)*(np.exp(-age/DEG_RATE))
                 self.albedo = max(ALBEDO_FIRN + albedo_aging,ALBEDO_FIRN)
                 self.bba = self.albedo

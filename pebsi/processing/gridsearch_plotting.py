@@ -13,13 +13,13 @@ mpl.rcParams['font.family'] = 'Liberation Sans'
 machine = socket.gethostname()
 if 'trace' in machine:
     base_fp = '/trace/group/rounce/cvwilson/Output/'
-    pygem_fp = '/trace/home/cvwilson/research/PyGEM-EB/'
+    pygem_fp = '/trace/home/cvwilson/research/PEBSI/'
 elif os.path.exists('/mnt/d/grid_search'):
     base_fp = '/mnt/d/grid_search/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
+    pygem_fp = '/home/claire/research/PEBSI/'
 else:
     base_fp = '/home/claire/research/Output/EB/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
+    pygem_fp = '/home/claire/research/PEBSI/'
 sys.path.append(pygem_fp)
 from objectives import *
 from pebsi.processing.plotting_fxns import *
@@ -553,7 +553,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         if 'winter' in plot_vars:
             row_winter = plot_vars.index('winter')
             winter_data = result_dict[params['c5'][0]][params['kp'][0]][site_long]['winter_meas']
-            axes[row_winter,0].plot(years, winter_data, label='USGS',linestyle='--',color='black')
+            axes[row_winter,0].plot(years, winter_data, label='Measured',linestyle='--',color='black')
             axes[row_winter,0].set_ylabel('Winter mass\nbalance (m w.e.)',fontsize=11)
             for ax in axes[row_winter]:
                 ax.set_xlim(2001,2024)
@@ -563,7 +563,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         if 'summer' in plot_vars:
             row_summer = plot_vars.index('summer')
             summer_data = result_dict[params['c5'][0]][params['kp'][0]][site_long]['summer_meas']
-            axes[row_summer,0].plot(years, summer_data, label='USGS',linestyle='--',color='black')
+            axes[row_summer,0].plot(years, summer_data, label='Measured',linestyle='--',color='black')
             axes[row_summer,0].set_ylabel('Summer mass\nbalance (m w.e.)',fontsize=11)
             for ax in axes[row_summer]:
                 ax.set_xlim(2001,2024)
@@ -573,7 +573,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         if 'annual' in plot_vars:
             row_annual = plot_vars.index('annual')
             annual_data = result_dict[params['c5'][0]][params['kp'][0]][site_long]['annual_meas']
-            axes[row_annual,0].plot(years, annual_data, label='USGS',linestyle='--',color='black')
+            axes[row_annual,0].plot(years, annual_data, label='Measured',linestyle='--',color='black')
             axes[row_annual,0].set_ylabel('Annual mass\nbalance (m w.e.)',fontsize=11)
             for ax in axes[row_annual]:
                 ax.set_xlim(2001,2024)
@@ -607,7 +607,13 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
 
         # Best annual run
         if include_best:
-            assert 1==0, 'I didnt code this yet'
+            c5,kp = best
+            if 'winter' in plot_vars:
+                axes[row_winter,0].plot(years, result_dict[c5][kp][site_long]['winter_mod'],color='gray',label='Modeled')
+            if 'summer' in plot_vars:
+                axes[row_summer,0].plot(years, result_dict[c5][kp][site_long]['summer_mod'],color='gray',label='Modeled')
+            if 'annual' in plot_vars:
+                axes[row_annual,0].plot(years, result_dict[c5][kp][site_long]['annual_mod'],color='gray')
 
     # ===== Snowpit panels =====
     if 'snowdensity' in plot_vars or 'snowdepth' in plot_vars:
@@ -620,7 +626,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         idx_data = np.arange(len(depth_meas)) # np.where(~np.isnan(density_meas))[0]
         if 'snowdensity' in plot_vars:
             row_density = plot_vars.index('snowdensity')
-            axes[row_density,0].plot(years[idx_data], density_meas[idx_data], label='USGS',linestyle='--',color='black')
+            axes[row_density,0].plot(years[idx_data], density_meas[idx_data], label='Measured',linestyle='--',color='black')
             axes[row_density,0].set_ylabel('End-of-winter snow\ndensity (kg m$^{-3}$)',fontsize=11)
             for ax in axes[row_density]:
                 ax.set_xlim(2001,2024)
@@ -629,7 +635,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
                 ax.axhline(0,color='k',linewidth=0.5)
         if 'snowdepth' in plot_vars:
             row_depth = plot_vars.index('snowdepth')
-            axes[row_depth,0].plot(years[idx_data], depth_meas[idx_data], label='USGS',linestyle='--',color='black')
+            axes[row_depth,0].plot(years[idx_data], depth_meas[idx_data], label='Measured',linestyle='--',color='black')
             axes[row_depth,0].set_ylabel('End-of-winter snow\ndepth (m)',fontsize=11)
             for ax in axes[row_depth]:
                 ax.set_xlim(2001,2024)
@@ -651,14 +657,26 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
                     depth_mod = result_dict[c5][kp][site_long]['snowdepth_mod']
                     depth_mod = np.array([np.mean(d) for d in depth_mod])
                     diff = depth_mod - np.array(depth_meas)
-                    axes[row_depth,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)))
+                    axes[row_depth,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
                     axes[row_depth,j+1].set_ylim(-2.75,2.75)
                 if 'snowdensity' in plot_vars:
                     density_mod = result_dict[c5][kp][site_long]['snowdensity_mod']
                     density_mod = np.array([np.mean(d) for d in density_mod])
                     diff = density_mod - np.array(density_meas)
-                    axes[row_density,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)))
+                    axes[row_density,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
                     axes[row_density,j+1].set_ylim(-275,275)
+
+        # Best snow density and depth
+        if include_best:
+            c5,kp = best
+            if 'snowdepth' in plot_vars:
+                depth_mod = result_dict[c5][kp][site_long]['snowdepth_mod']
+                depth_mod = np.array([np.mean(d) for d in depth_mod])
+                axes[row_depth,0].plot(years, depth_mod,color='gray')
+            if 'snowdensity' in plot_vars:
+                density_mod = result_dict[c5][kp][site_long]['snowdensity_mod']
+                density_mod = np.array([np.mean(d) for d in density_mod])
+                axes[row_density,0].plot(years, density_mod,color='gray')
     
     letters = [chr(i) for i in range(ord('a'),ord('z')+1)]
     for a,ax in enumerate(axes.flatten()[:-3]):
@@ -676,6 +694,10 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         rect = plt.Rectangle((xlim[0], ylim[0]), xlim[1]-xlim[0], ylim[1]-ylim[0],
                      linewidth=1.5, edgecolor='k', facecolor='none', zorder=7)
         ax.add_patch(rect)
+
+    axes[-1, 0].plot(np.nan, np.nan, color='k', linestyle='--',label='Measured')
+    axes[-1, 0].plot(np.nan, np.nan, color='gray',label='Modeled')
+    axes[-1, 0].legend(ncols=2, loc='center', bbox_to_anchor=(0.4,0.5), handlelength=1.5)
         
     axes[0,1].text(0.95,0.95, f'$c_5$ varies; $k_p={best[1]}$',transform=axes[0,1].transAxes,va='top',ha='right')
     axes[0,2].text(0.95,0.95, f'$k_p$ varies; $c_5={best[0]}$',transform=axes[0,2].transAxes,va='top',ha='right')
@@ -1046,7 +1068,7 @@ def plot_pareto_2024(all_pareto, result_dict, frequency_dict, best, savefig=Fals
     ax.set_xticks([1.75,2,2.25,2.5,2.75,3])
     ax.tick_params(length=5)
     ax.set_xlabel('Precipitation factor, $k_p$',fontsize=12)
-    axes[0,1].set_title('MAE',fontsize=12)
+    axes[0,1].set_title('Mean absolute error',fontsize=12)
     axes[0,0].set_title('Timeseries',fontsize=12)
     axes = axes.flatten()
     for l, letter in enumerate(['a','b','c','d']):

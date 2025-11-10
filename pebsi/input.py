@@ -180,7 +180,7 @@ grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koc
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
 average_grainsize = 300     # Grainsize to treat as constant if switch_melt is 0 [um]
 albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-] (Moelg et al. 2012, TC)
-albedo_firn = 0.5           # Albedo of firn [-]
+albedo_firn = 0.65          # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
 ksp_BC = 1                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)

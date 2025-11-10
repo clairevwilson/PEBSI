@@ -1088,14 +1088,30 @@ class massBalance():
             evaporation = 0
             condensation = 0
 
-            # check if dm causes negativity
+            # check if change in mass causes negativity
             if layers.lice[0] + dm < 0: 
-                # remove mass from next layer
-                remaining_dm = -(np.abs(dm) - layers.lice)
-                layers.lice[1] += remaining_dm
-                layers.lheight[1] += remaining_dm / layers.ldensity[1]
-                layers.lice[0] = 0
-                layers.remove_layer(0)
+                layer = 0
+                while np.abs(dm) > 0 and layer < layers.nlayers:
+                    # calculate the maximum mass loss possible for the current layer
+                    change = min(np.abs(dm), layers.lice[layer])
+                    layers.lice[layer] -= change
+                    layers.lheight[layer] -= change / layers.ldensity[layer]
+                    
+                    # reduce the absolute magnitude of dm
+                    if dm < 0:
+                        dm += change  # increase dm towards 0 when negative
+                    else:
+                        dm -= change  # decrease dm towards 0 when positive
+
+                    # remove or advance layer
+                    if layers.lice[layer] == 0:
+                        # layer fully sublimated: move liquid water to next layer and remove
+                        if layers.lwater[layer] > 0:
+                            layers.lwater[layer+1] += layers.lwater[layer]
+                        layers.remove_layer(0)
+                    else:
+                        # no layer was removed: advance layer
+                        layer += 1
             else:
                 # add mass to layer if it doesn't cause negativity
                 layers.lice[0] += dm
