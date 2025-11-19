@@ -1863,13 +1863,12 @@ def plot_fluxes(savefig=False):
                     'sensible':'$Q_s$','latent':'$Q_l$',
                     'rain':'$Q_r$','ground':'$Q_g$'}
     data_labels = {'og':'Original\nMERRA-2','bc':'Bias-corrected\nMERRA-2','aws':'Weather\nstation'}
-    vars = ['SWnet','LWnet','sensible','latent','rain','ground']
+    vars = ['SWnet','LWnet','sensible','latent'] # ,'rain','ground']
     colors = all_colors
-    fig, axes = plt.subplots(5,3, sharex=True, sharey=True,gridspec_kw={'hspace':0, 'wspace':0})
+    fig, axes = plt.subplots(5,4, sharex=True, sharey='col',gridspec_kw={'hspace':0, 'wspace':0.5})
     lax = fig.add_axes([0.15,-0.06,0.8,0.05])
     for s,site in enumerate(['T','D','B','AB','AU']):
         for d,data in enumerate(['og','bc','aws']):
-            ax = axes[s,d]
             ds = xr.open_dataset(fp + f'{site}_{data}_0.nc')
             ds['hour'] = ('time', pd.to_datetime(ds['time'].values).hour)
             ds = ds.set_coords('hour')
@@ -1877,25 +1876,32 @@ def plot_fluxes(savefig=False):
             ds['LWnet'] = ds['LWin'] + ds['LWout']
             ds_hourly = ds.groupby('hour').mean(dim='time')
             for v,var in enumerate(vars):
-                ax.plot(ds_hourly['hour'], ds_hourly[var], color=colors[v])
-                if s == 0 and d == 0:
-                    lax.plot(np.nan, np.nan,label=flux_labels[var],color=colors[v])
+                ax = axes[s,v]
+                ax.plot(ds_hourly['hour'], ds_hourly[var], color=colors[d])
+                if s == 0 and v == 0:
+                    lax.plot(np.nan, np.nan,label=data_labels[data],color=colors[d])
+                axes[0, v].set_title(flux_labels[var],fontsize=12)
+                ax.tick_params(length=5,which='major')
+                ax.minorticks_on()
+                ax.tick_params(length=2,which='minor')
+                ax.set_xticks([0,8,16])
+                ax.set_xlim(0,23)
             ds.close()
-            ax.tick_params(length=5,which='major')
-            ax.minorticks_on()
-            ax.tick_params(length=2,which='minor')
-            ax.set_xticks([0,8,16])
-            ax.set_xlim(0,23)
-            axes[0, d].set_title(data_labels[data],fontsize=12)
             
         axes[s, -1].set_ylabel(site,rotation=270,fontsize=12,labelpad=15)
         axes[s, -1].yaxis.set_label_position('right')
+    for ax in axes[:, 3]:
+        ax.set_yticks([-15, 0, 15])
+    for ax in axes[:, 1]:
+        ax.set_yticks([-15, -30])
+    for ax in axes[:, 2]:
+        ax.set_yticks([0, 20, 40])
     fig.text(0.96, 0.48,'Site name',rotation=270,fontsize=12)
     fig.supxlabel('Hour of day')
     fig.supylabel('Flux magnitude (W m$^{-2}$)')
 
     lax.axis('off')
-    lax.legend(ncols=len(vars))
+    lax.legend(ncols=len(vars), loc='center', bbox_to_anchor=(0.4,0.5))
     if savefig:
         plt.savefig(base_fp + 'fluxes.png',dpi=200,bbox_inches='tight')
     plt.show()

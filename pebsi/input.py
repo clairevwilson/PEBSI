@@ -7,7 +7,7 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '00.00000'    # RGI glacier ID
+glac_no = '01.00570'    # RGI glacier ID
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?

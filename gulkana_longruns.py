@@ -19,14 +19,15 @@ import pebsi.input as eb_prms
 
 # Redirect prints to a file
 # sys.stdout = open('/trace/group/rounce/cvwilson/Output/longruns_test.txt', 'w')
+eb_prms.bias_vars = []
 
 # User info
 use_AWS = False
-sites = ['B'] # Sites to run in parallel  'A','AU','B','D'
+sites = ['AU'] # Sites to run in parallel  'A','AU','B','D'
 # False or filename of parameters .csv for run, relative to PyGEM-EB/
 params_fn = False # '../Output/params/11_26_best.csv'
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
-n_runs_ahead = 1    # Step if you're going to run this script more than once
+n_runs_ahead = 0    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
@@ -57,8 +58,7 @@ def pack_vars():
             args_run.startdate = pd.to_datetime('2012-04-20 00:00:00')
 
         # Output name
-        args_run.out = f'Gulkana_{run_date}_long{site}_'
-        args_run.out = 'gulkanaB_no_bias_correct_'
+        args_run.out = f'Gulkana_{run_date}_long{site}_nobiascorrect_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5)}
