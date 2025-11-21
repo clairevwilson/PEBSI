@@ -87,8 +87,9 @@ class Surface():
         else:
             self.snicar_fn = prms.snicar_input_fn
 
-        # need some initial value for cloud cover
+        # need some initial value for cloud cover and annual minimum albedo (firn)
         self.tcc = 0.5
+        self.min_annual_albedo = 1
         return
     
     def daily_updates(self,layers,timestamp):
@@ -276,12 +277,28 @@ class Surface():
                 elif args.switch_LAPs == 1:
                     # LAPs ON, GRAIN SIZE ON
                     self.albedo,self.spectral_weights = self.run_SNICAR(layers,timestamp)
+        elif self.stype == 'firn':
+            # try to retrieve firn albedo from past years of the simulation
+            year = pd.to_datetime(layers.lage[0]).year
+            if year in layers.firn_albedos:
+                # found previous albedo
+                self.albedo = layers.firn_albedos[year]
+            else:
+                # if year is not in the dict, use default
+                self.albedo = self.albedo_dict[self.stype]
+            self.bba = self.albedo
         else:
             self.albedo = self.albedo_dict[self.stype]
             self.bba = self.albedo
+
+        # make albedo a list
         if '__iter__' not in dir(self.albedo):
             self.albedo = [self.albedo]
 
+        if self.bba < self.min_annual_albedo:
+            self.min_annual_albedo = self.bba
+
+        # store
         if prms.store_bands:
             if '__iter__' not in dir(self.albedo):
                 self.albedo = np.ones(480) * self.albedo

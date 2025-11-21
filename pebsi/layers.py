@@ -73,12 +73,14 @@ class Layers():
         self.lrefreeze = np.zeros_like(self.ltemp)   # LAYER MASS OF REFREEZE [kg m-2]
 
         # layer age
-        time_0 = pd.to_datetime(self.args.startdate)
-        self.lage = np.array([time_0 for _ in range(self.nlayers)])        # LAYER AGE [date of creation]
+        self.lage = self.initialize_age()            # LAYER AGE [timestamp]
 
         # initialize bucket for 'delayed snow' and running max snow mass
         self.delayed_snow = 0
         self.max_snow = np.sum(self.lice[self.snow_idx])
+
+        # initialize minimum albedos associated with each firn layer
+        self.firn_albedos = {}
         
         if args.debug:
             print(f'~ {self.nlayers} layers initialized ~')
@@ -298,6 +300,20 @@ class Layers():
         lOC[self.ice_idx] = 0
         ldust[self.ice_idx] = 0
         return lBC, lOC, ldust
+    
+    def initialize_age(self):
+        # set snow layers ages to the first date of the simulation
+        time_0 = pd.to_datetime(self.args.startdate)
+        lage = np.array([time_0 for _ in range(self.nlayers)])
+
+        # set firn layer ages counting back from start year
+        start_str = time_0.strftime('%Y-%m-%d')
+        start_year = start_str[:4]
+        for years_back, layer in enumerate(self.firn_idx):
+            # count back one year for each layer
+            layer_year = str(int(start_year) - years_back - 1)
+            lage[layer] = pd.to_datetime(start_str.replace(start_year, layer_year))
+        return lage
     
     # ========= UTILITY FUNCTIONS ==========
     def add_layers(self,layers_to_add):

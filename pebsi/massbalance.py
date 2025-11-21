@@ -1310,6 +1310,7 @@ class massBalance():
         """
         # get classes
         layers = self.layers
+        surface = self.surface
 
         # exit function if there is no snow
         if len(layers.snow_idx) == 0:
@@ -1350,22 +1351,35 @@ class massBalance():
                 # getting new snow: set the timestamp
                 firn_merged_time = self.time
 
+            # MERGING SNOW LAYERS INTO FIRN!
+            # first, store the past summer surface
+            year = self.time.year 
+            self.layers.firn_albedos[year] = surface.min_annual_albedo
+
             # check which layers are old enough to merge
             merge_layers = np.where(snow_age >= FIRN_AGE)[0]
 
             # set age of layers to be the oldest layer
             layers.lage[merge_layers] = layers.lage[merge_layers[-1]]
             
+            # loop through layers and merge
             for _ in range(merge_layers[0], merge_layers[-1]):
                 layers.merge_layers(merge_layers[0])
+
+            # make sure the layer type for the new firn layer is 'firn'
             layers.ltype[merge_layers[0]] = 'firn'
+
+            # debugging print statement
             if self.args.debug:
                 print('Converted firn on',firn_merged_time)
-            layers.update_layer_props([])   # only update firn_idx
+
+            # update firn_idx and firn_converted
+            layers.update_layer_props([])
             self.firn_converted = True
 
-            # reset cumulative refreeze
+            # reset cumulative refreeze and annual albedo
             layers.lrefreeze *= 0
+            surface.min_annual_albedo = 1
             return
 
     def current_state_prints(self):
