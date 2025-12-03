@@ -489,9 +489,11 @@ class Climate():
         LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
 
         # get elevation of the original temperature data
-        temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
-        if 'temp' in prms.bias_vars:
+        if 'temp' in prms.bias_vars and 'temp' not in self.measured_vars:
+            # if temperature was a bias-corrected variable, use pre-set temp_elev
             temp_elev = self.temp_elev
+        else:
+            temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
         new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
 
         # update temperature in the cds
@@ -504,9 +506,10 @@ class Climate():
         based on a % gradient
         """
         # CONSTANTS
-        PREC_GRAD = prms.precgrad
         if self.args.glac_name in prms.precgrads:
             PREC_GRAD = prms.precgrads[self.args.glac_name]
+        else:
+            PREC_GRAD = prms.precgrad
 
         # get elevation of the precipitation data
         tp_elev = self.median_elev
@@ -599,12 +602,14 @@ class Climate():
         var : str
             Variable to bias correct
         """
-        # open .csv with quantile mapping
+        # get quantile mapping .csv filename
         bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
         bias_fn = bias_fn.replace('GLACIER', self.args.glac_name)
+
+        # need to use file generated without a lapse rate for temperature
         if var == 'temp':
-            # bias_fn = bias_fn.replace('.csv',f'_{self.args.lapse_rate}.csv')
             bias_fn = bias_fn.replace('.csv','_0.0.csv')
+
         assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fn)
         
