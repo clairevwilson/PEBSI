@@ -97,15 +97,15 @@ class massBalance():
             # add dry deposited BC, OC and dust to layers
             enbal.get_dry_deposition(layers)
 
+            # >>> UPDATE GRAIN SIZE <<<
+            if self.args.switch_melt == 2 and layers.nlayers > 2:
+                self.get_grain_size()
+
             # >>> UPDATE DAILY PROPERTIES <<<
             if time.hour == 0:
                 # surrounding albedo, surface type, days since snowfall
                 surface.daily_updates(layers,time)
                 self.days_since_snowfall = surface.days_since_snowfall
-
-            # grain size
-            if self.args.switch_melt == 2 and layers.nlayers > 2:
-                self.get_grain_size()
 
             if time.hour in prms.albedo_TOD and enbal.nanalbedo:
                 # update albedo
@@ -457,8 +457,7 @@ class massBalance():
                 T[np.where(T > 273.15)[0]] = 273.15
 
                 # interpolate lookup table at the values of T,dTdz,p
-                ds = prms.grainsize_ds.copy(deep=True)
-                ds = ds.interp(TVals=T.astype(float),
+                ds_interp = prms.grainsize_ds.interp(TVals=T.astype(float),
                             DTDZVals=dTdz.astype(float),
                             DENSVals=p.astype(float))
                 
@@ -466,9 +465,9 @@ class massBalance():
                 diag = np.zeros((n,n,n),dtype=bool)
                 for i in range(n):
                     diag[i,i,i] = True
-                tau = ds.taumat.to_numpy()[diag].astype(float)
-                kap = ds.kapmat.to_numpy()[diag].astype(float)
-                dr0 = ds.dr0mat.to_numpy()[diag].astype(float)
+                tau = ds_interp.taumat.to_numpy()[diag].astype(float)
+                kap = ds_interp.kapmat.to_numpy()[diag].astype(float)
+                dr0 = ds_interp.dr0mat.to_numpy()[diag].astype(float)
 
                 # calculate dry grain growth
                 drdrydt = []
@@ -490,7 +489,14 @@ class massBalance():
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
-            print('previous', grainsize[-2:], 'wet', drwet[-2:], 'frfz', f_rfz[-2:], layers.lheight[layers.snow_idx][-2:])
+            # if self.time.day_of_year > 153:
+            #     aged_grainsize = np.ones_like(grainsize) * 800
+            # if self.time.day_of_year > 160:
+            #     aged_grainsize = np.ones_like(grainsize) * 1000
+            # if self.time.day_of_year > 170:
+            #     aged_grainsize = np.ones_like(grainsize) * 1200
+            # print(f_liq[-3:], aged_grainsize[-3:])
+            # print('previous', grainsize[-2:], 'wet', drwet[-2:], 'frfz', f_rfz[-2:], layers.lheight[layers.snow_idx][-2:])
                       
             # sum contributions of snow and refreeze
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
@@ -768,13 +774,13 @@ class massBalance():
                 
                 # check limits on flow out (q_out)
                 # first check underlying layer holding capacity
-                if layer < len(porosity) - 1 and vol_f_liq[layer] <= 0.3:
-                    next = layer+1
-                    lim = DENSITY_WATER*lh[next]/dt * (1-vol_f_ice[next]-vol_f_liq[next])
-                else: # no limit on bottom layer
-                    lim = np.inf
+                # if layer < len(porosity) - 1 and vol_f_liq[layer] <= 0.3:
+                #     next = layer+1
+                #     lim = DENSITY_WATER*lh[next]/dt * (1-vol_f_ice[next]-vol_f_liq[next])
+                # else: # no limit on bottom layer
+                #     lim = np.inf
                 # cannot have more flow out than flow in + existing water
-                lim = min(lim,q_in + lw[layer])
+                lim = q_in + lw[layer]
                 q_out = min(q_out,lim)
                 # cannot be negative
                 q_out = max(0,q_out)
