@@ -22,8 +22,9 @@ RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier I
 AWS_fp = '../climate_data/AWS/Processed/'                   # Weather station data filepath
 AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # SNICAR
-grainsize_fn = 'data/grainsize/drygrainsize(SSAin=##).nc'   # Grain size evolution lookup table filepath
-snicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'      # SNICAR input filepath
+grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
+# snicar_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'      # SNICAR input filepath
+snicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'
 clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 # INITIAL CONDITIONS
 initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
@@ -56,13 +57,13 @@ station_elevation = {                       # Elevation of the station used in t
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','temp','rh']     # Vars to correct by quantile mapping # ,'SWin'
+bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping 
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
 initialize_temp = 'interpolate'     # 'interpolate' or 'ripe'
 initialize_density = 'interpolate'  # 'interpolate' or 'constant'
-initialize_LAPs = 'clean'           # 'interpolate' or 'clean' 
+initialize_LAPs = 'interpolate'     # 'interpolate' or 'clean' 
 initialize_water = 'dry'            # 'dry' or 'saturated'
 surftemp_guess =  -10               # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1              # default amount of initial snow [m]
@@ -89,7 +90,7 @@ option_SWpen = True                     # Calculate penetration of shortwave rad
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
-constant_freshgrainsize = 54.5          # False or grain size [um] (Kuipers Munneke (2011): 54.5)
+constant_freshgrainsize = False         # False or grain size [um] (Kuipers Munneke (2011): 54.5)
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
 
 # ALBEDO SWITCHES
@@ -197,7 +198,7 @@ albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 albedo_firn = 0.5           # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
-ksp_BC = 1                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
+ksp_BC = 0.8                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
 ksp_OC = 1                  # Meltwater scavenging efficiency of OC [-] (0.1-0.2 from CLM5)
 ksp_dust = 0.01             # Meltwater scavenging efficiency of dust [-] (0.015 from CLM5)
 BC_freshsnow = 0            # Concentration of BC in fresh snow for initialization [kg m-3]
