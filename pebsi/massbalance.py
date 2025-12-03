@@ -103,9 +103,9 @@ class massBalance():
                 surface.daily_updates(layers,time)
                 self.days_since_snowfall = surface.days_since_snowfall
 
-                # grain size
-                if self.args.switch_melt == 2 and layers.nlayers > 2:
-                    self.get_grain_size()
+            # grain size
+            if self.args.switch_melt == 2 and layers.nlayers > 2:
+                self.get_grain_size()
 
             if time.hour in prms.albedo_TOD and enbal.nanalbedo:
                 # update albedo
@@ -394,7 +394,7 @@ class massBalance():
         FIRN_GRAINSIZE = prms.firn_grainsize
         ICE_GRAINSIZE = prms.ice_grainsize
         CTOK = prms.celsius_to_kelvin
-        dt = prms.daily_dt
+        dt = self.dt # prms.daily_dt
 
         # get temperatures
         airtemp = enbal.tempC
@@ -420,10 +420,10 @@ class massBalance():
 
             # define values for lookup table
             dz = layers.lheight.copy()[idx]             # in m
-            T = layers.ltemp.copy()[idx] + CTOK       # in K
+            T = layers.ltemp.copy()[idx] + CTOK         # in K
             p = layers.ldensity.copy()[idx]             # in kg m-3
             grainsize = layers.lgrainsize.copy()[idx]   # in um
-            surftempK = surftemp + CTOK               # in K
+            surftempK = surftemp + CTOK                 # in K
 
             # dry metamorphism
             if prms.constant_drdry:
@@ -486,10 +486,11 @@ class massBalance():
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # cap runaway wet metamorphosis
-            drwet[drwet > 50] = 50
+            drwet[drwet > 200] = 200
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
+            print('previous', grainsize[-2:], 'wet', drwet[-2:], 'frfz', f_rfz[-2:], layers.lheight[layers.snow_idx][-2:])
                       
             # sum contributions of snow and refreeze
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
