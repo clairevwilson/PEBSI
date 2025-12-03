@@ -19,6 +19,8 @@ import pebsi.input as prms
 
 # Make SNICAR find-able
 sys.path.append(os.getcwd()+'/biosnicar-py/')
+# sys.path.append('snicar-fx/src/')
+# from snicarfx import snicarfx_wrapper
 
 class Surface():
     """
@@ -72,7 +74,7 @@ class Surface():
 
         # parallel runs need separate input files to access
         if args.task_id != -1:
-            self.snicar_fn = os.getcwd() + f'/biosnicar-py/biosnicar/inputs_{args.task_id}{args.site}.yaml'
+            self.snicar_fn = os.getcwd() + prms.snicar_input_fn.replace('inputs',f'inputs_{args.task_id}{args.site}')
             if not os.path.exists(self.snicar_fn):
                 # no input file: create one from inputs.yaml
                 self.reset_SNICAR(self.snicar_fn)
@@ -304,6 +306,167 @@ class Surface():
                 self.albedo = np.ones(480) * self.albedo
             self.albedo_df.loc[timestamp] = self.albedo.copy()
         return 
+    
+    def run_SNICARfx(self,layers,timestamp,
+                   override_grainsize=False,override_LAPs=False):
+        """
+        Runs SNICAR model to retrieve broadband albedo. 
+
+        Parameters
+        ----------
+        layers
+            Class object from pebsi.layers
+        nlayers : int
+            Number of layers to include in the 
+            calculation
+        max_depth : float
+            Maximum depth of layers to include 
+            in the calculation
+            ** Specify nlayers OR max_depth **
+        override_grainsize : Bool
+            If True, use constant average grainsize 
+            specified in input.py
+        override_LAPs: Bool
+            If True, use constant LAP concentrations 
+            specified in input.py
+
+        Returns
+        -------
+        albedo : np.ndarray
+            Spectral albedo
+        spectral_weights : np.ndarray
+            Wights of each spectral band
+        """
+        # CONSTANTS
+        AVG_GRAINSIZE = prms.average_grainsize
+        DIFFUSE_CLOUD_LIMIT = prms.diffuse_cloud_limit
+        DENSITY_FIRN = prms.density_firn
+        DENSITY_ICE = prms.density_ice
+        FRAC_IRREDUC = prms.Sr
+
+        # get layers to include in the calculation (top 1m of non-ice layers)
+        nlayers = np.where(layers.ldepth >= 1)[0][0] + 1
+        if layers.ldensity[nlayers-1] > DENSITY_FIRN:
+            # only consider firn or ice layers
+            nlayers = np.where(layers.ltype != 'ice')[0][-1] + 1
+        idx = np.arange(nlayers)
+
+        # unpack layer variables (need to be stored as lists)
+        lheight = layers.lheight[idx].astype(float).tolist()
+        ldensity = layers.ldensity[idx].astype(float).tolist()
+        lgrainsize = layers.lgrainsize[idx].astype(int)
+        lwater = layers.lwater[idx] / (layers.lice[idx]+layers.lwater[idx])
+
+        # grain size files are every 1um up to 1500um, then every 500
+        # idx_1500 = lgrainsize>1500
+        # lgrainsize[idx_1500] = np.round(lgrainsize[idx_1500]/500) * 500
+        # lgrainsize[lgrainsize < 30] = 30    # cap minimum grain size
+        # lgrainsize = lgrainsize.tolist()    # make array a list
+        ssa = 3 / (lgrainsize/1e6 * np.array(ldensity))
+        ssa[ssa > 100] = 100
+        ssa = (ssa.astype(float)).tolist()
+
+        # check if grains in each layer are rounded
+        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
+        shapes = np.ones(nlayers)*0
+        # shapes[lwater >= porosity * FRAC_IRREDUC] = 0
+        shapes = (shapes.astype(int)).tolist()
+
+        # convert LAPs from mass to concentration in ppb
+        BC = layers.lBC[idx] / layers.lheight[idx] * 1e6
+        OC = layers.lOC[idx] / layers.lheight[idx] * 1e6
+        dust1 = layers.ldust[idx] / layers.lheight[idx] * 1e6 * prms.ratio_DU_bin1
+        dust2 = layers.ldust[idx] / layers.lheight[idx] * 1e6 * prms.ratio_DU_bin2
+        dust3 = layers.ldust[idx] / layers.lheight[idx] * 1e6 * prms.ratio_DU_bin3
+        dust4 = layers.ldust[idx] / layers.lheight[idx] * 1e6 * prms.ratio_DU_bin4
+        dust5 = layers.ldust[idx] / layers.lheight[idx] * 1e6 * prms.ratio_DU_bin5
+
+        # convert arrays to lists for making input file
+        lBC = (BC.astype(float)).tolist()
+        lOC = (OC.astype(float)).tolist()
+        ldust1 = (dust1.astype(float)).tolist()
+        ldust2 = (dust2.astype(float)).tolist()
+        ldust3 = (dust3.astype(float)).tolist()
+        ldust4 = (dust4.astype(float)).tolist()
+        ldust5 = (dust5.astype(float)).tolist()
+
+        # override options for switch runs
+        if override_grainsize:
+            # overrides grainsize with the average value in prms
+            lgrainsize = [AVG_GRAINSIZE for _ in idx]
+        if override_LAPs:
+            # overrides LAPs with fresh snow values
+            lBC = [prms.BC_freshsnow*1e6 for _ in idx]
+            lOC = [prms.OC_freshsnow*1e6 for _ in idx]
+            ldust1 = np.array([prms.dust_freshsnow*1e6 for _ in idx]).tolist()
+            ldust2 = ldust1.copy()
+            ldust3 = ldust1.copy()
+            ldust4 = ldust1.copy()
+            ldust5 = ldust1.copy()
+
+        # open and edit yaml input file for SNICAR
+        with open(self.snicar_fn) as f:
+            list_doc = yaml.safe_load(f)
+
+        # update changing layer variables
+        try:
+            list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
+        except:
+            self.reset_SNICAR(self.snicar_fn)
+            with open(self.snicar_fn) as f:
+                list_doc = yaml.safe_load(f)
+            list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
+
+        # LIGHT_ABSORBING_PARTICLES
+        list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
+        list_doc['LIGHT_ABSORBING_PARTICLES']['OC']['CONC'] = lOC
+        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST1']['CONC'] = ldust1
+        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST2']['CONC'] = ldust2
+        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST3']['CONC'] = ldust3
+        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST4']['CONC'] = ldust4
+        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST5']['CONC'] = ldust5
+
+        # ICE
+        list_doc['ICE']['THICKNESS'] = lheight
+        list_doc['ICE']['DENSITY'] = ldensity
+        list_doc['ICE']['SPECIFIC_SURFACE_AREA'] = ssa
+        if prms.include_LWC_SNICAR:
+            list_doc['ICE']['LWC'] = lwater.tolist()
+        else:
+            list_doc['ICE']['LWC'] = [0]*nlayers
+        list_doc['ICE']['GRAIN_SHAPE'] = shapes
+        list_doc['ICE']['LAYER_TYPE'] = [0]*nlayers
+
+        # filepath for ice albedo
+        # list_doc['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
+
+        # solar zenith angle
+        lat = self.climate.lat
+        lon = self.climate.lon
+        time_UTC = timestamp - self.args.timezone
+        altitude_angle = suncalc.get_position(time_UTC,lon,lat)['altitude']
+        zenith = 180/np.pi * (np.pi/2 - altitude_angle) if altitude_angle > 0 else 89
+        list_doc['RTM']['SZA'] = int(zenith)
+        list_doc['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
+
+        # save SNICAR input file
+        with open(self.snicar_fn, 'w') as f:
+            yaml.dump(list_doc,f)
+        
+        # run get_albedo from SNICAR
+        outputs = snicarfx_wrapper.run_two_stream(self.snicar_fn)
+        spectral_weights = outputs.spectral_weights
+        albedo = outputs.albedo
+        prms.wvs = outputs.wavelengths * 1e6
+
+        # find broadband albedo from spectral albedo
+        self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
+        
+        # calculate visible albedo
+        assert len(albedo) == len(prms.wvs)
+        vis_idx = np.where((prms.wvs <= 0.75) & (prms.wvs >= 0.4))[0]
+        self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
+        return albedo,spectral_weights
     
     def run_SNICAR(self,layers,timestamp,
                    override_grainsize=False,override_LAPs=False):
