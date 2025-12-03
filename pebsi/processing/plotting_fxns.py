@@ -1158,13 +1158,13 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layerdensity']:
             bounds = [50,800] if plot_firn else [0,500]
         elif var in ['layerwater']:
-            bounds = [-1,6]
+            bounds = [-1,15]
         elif var in ['layertemp']:
             bounds = [-10,0]
         elif var in ['layergrainsize']:
             bounds = [50,1500]
         elif var in ['layerrefreeze']:
-            bounds = [-0.02,0.1]
+            bounds = [-1,20]
         dens_lim = 890 if plot_firn else 600
         dens_lim = 1000 if plot_ice else dens_lim
         assert 'layer' in var, 'choose layer variable'
@@ -1190,10 +1190,11 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             # flip order so they stack bottom to top
             height = np.flip(height[layers_to_plot])
             vardata = np.flip(vardata[layers_to_plot])
+            dens_flip = np.flip(dens[layers_to_plot])
             if var in ['layerwater']:
-                vardata = vardata / height / 1000 * 100
+                vardata = vardata / (height * dens_flip)* 100
             if var in ['layerrefreeze']:
-                vardata = vardata / (np.flip(dens[layers_to_plot]) * height)
+                vardata = vardata / (dens_flip * height) * 100
             # if plot_ice:
             #     height = np.log(height)
 
