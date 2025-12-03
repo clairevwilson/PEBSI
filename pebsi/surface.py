@@ -74,7 +74,7 @@ class Surface():
 
         # parallel runs need separate input files to access
         if args.task_id != -1:
-            self.snicar_fn = os.getcwd() + prms.snicar_input_fn.replace('inputs',f'inputs_{args.task_id}{args.site}')
+            self.snicar_fn = prms.snicar_input_fn.replace('inputs',f'inputs_{args.task_id}{args.site}')
             if not os.path.exists(self.snicar_fn):
                 # no input file: create one from inputs.yaml
                 self.reset_SNICAR(self.snicar_fn)
@@ -639,16 +639,20 @@ class Surface():
         fn : str
             Filepath to the inputs.yaml file
         """
+        base_filepath = os.path.join(os.getcwd(), prms.snicar_input_fn)
+        id_filepath = os.path.join(os.getcwd(), fn)
+        print(fn, id_filepath, os.getcwd())
+
         # remove old file if it exists
-        if os.path.exists(fn):
-            os.remove(fn)
+        if os.path.exists(id_filepath):
+            os.remove(id_filepath)
 
         # open the base inputs file
-        with open(prms.snicar_input_fn, 'rb') as src_file:
+        with open(base_filepath, 'rb') as src_file:
             file_contents = src_file.read()
 
         # copy the base inputs file to fn
-        with open(fn, 'wb') as dest_file:
+        with open(id_filepath, 'wb') as dest_file:
             dest_file.write(file_contents)
         return
     
