@@ -1,3 +1,8 @@
+"""
+Script version of quantile_mapping.ipynb
+for easier automation.
+"""
+
 import xarray as xr 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -219,4 +224,4 @@ for glacier in ['kahiltna','gulkana','wolverine']:
             plt.savefig(fn_fig,dpi=200,bbox_inches='tight')
             plt.close()
 
-    print('DONE', glacier)
+    print('DONE WITH', glacier)

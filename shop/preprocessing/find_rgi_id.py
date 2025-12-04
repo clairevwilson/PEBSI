@@ -1,3 +1,17 @@
+"""
+This script contains functions to find a glacier ID
+from the Randolph Glacier Inventory either by
+a lat/lon coordinate or by some text that might
+appear in the glacier name attribute.
+
+Most useful command line args:
+-reg    RGI region ID to search
+-t      text to search RGI names attribute
+-lat    latitude value
+-lon    longitude value
+
+@author: clairevwilson
+"""
 import pandas as pd
 import geopandas as gpd
 import argparse

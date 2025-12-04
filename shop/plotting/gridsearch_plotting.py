@@ -26,8 +26,8 @@ else:
     mpl.rcParams['font.family'] = 'sans-serif'
 sys.path.append(pygem_fp)
 from objectives import *
-from pebsi.processing.plotting_fxns import *
-import pebsi.processing.gridsearch_processing as gsproc
+from PEBSI.shop.plotting.plotting_fxns import *
+import PEBSI.shop.processing.gridsearch_processing as gsproc
 
 # Create some dictionaries with useful information
 labels = {'kp':'Precipitation factor','kw':'Wind factor','c5':'Densification c$_5$'}      # Labels for the different parameters we varied

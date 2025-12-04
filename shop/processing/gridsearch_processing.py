@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
-from pebsi.processing.plotting_fxns import *
+from PEBSI.shop.plotting.plotting_fxns import *
 from objectives import *
 from seasonal_error import seasonal_mass_balance as seasonal_error
 from seasonal_error import firn_cores
