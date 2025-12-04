@@ -75,19 +75,21 @@ class Surface():
         # parallel runs need separate input files to access
         if args.task_id != -1:
             self.snicar_fn = prms.snicar_input_fn.replace('inputs',f'inputs_{args.task_id}{args.site}')
-            if not os.path.exists(self.snicar_fn):
-                # no input file: create one from inputs.yaml
-                self.reset_SNICAR(self.snicar_fn)
-            try:
-                # check if SNICAR imports properly
-                with HiddenPrints():
-                    from biosnicar import get_albedo
-                    _,_ = get_albedo.get('adding-doubling',plot=False,validate=False)
-            except:
-                # problem in the SNICAR input file: create a new one
-                self.reset_SNICAR(self.snicar_fn)
         else:
-            self.snicar_fn = prms.snicar_input_fn
+            self.snicar_fn = prms.snicar_input_fn.replace('inputs',f'inputs_inuse')
+
+        # check inputs file works
+        if not os.path.exists(self.snicar_fn):
+            # no input file: create one from inputs.yaml
+            self.reset_SNICAR(self.snicar_fn)
+        try:
+            # check if SNICAR imports properly
+            with HiddenPrints():
+                from biosnicar import get_albedo
+                _,_ = get_albedo.get('adding-doubling',plot=False,validate=False)
+        except:
+            # problem in the SNICAR input file: create a new one
+            self.reset_SNICAR(self.snicar_fn)
 
         # need some initial value for cloud cover and annual minimum albedo (firn)
         self.tcc = 0.5
@@ -641,7 +643,6 @@ class Surface():
         """
         base_filepath = os.path.join(os.getcwd(), prms.snicar_input_fn)
         id_filepath = os.path.join(os.getcwd(), fn)
-        print(fn, id_filepath, os.getcwd())
 
         # remove old file if it exists
         if os.path.exists(id_filepath):
