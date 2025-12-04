@@ -35,13 +35,16 @@ initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP conten
 dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 climate_fp = '../climate_data/'                             # Climate data filepath
-cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load (see climate_out_fn)
+merra2_eg_fn = '../climate_data/MERRA2/MERRA2constants.nc4' # Global file of MERRA-2 geopotential
+bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
+cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
 # OUTPUT
 output_fp = '../Output/'                                    # Output filepath
 albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
-cds_output_fn = 'default'                                   # 'default' or climate dataset filename for reproducibility
+cds_output_fn = 'default'                                   # 'default' or climate dataset filename ++
+# ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
+#    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
 
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME

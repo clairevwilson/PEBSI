@@ -251,18 +251,26 @@ class Climate():
     
     def get_var_data(self, fn, var, result_dict):
         # get dates
-        dates = self.dates_UTC # - pd.Timedelta(days=365)
-        # print('REMOVE THE TIME CHANGE')
+        dates = self.dates_UTC
+
+        # special check for RH: must be calculated from QV
+        if var == 'rh' and not os.path.exists(fn):
+            assert prms.reanalysis == 'MERRA2', 'RH conversion not yet set up for ERA-5'
+            self.create_rh2m_ds(fn)
 
         # open and check units of climate data
         ds = xr.open_dataset(fn)
 
-        # index by lat and lon
+        # get variable names
         vn = self.var_dict[var]['vn'] 
         lat_vn,lon_vn = [self.lat_vn,self.lon_vn]
+
+        # light-absorbing particles always come from MERRA-2 and need special treatment
         if 'bc' in var or 'oc' in var or 'dust' in var:
             if prms.reanalysis == 'ERA5-hourly':
                 lat_vn,lon_vn = ['lat','lon']
+
+        # index by lat and lon
         if ds.coords[lat_vn].values.size > 1:
             ds = ds.sel({lat_vn:self.lat,lon_vn:self.lon}, method='nearest')[vn]
         else:
@@ -283,9 +291,9 @@ class Climate():
             else:
                 ds = ds.sel(time=dates)
         
-        # make sure the gridcell corrected is close enough to the glacier
+        # make sure the correct grid cell was accessed
         assert np.abs(ds.coords[lat_vn].values - float(self.lat)) <= 0.5, 'Wrong grid cell was accessed'
-        assert np.abs(ds.coords[lon_vn].values - float(self.lon)) <= 0.5, 'Wrong grid cell was accessed'
+        assert np.abs(ds.coords[lon_vn].values - float(self.lon)) <= 0.625, 'Wrong grid cell was accessed'
 
         # store result
         result_dict[var] = ds.values.ravel()
@@ -620,6 +628,55 @@ class Climate():
         # update values
         self.cds[var].values = adjusted
         return
+    
+    def create_rh2m_ds(self, fn):
+        """
+        Creates an RH2M (2 m relative humidity) 
+        dataset from specific humidity, air 
+        temperature, and surface pressure datasets
+        from MERRA-2.
+
+        Parameters
+        ==========
+        fn : str
+            Filename of the RH2M dataset to create
+        """
+        # CONSTANTS
+        CTOK = prms.celsius_to_kelvin
+
+        # get variable names
+        rh_vn = self.var_dict['rh']['vn']
+        temp_vn = self.var_dict['temp']['vn']
+        sp_vn = self.var_dict['sp']['vn']
+        qv_vn = 'QV2M'
+
+        ds_qv = xr.open_dataset(fn.replace(rh_vn, qv_vn))
+        ds_temp = xr.open_dataset(fn.replace(rh_vn, temp_vn))
+        ds_sp = xr.open_dataset(fn.replace(rh_vn, sp_vn))
+
+        # calculate saturation pressure from air temperature
+        esat = self.sat_vapor_pressure(ds_temp[temp_vn].values - CTOK)
+
+        # saturation and actual specific humidity vapor pressure
+        ws = 0.622*esat / (ds_sp[sp_vn].values - esat)
+        w = ds_qv[qv_vn].values / (1 - ds_qv[qv_vn].values)
+
+        # relative humidity as a percentage of saturation humidity
+        rh = w / ws * 100
+
+        # create copy dataset and fill with RH data
+        ds_rh = ds_qv.copy(deep=True)
+        ds_rh['RH2M'] = xr.DataArray(
+                                        rh,
+                                        dims=['time'],
+                                        coords={'time': ds_rh['time'].values},
+                                        attrs={'units': '%', 'long_name': '2-meter_relative_humidity'}
+                                    )
+
+        # drop QV data and store the RH dataset
+        ds_rh = ds_rh.drop_vars('QV2M')
+        ds_rh.to_netcdf(fn)
+        return
 
     def sat_vapor_pressure(self,airtemp,method='ARM'):
         """
@@ -688,13 +745,13 @@ class Climate():
         Fills a dictionary with the reanalysis
         file and variable names.
         """
-        # determine filetag for MERRA2 lat/lon gridded files
-        flat = str(int(np.floor(self.lat/10)*10))
-        flon = str(int(np.floor(self.lon/10)*10))
+        # determine filetag for MERRA2 lat/lon file
+        assert os.path.exists(prms.merra2_eg_fn), f'Store global geopotential file to {prms.merra2_eg_fn}'
+        ds_global = xr.open_dataset(prms.merra2_eg_fn)
+        ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
+        flat = str(ds_closest.lat.values)
+        flon = str(ds_closest.lon.values)
         tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
-        
-        ####### FIRN THING ************
-        tag = self.args.glac_name + '_alltime'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp
@@ -732,22 +789,22 @@ class Climate():
             self.elev_vn = self.var_dict['elev']['vn']
 
             # Variable filenames
-            self.var_dict['temp']['fn'] = f'T2M/MERRA2_T2M_{tag}.nc'
-            self.var_dict['rh']['fn'] = f'RH2M/MERRA2_RH2M_{tag}.nc'
-            self.var_dict['sp']['fn'] = f'PS/MERRA2_PS_{tag}.nc'
-            self.var_dict['tcc']['fn'] = f'CLDTOT/MERRA2_CLDTOT_{tag}.nc'
-            self.var_dict['LWin']['fn'] = f'LWGAB/MERRA2_LWGAB_{tag}.nc'
-            self.var_dict['SWin']['fn'] = f'SWGDN/MERRA2_SWGDN_{tag}.nc'
-            self.var_dict['vwind']['fn'] = f'V2M/MERRA2_V2M_{tag}.nc'
-            self.var_dict['uwind']['fn'] = f'U2M/MERRA2_U2M_{tag}.nc'
-            self.var_dict['tp']['fn'] = f'PRECTOTCORR/MERRA2_PRECTOTCORR_{tag}.nc'
+            self.var_dict['temp']['fn'] = f'{tag}/T2M_{tag}.nc'
+            self.var_dict['rh']['fn'] = f'{tag}/RH2M_{tag}.nc'
+            self.var_dict['sp']['fn'] = f'{tag}/PS_{tag}.nc'
+            self.var_dict['tcc']['fn'] = f'{tag}/CLDTOT_{tag}.nc'
+            self.var_dict['LWin']['fn'] = f'{tag}/LWGAB_{tag}.nc'
+            self.var_dict['SWin']['fn'] = f'{tag}/SWGDN_{tag}.nc'
+            self.var_dict['vwind']['fn'] = f'{tag}/V2M_{tag}.nc'
+            self.var_dict['uwind']['fn'] = f'{tag}/U2M_{tag}.nc'
+            self.var_dict['tp']['fn'] = f'{tag}/PRECTOTCORR_{tag}.nc'
             self.var_dict['elev']['fn'] = f'MERRA2constants.nc4'
-            self.var_dict['bcwet']['fn'] = f'BCWT002/MERRA2_BCWT002_{tag}.nc'
-            self.var_dict['bcdry']['fn'] = f'BCDP002/MERRA2_BCDP002_{tag}.nc'
-            self.var_dict['ocwet']['fn'] = f'OCWT002/MERRA2_OCWT002_{tag}.nc'
-            self.var_dict['ocdry']['fn'] = f'OCDP002/MERRA2_OCDP002_{tag}.nc'
-            self.var_dict['dustwet']['fn'] = f'DUWT003/MERRA2_DUWT003_{tag}.nc'
-            self.var_dict['dustdry']['fn'] = f'DUDP003/MERRA2_DUDP003_{tag}.nc'
+            self.var_dict['bcwet']['fn'] = f'{tag}/BCWT002_{tag}.nc'
+            self.var_dict['bcdry']['fn'] = f'{tag}/BCDP002_{tag}.nc'
+            self.var_dict['ocwet']['fn'] = f'{tag}/OCWT002_{tag}.nc'
+            self.var_dict['ocdry']['fn'] = f'{tag}/OCDP002_{tag}.nc'
+            self.var_dict['dustwet']['fn'] = f'{tag}/DUWT003_{tag}.nc'
+            self.var_dict['dustdry']['fn'] = f'{tag}/DUDP003_{tag}.nc'
         elif prms.reanalysis == 'ERA5-hourly':
             self.reanalysis_fp += 'ERA5/ERA5_hourly/'
 
@@ -784,12 +841,12 @@ class Climate():
             self.var_dict['uwind']['fn'] = 'ERA5_uwind_hourly.nc'
             self.var_dict['tp']['fn'] = 'ERA5_tp_hourly.nc'
             self.var_dict['elev']['fn'] = 'ERA5_geopotential_2000.nc'
-            self.var_dict['bcwet']['fn'] = f'./../../MERRA2/BCWT002/MERRA2_BCWT002_{tag}.nc'
-            self.var_dict['bcdry']['fn'] = f'./../../MERRA2/BCDP002/MERRA2_BCDP002_{tag}.nc'
-            self.var_dict['ocwet']['fn'] = f'./../../MERRA2/OCWT002/MERRA2_OCWT002_{tag}.nc'
-            self.var_dict['ocdry']['fn'] = f'./../../MERRA2/OCDP002/MERRA2_OCDP002_{tag}.nc'
-            self.var_dict['dustwet']['fn'] = f'./../../MERRA2/DUWT003/MERRA2_DUWT003_{tag}.nc'
-            self.var_dict['dustdry']['fn'] = f'./../../MERRA2/DUDP003/MERRA2_DUDP003_{tag}.nc'
+            self.var_dict['bcwet']['fn'] = f'./../../MERRA2/{tag}/BCWT002_{tag}.nc'
+            self.var_dict['bcdry']['fn'] = f'./../../MERRA2/{tag}/BCDP002_{tag}.nc'
+            self.var_dict['ocwet']['fn'] = f'./../../MERRA2/{tag}/OCWT002_{tag}.nc'
+            self.var_dict['ocdry']['fn'] = f'./../../MERRA2/{tag}/OCDP002_{tag}.nc'
+            self.var_dict['dustwet']['fn'] = f'./../../MERRA2/{tag}/DUWT003_{tag}.nc'
+            self.var_dict['dustdry']['fn'] = f'./../../MERRA2/{tag}/DUDP003_{tag}.nc'
 
     def exit(self):
         sys.exit()
