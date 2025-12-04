@@ -761,7 +761,7 @@ class massBalance():
             layers.lrefreeze[layers.lrefreeze < 0] = 0
 
             # initialize flow into the top layer
-            q_out = water_in / dt # q is a rate so need dt
+            q_out = water_in
             q_in_store = []
             q_out_store = []
             for layer in snow_firn_idx:
@@ -769,8 +769,13 @@ class massBalance():
                 q_in = q_out
 
                 # calculate flow out of layer i
-                q_out = DENSITY_WATER*lh[layer]/dt * (
-                            vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
+                # q_out = DENSITY_WATER*lh[layer]/dt * (
+                #             vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
+                if q_in < (FRAC_IRREDUC * porosity[layer] - lw[layer]):
+                    q_out = 0
+                else:
+                    q_out = q_in - (FRAC_IRREDUC * porosity[layer] - lw[layer])
+                # if lw[layer] > irreduc, q_out > q_in
                 
                 # check limits on flow out (q_out)
                 # first check underlying layer holding capacity
@@ -780,28 +785,28 @@ class massBalance():
                 # else: # no limit on bottom layer
                 #     lim = np.inf
                 # cannot have more flow out than flow in + existing water
-                lim = q_in + lw[layer]
-                q_out = min(q_out,lim)
+                # lim = q_in + lw[layer]
+                # q_out = min(q_out,lim)
                 # cannot be negative
                 q_out = max(0,q_out)
 
                 # layer mass balance
-                lw[layer] += (q_in - q_out)*dt
+                lw[layer] += q_in - q_out
                 q_in_store.append(q_in)
                 q_out_store.append(q_out)
 
                 # layer cannot contain more water than there is pore space
-                layer_porosity = max(1 - lm[layer] / (lh[layer]*DENSITY_ICE),0)
-                water_lim = lh[layer]*layer_porosity*DENSITY_WATER
-                if lw[layer] > water_lim: # excess runs off
-                    runoff += lw[layer] - water_lim
-                    lw[layer] = water_lim
+                # layer_porosity = max(1 - lm[layer] / (lh[layer]*DENSITY_ICE),0)
+                # water_lim = lh[layer]*layer_porosity*DENSITY_WATER
+                # if lw[layer] > water_lim: # excess runs off
+                #     runoff += lw[layer] - water_lim
+                #     lw[layer] = water_lim
 
             # LAYERS OUT
             layers.lheight[snow_firn_idx] = lh
             layers.lwater[snow_firn_idx] = lw
             layers.lice[snow_firn_idx] = lm
-            runoff += q_out*dt + np.sum(layermelt[layers.ice_idx])
+            runoff += q_out + np.sum(layermelt[layers.ice_idx])
 
             # remove melted ice mass (only snow/firn mass was handled above)
             for layer in layers.ice_idx:
@@ -900,9 +905,9 @@ class massBalance():
         m_dust_out = PARTITION_COEF_DUST*q_out*cdust
 
         # mass balance on each constituent
-        dmBC = (m_BC_in - m_BC_out)*dt
-        dmOC = (m_OC_in - m_OC_out)*dt
-        dmdust = (m_dust_in - m_dust_out)*dt
+        dmBC = m_BC_in - m_BC_out
+        dmOC = m_OC_in - m_OC_out
+        dmdust = m_dust_in - m_dust_out
         mBC += dmBC.astype(float)
         mOC += dmOC.astype(float)
         mdust += dmdust.astype(float)
