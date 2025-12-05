@@ -507,6 +507,7 @@ class Surface():
         # CONSTANTS
         AVG_GRAINSIZE = prms.average_grainsize
         DIFFUSE_CLOUD_LIMIT = prms.diffuse_cloud_limit
+        DENSITY_WATER = prms.density_water
         DENSITY_FIRN = prms.density_firn
         DENSITY_ICE = prms.density_ice
         FRAC_IRREDUC = prms.Sr
@@ -523,6 +524,7 @@ class Surface():
         ldensity = layers.ldensity[idx].astype(float).tolist()
         lgrainsize = layers.lgrainsize[idx].astype(int)
         lwater = layers.lwater[idx] / (layers.lice[idx]+layers.lwater[idx])
+        lrefreeze = layers.lrefreeze[idx].astype(float)
 
         # grain size files are every 1um up to 1500um, then every 500
         idx_1500 = lgrainsize>1500
@@ -594,10 +596,12 @@ class Surface():
         ice_variables = ['LAYER_TYPE','SHP','HEX_SIDE','HEX_LENGTH',
                          'SHP_FCTR','WATER_COATING','AR','CDOM']
         # option to change shape in inputs
-        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
-        no_water = lwater[0] < porosity * FRAC_IRREDUC
-        list_doc['ICE']['SHP'][0] = 2 if no_water else 0
-        list_doc['ICE']['AR'][0] = 0.01 if no_water else 0
+        shapes = np.ones(nlayers, dtype=int) * 2
+        shapes[(lwater > 0) | (lrefreeze > 0)] = 0
+        aspect_ratios = np.ones(nlayers, dtype=int) * 0.01
+        aspect_ratios[(lwater > 0) | (lrefreeze > 0)] = 0
+        list_doc['ICE']['SHP'] = shapes[idx].tolist()
+        list_doc['ICE']['AR'] = aspect_ratios[idx].tolist()
         for var in ice_variables:
             list_doc['ICE'][var] = [list_doc['ICE'][var][0]] * nlayers
 
@@ -623,6 +627,7 @@ class Surface():
 
         # find broadband albedo from spectral albedo
         self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
+        print(timestamp, self.bba, shapes, aspect_ratios)
         
         # calculate visible albedo
         assert len(albedo) == len(prms.wvs)
