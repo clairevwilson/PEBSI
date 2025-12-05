@@ -3,7 +3,7 @@ This script processes grid search outputs in parallel.
 
 @author: clairevwilson
 """
-import pebsi.processing.gridsearch_processing as gsproc
+import PEBSI.shop.processing.gridsearch_processing as gsproc
 from multiprocessing import Pool
 import argparse
 import time
