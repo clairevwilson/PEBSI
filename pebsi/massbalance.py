@@ -771,10 +771,15 @@ class massBalance():
                 # calculate flow out of layer i
                 # q_out = DENSITY_WATER*lh[layer]/dt * (
                 #             vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
-                if q_in < (FRAC_IRREDUC * porosity[layer] - lw[layer]):
+                if layers.ldensity[layer] > 500:
+                    FRAC_IRREDUC = prms.Sr_dense
+                else:
+                    FRAC_IRREDUC = prms.Sr_light
+                water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
+                if q_in < (water_irreduc - lw[layer]):
                     q_out = 0
                 else:
-                    q_out = q_in - (FRAC_IRREDUC * porosity[layer] - lw[layer])
+                    q_out = q_in - (water_irreduc - lw[layer])
                 # if lw[layer] > irreduc, q_out > q_in
                 
                 # check limits on flow out (q_out)
