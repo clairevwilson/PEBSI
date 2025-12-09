@@ -768,30 +768,19 @@ class massBalance():
                 # set flow in equal to flow out of the previous layer
                 q_in = q_out
 
-                # calculate flow out of layer i
-                # q_out = DENSITY_WATER*lh[layer]/dt * (
-                #             vol_f_liq[layer]-FRAC_IRREDUC*porosity[layer])
+                # irreducible water content depends on density
                 if layers.ldensity[layer] > 500:
                     FRAC_IRREDUC = prms.Sr_dense
                 else:
                     FRAC_IRREDUC = prms.Sr_light
                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
+
+                # calculate flow out of layer i
                 if q_in < (water_irreduc - lw[layer]):
                     q_out = 0
                 else:
                     q_out = q_in - (water_irreduc - lw[layer])
-                # if lw[layer] > irreduc, q_out > q_in
-                
-                # check limits on flow out (q_out)
-                # first check underlying layer holding capacity
-                # if layer < len(porosity) - 1 and vol_f_liq[layer] <= 0.3:
-                #     next = layer+1
-                #     lim = DENSITY_WATER*lh[next]/dt * (1-vol_f_ice[next]-vol_f_liq[next])
-                # else: # no limit on bottom layer
-                #     lim = np.inf
-                # cannot have more flow out than flow in + existing water
-                # lim = q_in + lw[layer]
-                # q_out = min(q_out,lim)
+
                 # cannot be negative
                 q_out = max(0,q_out)
 
@@ -799,13 +788,6 @@ class massBalance():
                 lw[layer] += q_in - q_out
                 q_in_store.append(q_in)
                 q_out_store.append(q_out)
-
-                # layer cannot contain more water than there is pore space
-                # layer_porosity = max(1 - lm[layer] / (lh[layer]*DENSITY_ICE),0)
-                # water_lim = lh[layer]*layer_porosity*DENSITY_WATER
-                # if lw[layer] > water_lim: # excess runs off
-                #     runoff += lw[layer] - water_lim
-                #     lw[layer] = water_lim
 
             # LAYERS OUT
             layers.lheight[snow_firn_idx] = lh
@@ -845,7 +827,7 @@ class massBalance():
         Parameters
         ==========
         q_out : np.ndarray
-            Water flowrate out of each layer [kg m-2 s-1]
+            Water flow out of each layer [kg m-2]
         rain_bool : Bool
             Raining or not?
         snow_firn_idx : np.ndarray
@@ -908,6 +890,16 @@ class massBalance():
         m_BC_out = PARTITION_COEF_BC*q_out*cBC
         m_OC_out = PARTITION_COEF_OC*q_out*cOC
         m_dust_out = PARTITION_COEF_DUST*q_out*cdust
+
+        # ensure fluxes do not go negative
+        m_BC_out = np.minimum(m_BC_out, mBC + m_BC_in)
+        m_OC_out = np.minimum(m_OC_out, mOC + m_OC_in)
+        m_dust_out = np.minimum(m_dust_out, mdust + m_dust_in)
+
+        # check that mass is accounted for in inflow terms
+        m_BC_in = np.append(m_BC_in_top,m_BC_out[:-1])
+        m_OC_in = np.append(m_OC_in_top,m_OC_out[:-1])
+        m_dust_in = np.append(m_dust_in_top,m_dust_out[:-1])
 
         # mass balance on each constituent
         dmBC = m_BC_in - m_BC_out

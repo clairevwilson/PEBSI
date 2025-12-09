@@ -627,7 +627,6 @@ class Surface():
 
         # find broadband albedo from spectral albedo
         self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
-        print(timestamp, self.bba, shapes, aspect_ratios)
         
         # calculate visible albedo
         assert len(albedo) == len(prms.wvs)
