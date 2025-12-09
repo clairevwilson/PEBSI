@@ -3,7 +3,7 @@ This script processes grid search outputs in parallel.
 
 @author: clairevwilson
 """
-import PEBSI.shop.processing.gridsearch_processing as gsproc
+import shop.processing.gridsearch_processing as gsproc
 from multiprocessing import Pool
 import argparse
 import time
@@ -22,9 +22,10 @@ def process_run(runs):
         run_type,fn = run
         gsproc.process_run(run_type, fn)
 
-# for run_type in ['long','2024']:
-for run_type in ['firn']:
-    for site in ['EC']: #gsproc.sitedict[run_type]:
+for run_type in ['2024']:
+# for run_type in ['firn']:
+    # for site in ['EC']: #
+    for site in gsproc.sitedict[run_type]:
         start_site = time.time()
         date = gsproc.run_info[run_type]['date']
         idx = gsproc.run_info[run_type]['idx']

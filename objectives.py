@@ -334,6 +334,10 @@ def snowpits(ds,method='MAE',out=None):
             dens_mod = dsyear['layerdensity'].values
 
             # Find the snow depth
+            snow_mask = dsyear.layertype == 0
+            snow_heights = dsyear.layerheight.where(snow_mask, 0.0)
+            snowdepth = snow_heights.sum(dim='layer')
+            dsyear = dsyear.assign(snowdepth=snowdepth)
             snowdepth_mod = dsyear.snowdepth.values
             snowdepth_pit = sbd[~np.isnan(sbd)][-1]
 

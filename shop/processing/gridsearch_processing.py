@@ -2,12 +2,15 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys, os
+sys.path.append(os.getcwd() + '/../../../')
+sys.path.append(os.getcwd() + '/../../')
+sys.path.append(os.getcwd() + '/../')
 from PEBSI.shop.plotting.plotting_fxns import *
-from objectives import *
-from seasonal_error import seasonal_mass_balance as seasonal_error
-from seasonal_error import firn_cores
+from PEBSI.objectives import *
+# from PEBSI.seasonal_error import seasonal_mass_balance as seasonal_error
+# from PEBSI.seasonal_error import firn_cores
 import pickle
-import os
 import copy
 import socket, time
 import itertools
@@ -40,19 +43,19 @@ sitedict = {'2024':['AB','ABB','B','BD','D','T'],'long':['A','AU','B','D'],
 all_sites = sitedict['long']+sitedict['2024']+['mean','median']                  # List all sites
 
 # USER OPTIONS
-run_info = {'long':{'date':'08_01', 'idx':'0'},                     # Date and index of the grid search
-            '2024':{'date':'08_02', 'idx':'0'},
+run_info = {'long':{'date':'12_08', 'idx':'0'},                     # Date and index of the grid search
+            '2024':{'date':'12_09', 'idx':'0'},
             'firn':{'date':'09_30','idx':'0'} # 08_27
             }
 
 # PARAMETERS
-# params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
-#           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
-params = {
-            # 'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],               # Firn core site calibration
-            # 'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]}
-            'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5], # KPS
-          'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
+params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
+# params = {
+#             # 'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3],               # Firn core site calibration
+#             # 'lapse_rate':[-3,-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]}
+#             'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5], # KPS
+#           'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
 for key in params:                                                  # Convert params to strings for processing
     for v,value in enumerate(params[key]):
         params[key][v] = str(value)
@@ -88,7 +91,7 @@ def get_percentile(result_dict, error, percentile=50, method='MAE',plot=False):
             if '2024' in error:
                 sites = sitedict['2024'] + ['mean']
             else:
-                sites = sitedict['firn'] + ['mean'] # sitedict['long']
+                sites = sitedict['long'] + ['mean'] # sitedict['long']
             for site in sites:
                 all_error.append(result_dict[p1][p2][site][error+'_'+method])
     if plot:
@@ -114,6 +117,8 @@ def process_run(run_type, fn):
     ds = xr.open_dataset(fn)
     site = ds.attrs['site']
     print('Processing', fn)
+    if run_type != 'firn':
+        seasonal_error = seasonal_mass_balance
 
     if run_type in ['long','firn']:
         # Seasonal mass balance
@@ -228,8 +233,6 @@ def create_dict(run_type):
 
     # Loop through all the sites
     for site in sitedict[run_type]:
-        if run_type == 'long':
-            date = '07_30' if site != 'D' else run_info[run_type]['date']
         for f in os.listdir(base_fp+f'{date}_{site}_{idx}/'):
             if 'pkl' in f:
                 # Open individual output pickle 
@@ -261,6 +264,7 @@ def add_site_means(result_dict):
     param_1 = list(params.keys())[0]
     param_2 = list(params.keys())[1]
     site = list(result_dict[params[param_1][0]][params[param_2][0]].keys())[0]
+    site = 'B'
     all_error  = list(result_dict[params[param_1][0]][params[param_2][0]][site].keys())
         
     # Create dictionary to store site means
@@ -279,11 +283,12 @@ def add_site_means(result_dict):
                         for site in sitedict['2024']:
                             sites_error_dict[error_type].append(result_dict[p1][p2][site][error_type])
                     else:
-                        for site in sitedict['firn']:
+                        for site in sitedict['long']:
                             try:
                                 sites_error_dict[error_type].append(result_dict[p1][p2][site][error_type])
                             except:
-                                print(site, p2, p1, error_type,'failed')
+                                # print(site, p2, p1, error_type,'failed')
+                                kps = 0
                     if len(sites_error_dict[error_type]) > 0:
                         result_dict[p1][p2]['mean'][error_type] = np.mean(sites_error_dict[error_type])
                         result_dict[p1][p2]['median'][error_type] = np.median(sites_error_dict[error_type])
@@ -337,7 +342,6 @@ def get_result_dict(force_redo=False,parse_runs=['long','2024']):
                     # Add the 2024 error stats
                     for var in both_dict['2024'][p1][p2][site]:
                         result_dict[p1][p2][site][var] = both_dict['2024'][p1][p2][site][var]
-
     result_dict = add_site_means(result_dict)
     return result_dict
 
@@ -643,8 +647,7 @@ def add_normalized(result_dict, error_lims=error_lims, pareto=False, run_type='l
                 include = True if (p1,p2) in pareto else False
             else:
                 include = True
-            if run_type == 'firn':
-                all_sites = sitedict['firn'] + ['mean']
+            all_sites = sitedict[run_type] + ['mean']
             for site in all_sites:
                 if site in result_dict[p1][p2]:
                     list_errors = copy.deepcopy(result_dict[p1][p2][site])

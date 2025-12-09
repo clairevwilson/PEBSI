@@ -28,14 +28,16 @@ from objectives import *
 # OPTIONS
 repeat_run = True   # True if restarting an already begun run
 # Define sets of parameters
-# params = {'Boone_c5':[0.018,0.02,0.022,0.024,0.026,0.028,0.03], # 
-#           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5]} # 
-params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
-          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
-          'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
+params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
+# params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
+        #   'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
+        #   'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
+param_1, param_2 = list(params.keys())
 
 # Read command line args
 parser = sim.get_args(parse=False)
+parser.add_argument('-run_type', default='long', type=str)
 args = parser.parse_args()
 n_processes = args.n_simultaneous_processes
 
@@ -60,8 +62,21 @@ if 'trace' in prms.machine:
 args.store_data = True
 prms.store_vars = ['MB','layers','temp','EB']
 
+# Force some args
+if args.run_type == '2024': # Short AWS run
+    args.use_AWS = True
+    prms.AWS_fn = '../climate_data/AWS/Processed/gulkana2024.csv'
+    prms.store_vars = ['MB','EB','layers','temp']
+    args.startdate = pd.to_datetime('2024-04-18 00:00:00')
+    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
+else: # Long MERRA-2 run
+    args.use_AWS = False
+    prms.store_vars = ['MB','layers','temp','EB']
+    args.startdate = pd.to_datetime('2000-04-15 00:00:00')
+    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
+
 if repeat_run:
-    date = '09_30' # if args.run_type == 'long' else '08_02'
+    date = '12_09' # if args.run_type == 'long' else '08_02'
     print('Forcing run date to be', date)
     n_today = '0'
     out_fp = f'{date}_{args.site}_{n_today}/'
@@ -91,51 +106,32 @@ all_runs = []
 missing_fn = prms.output_fp + out_fp + 'missing.txt'
 
 # Dates depend on the site
-if args.site == 'Z':
-    args.glac_no = '01.00570'
-    args.startdate = '2021-08-01'
-    args.enddate = '2025-05-01'
-    prms.bias_vars = ['wind','temp','rh','SWin']
-if args.site == 'T':
-    args.glac_no = '01.00570'
-    args.startdate = '2012-08-01'
-    args.enddate = '2025-05-01'
-    prms.bias_vars = ['wind','temp','rh','SWin']
-if args.site == 'EC':
-    args.glac_no = '01.09162'
-    args.startdate = '2015-08-01'
-    args.enddate = '2025-05-30'
-    prms.bias_vars = ['wind','temp','rh','SWin']
-if args.site == 'KPS':
-    args.glac_no = '01.22193'
-    args.startdate = '2015-08-01'
-    args.enddate = '2025-05-30'
-    prms.bias_vars = ['wind','temp','rh']
-if args.site == 'KQU':
-    args.glac_no = '01.22193'
-    args.startdate = '2023-08-01'
-    args.enddate = '2025-05-30'
-    prms.bias_vars = ['wind','temp','rh']
+if args.run_type == 'long':
+    if args.site == 'A':
+        args.enddate = pd.to_datetime('2015-05-20 00:00:00')
+    elif args.site == 'AU':
+        args.startdate = pd.to_datetime('2012-04-20 00:00:00')
 
 # Loop through parameters
-for kp in params['kp']:
-    for lr in params['lapse_rate']:
+for p1 in params[param_1]:
+    for p2 in params[param_2]:
         # Copy over args
         args_run = copy.deepcopy(args)
 
-        # Set parameters
-        args_run.lapse_rate = lr
-        args_run.kp = kp
+        # Set parameters MANUALLY
+        args_run.lapse_rate = -6.5
+        args_run.kp = p2
+        args_run.Boone_c5 = p1
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
-        all_runs.append((args_run.site, lr, kp, args_run.out))
+        all_runs.append((args_run.site, p1, p2, args_run.out))
 
         # Get the climate
         climate_run, args_run = sim.initialize_model(args_run)
 
         # Specify attributes for output file
-        store_attrs = {'lapse_rate':lr,'kp':kp}
+        store_attrs = {'lapse_rate':-6.5, 'c5':p1,'kp':p2}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -187,7 +183,7 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with lapserate =',args.lapse_rate,'kp =',args.kp,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(prms.output_fp + args.out + '0.nc')
     return
