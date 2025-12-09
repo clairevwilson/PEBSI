@@ -168,10 +168,12 @@ def get_site_table(site_df, args):
     # *****Special HARD-CODED handling for Gulkana*****
     if args.glac_name == 'gulkana' and args.site != 'center':
         # set scaling albedo
-        slope = (0.485 - 0.315)/(site_df.loc['B','elevation'] - site_df.loc['A','elevation'])
-        intercept = 0.315
+        albedo_B = 0.337 # 485 in 2024, 337 in 2025
+        albedo_A = 0.315
+        slope = (albedo_B - albedo_A)/(site_df.loc['B','elevation'] - site_df.loc['A','elevation'])
+        intercept = albedo_A
         args.a_ice = intercept + (args.elev - site_df.loc['A','elevation'])*slope
-        args.a_ice = min(0.485,args.a_ice)
+        args.a_ice = min(albedo_B,args.a_ice)
 
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
