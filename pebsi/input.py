@@ -93,7 +93,7 @@ option_SWpen = True                     # Calculate penetration of shortwave rad
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
-constant_freshgrainsize = 55         # False or grain size [um] (Kuipers Munneke (2011): 54.5)
+constant_freshgrainsize = 54.5          # False or grain size [um] (Kuipers Munneke (2011): 54.5)
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
 
 # ALBEDO SWITCHES
@@ -188,8 +188,8 @@ roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
 wet_snow_C = 4.22e-13       # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.033                  # Fraction of irreducible water content for percolation [-]
-Sr_dense = 0.1              # Irreducible water content fraction for dense snow (>500 kg m-3)
-Sr_light = 0.033             # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
+Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3)
+Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
 albedo_ground = 0.2         # Albedo of ground [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
