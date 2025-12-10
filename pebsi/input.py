@@ -55,7 +55,7 @@ enddate = pd.to_datetime('2025-04-20 00:00:00')
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
 station_elevation = {                       # Elevation of the station used in temp quantile mapping
     'gulkana':1725, 'wolverine':990, 'kahiltna':2377,
-    } 
+} 
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
@@ -203,7 +203,7 @@ albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 albedo_firn = 0.5           # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
-ksp_BC = 0.5                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
+ksp_BC = 1                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
 ksp_OC = 1                  # Meltwater scavenging efficiency of OC [-] (0.1-0.2 from CLM5)
 ksp_dust = 0.01             # Meltwater scavenging efficiency of dust [-] (0.015 from CLM5)
 BC_freshsnow = 0            # Concentration of BC in fresh snow for initialization [kg m-3]
