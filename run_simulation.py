@@ -175,6 +175,14 @@ def get_site_table(site_df, args):
         args.a_ice = intercept + (args.elev - site_df.loc['A','elevation'])*slope
         args.a_ice = min(albedo_B,args.a_ice)
 
+        # HARD CODING:
+        if args.site == 'AB':
+            args.a_ice = 0.2777
+        elif args.site == 'AU':
+            args.a_ice = 0.3134
+        elif args.site == 'B':
+            args.a_ice = 0.3471
+
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
             if pd.to_datetime(args.startdate) > pd.to_datetime('2023-12-31'):
