@@ -80,6 +80,9 @@ class massBalance():
 
         # ===== ENTER TIME LOOP =====
         for time in self.time_list:
+            if time > pd.to_datetime('2024-07-22 01:00:00.000000000'):
+                print(layers.ltype[:5], layers.lheight[:5])
+                # 13:00
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
 
@@ -1854,6 +1857,14 @@ class Output():
                 # add summed mass balance term
                 MB = ds['accum'] + ds['refreeze'] - ds['melt']
                 ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
+
+                # add snow, firn, and ice depth
+                snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
+                firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
+                icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
+                ds['snowdepth'] = (['time'],snowdepth.values,{'units':'m'})
+                ds['firndepth'] = (['time'],firndepth.values,{'units':'m'})
+                ds['icedepth'] = (['time'],icedepth.values,{'units':'m'})
 
             # save NetCDF 
             ds.to_netcdf(self.out_fn)
