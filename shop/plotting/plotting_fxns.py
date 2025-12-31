@@ -1120,7 +1120,7 @@ def plot_layers(ds,vars,dates):
 def visualize_layers(ds,dates,vars,force_layers=False,
                      t='',plot_ax=False,
                      plot_firn=True,plot_ice=False,ylim=False,
-                     colorbar=True):
+                     colorbar=True, diverging=False):
     """
     force_layers:
         Three options:
@@ -1144,7 +1144,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
 
     fig,axes = plt.subplots(len(vars),figsize=(5,1.7*len(vars)),sharex=True,layout='constrained')
     if plot_ax:
-        assert len(plot_ax) == len(vars)
+        assert len(plot_ax) == len(vars), f"plot_ax should be length {len(vars)}"
         axes = plot_ax
     if len(vars) == 1 and '__iter__' not in dir(axes):
         axes = [axes]
@@ -1162,7 +1162,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layertemp']:
             bounds = [-10,0]
         elif var in ['layergrainsize']:
-            bounds = [50,1500]
+            bounds = [-50,50]
         elif var in ['layerrefreeze']:
             bounds = [-1,20]
         dens_lim = 890 if plot_firn else 600
@@ -1203,6 +1203,9 @@ def visualize_layers(ds,dates,vars,force_layers=False,
                       'layertemp':'plasma','layerdensity':'Greens','layerwater':'Blues',
                       'layergrainsize':'PuRd','layerrefreeze':'Purples'}
             ctype = ctypes[var]
+            if diverging:
+                ctype = 'coolwarm'
+                bounds = (-10, 10)
             if np.sum(height) < 0.05 and first and not last and step.month<9:
                 last = step
             for [dh,data] in zip(height,vardata):

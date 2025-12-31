@@ -516,7 +516,7 @@ class Layers():
         Parameters
         ==========
         do : list-like
-            List of any combination of depth to be updated
+            List of any combination of depth, density to be updated
         """
         self.nlayers = len(self.lheight)
         self.snow_idx = np.where(self.ltype=='snow')[0]
