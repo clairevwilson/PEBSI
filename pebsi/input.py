@@ -49,7 +49,7 @@ cds_output_fn = 'default'                                   # 'default' or clima
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME
 startdate = pd.to_datetime('2024-04-20 00:00:00') 
-enddate = pd.to_datetime('2025-04-20 00:00:00')
+enddate = pd.to_datetime('2024-08-20 00:00:00')
 
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
@@ -90,6 +90,8 @@ method_conductivity = 'Douville'        # 'Sauter', 'Douville','Jansson','OstinA
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
+option_uniform_ice = True               # Uniform size for ice bins?
+option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
@@ -128,14 +130,16 @@ snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
 wind_ref_height = 10 if reanalysis in ['ERA5-hourly'] else 2  # Reference height for wind speed [m]
 # <<<<<< Numerical >>>>>>
-dz_toplayer = 0.03          # Thickness of the uppermost layer [m]
-layer_growth = 0.5          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 80            # Maximum number of vertical layers allowed (more layers --> larger file size)
-max_dz = 2                  # Max layer thickness
-min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice [m]
-mb_threshold = 0.1          # Threshold to consider not conserving mass (kg m-2 = mm w.e.)
+dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
+dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
+dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
+layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
+max_nlayers = 120            # Maximum number of vertical layers allowed (more layers --> larger file size)
+min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
+min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
+mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
 min_glacier_depth = 2       # Minimum ice depth to end the model run [m]
-max_temp_change = 5         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
+max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 # <<<<<< Boundary conditions >>>>>>
 temp_temp = 0               # Temperature of temperate ice [C]
 temp_depth = 10             # Depth of temperate ice [m]
@@ -188,7 +192,7 @@ roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
 wet_snow_C = 4.22e-13       # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.033                  # Fraction of irreducible water content for percolation [-]
-Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3)
+Sr_dense = 0.033             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
 Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
 albedo_ground = 0.2         # Albedo of ground [-]
 # <<<<<< SNICAR >>>>>
