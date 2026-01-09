@@ -123,8 +123,6 @@ class energyBalance():
         """
         # SHORTWAVE RADIATION  (Snet)
         SWin,SWout = self.get_SW(surface)
-        self.SWin = SWin
-        self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
 
         # Handle penetrating shortwave separately
         if prms.option_SWpen:
@@ -136,6 +134,12 @@ class energyBalance():
             FRAC_ABSRAD = 1
         self.SWnet_surf = (SWin + SWout) * FRAC_ABSRAD
         self.SWnet_penetrating = (SWin + SWout) * (1 - FRAC_ABSRAD)
+
+        # Store with surface fraction applied
+        self.SWin = SWin
+        self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
+        self.SWin *= FRAC_ABSRAD 
+        self.SWout *= FRAC_ABSRAD
                     
         # LONGWAVE RADIATION (Lnet)
         LWin,LWout = self.get_LW(surftemp)
@@ -171,6 +175,8 @@ class energyBalance():
             return Qm
         elif mode in ['optim']:
             return np.abs(Qm)
+        elif mode in ['list']:
+            return [self.SWin, self.SWout, LWin, LWout, Qs, Ql, Qp, Qg]
         else:
             assert 1==0, 'argument \'mode\' in function surfaceEB should be sum or optim'
     
