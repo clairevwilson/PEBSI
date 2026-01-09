@@ -1162,7 +1162,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layertemp']:
             bounds = [-10,0]
         elif var in ['layergrainsize']:
-            bounds = [-50,50]
+            bounds = [400,600] # [50, 800]
         elif var in ['layerrefreeze']:
             bounds = [-1,20]
         dens_lim = 890 if plot_firn else 600
@@ -1192,7 +1192,9 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             vardata = np.flip(vardata[layers_to_plot])
             dens_flip = np.flip(dens[layers_to_plot])
             if var in ['layerwater']:
-                vardata = vardata / (height * dens_flip)* 100
+                porosity = 1 - dens_flip / 900
+                vardata = vardata / (porosity * 1000 * height) * 100
+                # vardata = vardata / (height * dens_flip)* 100
             if var in ['layerrefreeze']:
                 vardata = vardata / (dens_flip * height) * 100
             # if plot_ice:
@@ -1206,6 +1208,10 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             if diverging:
                 ctype = 'coolwarm'
                 bounds = (-10, 10)
+                if var == 'layergrainsize':
+                    bounds = (-100, 100)
+                if var == 'layertemp':
+                    bounds = (-1, 1)
             if np.sum(height) < 0.05 and first and not last and step.month<9:
                 last = step
             for [dh,data] in zip(height,vardata):

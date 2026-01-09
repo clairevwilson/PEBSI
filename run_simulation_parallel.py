@@ -16,18 +16,18 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 0    # Step if you're going to run this script more than once
+n_runs_ahead = 4    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
 # args.startdate = '2019-04-20 00:00'
-args.startdate = '2000-04-20 00:00'
-args.enddate = '2025-08-20 00:00'
+args.startdate = '2002-04-20 00:00'
+args.enddate = '2007-08-20 00:00'
 args.glac_no = '01.00570'
 args.use_AWS = False
-sites = ['AU','AB','B','D','T','Z'] # Sites to run in parallel
+sites = ['AU','B','D','Z'] # Sites to run in parallel
 
 # Probably do not edit
 args.store_data = True              # Ensures output is stored
@@ -51,7 +51,7 @@ def pack_vars():
         # Output name
         df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
         glac = df_meta.loc[args.glac_no,'name']
-        args_run.out = f'{glac}{site}_{run_date}_base_short_'
+        args_run.out = f'{glac}{site}_{run_date}_base_long_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
