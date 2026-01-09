@@ -162,7 +162,8 @@ class Surface():
                 if layers.ltemp[0] < 0.: 
                     # check heat with a surftemp of 0
                     Qm_check = enbal.surface_EB(self.stemp,self)
-                    # heat the top layer
+                    
+                    # warm the top layer to the melting point
                     temp_change = Qm_check*dt/(HEAT_CAPACITY_ICE*layers.lice[0])
                     layers.ltemp[0] += temp_change
 
@@ -172,11 +173,12 @@ class Surface():
                         Qm = layers.ltemp[0]*HEAT_CAPACITY_ICE*layers.lice[0]/dt
                         layers.ltemp[0] = 0.
 
-                        # if that layer will be fully melted, warm the lower layer
+                        # if top layer is melted, warm the next layer
                         if Qm*dt/prms.Lh_rf > layers.lice[0] and layers.ltemp[1] < 0.:
                             leftover = Qm*dt/prms.Lh_rf - layers.lice[0]
                             layers.ltemp[1] += leftover*dt/(HEAT_CAPACITY_ICE*layers.lice[1])
                     else:
+                        # all energy was used up
                         Qm = 0
 
             elif cooling:
@@ -195,38 +197,49 @@ class Surface():
 
                 elif prms.method_cooling in ['iterative']:
                     # loop to iteratively calculate surftemp
-                    loop = True
                     n_iters = 0
-                    while loop:
-                        n_iters += 1
+                    while True:
                         # initial check of Qm comparing to previous surftemp
                         Qm_check = enbal.surface_EB(self.stemp,self)
+
+                        # adaptive surface temp step size (minimum 0.02, maximum 1)
+                        step = min(1, max(0.02, abs(Qm_check) * 0.05))
                         
                         # check direction of flux at that temperature and adjust
                         if Qm_check > 0.5:
-                            self.stemp += 0.25
+                            self.stemp += step
                         elif Qm_check < -0.5:
-                            self.stemp -= 0.25
+                            self.stemp -= step
+
                         # surftemp cannot go below -60
                         self.stemp = max(-60,self.stemp)
+
+                        # count iteration
+                        n_iters += 1
 
                         # break loop if Qm is ~0 or after 10 iterations
                         if abs(Qm_check) < 0.5 or n_iters > 10:
                             # if temp is still bottoming out at -60, resolve minimization
-                            if self.stemp == -60:
+                            if self.stemp == -60 or n_iters > 10:
                                 result = minimize(enbal.surface_EB,-50,method='L-BFGS-B',
                                                     bounds=((-60,0),),tol=1e-3,
                                                     args=(self,'optim'))
-                                if result.x > -60:
+                                if result.success or result.fun < 5:
                                     self.stemp = result.x[0]
+                                else:
+                                    if self.args.debug:
+                                        print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
+                                    assert 1==0
+                                # assert result.success, 'energy balance did not converge; check forcings'
+                                
                             break
 
                 # if cooling, Qm must be 0
                 Qm = 0
 
         # update surface balance terms with new surftemp
-        enbal.surface_EB(self.stemp,self)
         self.Qm = Qm
+        enbal.surface_EB(self.stemp,self)
         self.tcc = enbal.tcc
         return
 
