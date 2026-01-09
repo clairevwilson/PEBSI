@@ -80,9 +80,6 @@ class massBalance():
 
         # ===== ENTER TIME LOOP =====
         for time in self.time_list:
-            if time > pd.to_datetime('2024-07-22 01:00:00.000000000'):
-                print(layers.ltype[:5], layers.lheight[:5])
-                # 13:00
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
 
@@ -95,7 +92,7 @@ class massBalance():
 
             # >>> ADD SNOW AND LAPs <<<
             # add fresh snow to layers
-            snowfall = self.add_snow(snowfall)
+            snowfall = self.accumulation(snowfall)
 
             # add dry deposited BC, OC and dust to layers
             enbal.get_dry_deposition(layers)
@@ -141,7 +138,10 @@ class massBalance():
 
             # >>> PHASE CHANGES <<<
             # calculate mass gain or loss from phase changes
-            self.phase_changes()
+            condensation_runoff = self.phase_changes()
+
+            # can get runoff if water condenses on ice
+            runoff += condensation_runoff
 
             # >>> REFREEZING & DENSIFICATION <<<
             # calculate refreeze
@@ -149,8 +149,9 @@ class massBalance():
 
             # run densification (daily)
             if time.hour == 0:
-                self.densification()
-            
+                squeezed_out = self.densification()
+                runoff += squeezed_out
+
             # >>> CHECK LAYERS <<<
             # check and update layer sizes
             layers.check_layer_sizes()
@@ -240,7 +241,7 @@ class massBalance():
         
         return rain,snow  # kg m-2
     
-    def add_snow(self,snowfall):
+    def accumulation(self,snowfall):
         """
         Adds snowfall to the layers. If the existing top 
         layer has a large enough difference in density 
@@ -260,6 +261,8 @@ class massBalance():
         # get classes
         layers = self.layers
         enbal = self.enbal
+        if self.time > pd.to_datetime('2024-07-20') and self.time < pd.to_datetime('2024-07-22'):
+            print(self.time, snowfall, layers.delayed_snow)
 
         # add delayed snow to snowfall
         snowfall += layers.delayed_snow
@@ -271,7 +274,7 @@ class massBalance():
         initial_mass = np.sum(layers.lice + layers.lwater)
 
         # check switches
-        if self.args.switch_snow == 0:
+        if int(self.args.switch_snow) == 0:
             # snow falls with the same properties as the current top layer
             new_density = layers.ldensity[0]
             new_height = snowfall/new_density
@@ -280,7 +283,7 @@ class massBalance():
             new_OC = layers.lOC[0]/layers.lheight[0]*new_height
             new_dust = layers.ldust[0]/layers.lheight[0]*new_height
             new_age = layers.lage[0]
-        elif self.args.switch_snow == 1:
+        elif int(self.args.switch_snow) == 1:
             # check if using constant density for new snow
             if prms.constant_snowfall_density:
                 new_density = prms.constant_snowfall_density
@@ -311,7 +314,7 @@ class massBalance():
             self.surface.snow_timestamp = self.time
 
         # check switch for LAPs
-        if prms.switch_LAPs != 1:
+        if int(prms.switch_LAPs) != 1:
             new_BC = 0
             new_OC = 0
             new_dust = 0
@@ -492,14 +495,9 @@ class massBalance():
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
-            # if self.time.day_of_year > 153:
-            #     aged_grainsize = np.ones_like(grainsize) * 800
-            # if self.time.day_of_year > 160:
-            #     aged_grainsize = np.ones_like(grainsize) * 1000
-            # if self.time.day_of_year > 170:
-            #     aged_grainsize = np.ones_like(grainsize) * 1200
-            # print(f_liq[-3:], aged_grainsize[-3:])
-            # print('previous', grainsize[-2:], 'wet', drwet[-2:], 'frfz', f_rfz[-2:], layers.lheight[layers.snow_idx][-2:])
+            # if self.time > pd.to_datetime('2024-0'6-01'):
+            #     print(self.time, 'YES aged',aged_grainsize[:3]', 'wet',drwet[:3], 'rfz',f_rfz[:3])
+            # assert self.time < pd.to_datetime('2024-06-20')
                       
             # sum contributions of snow and refreeze
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
@@ -748,15 +746,12 @@ class massBalance():
             layermelt_sf = layermelt[snow_firn_idx]
 
             # calculate volumetric fractions (theta)
-            # before moving melt because liquid water can exceed layer capacity
-            vol_f_liq = lw / (lh*DENSITY_WATER)
             vol_f_ice = lm / (lh*DENSITY_ICE)
             porosity = 1 - vol_f_ice
 
             # remove / move snow melt to layer water
             lm -= layermelt_sf
             lh -= layermelt_sf / layers.ldensity[snow_firn_idx]
-            # layermelt_sf = np.array([np.sum(layermelt_sf) / len(snow_firn_idx)] * len(snow_firn_idx)).flatten()
             lw += layermelt_sf
 
             # reduce layer refreeze (refreeze melts first)
@@ -943,6 +938,10 @@ class massBalance():
         lm = layers.lice.copy()[snow_firn_idx]
         lh = layers.lheight.copy()[snow_firn_idx]
 
+        # skip if no snow or firn
+        if len(snow_firn_idx) < 1:
+            return 0
+
         # define initial mass for conservation check
         initial_mass = np.sum(layers.lice + layers.lwater)
 
@@ -1002,6 +1001,7 @@ class massBalance():
         rho = prms.constant_snowfall_density
         DENSITY_FRESH_SNOW = rho if rho else 50
         DENSITY_ICE = prms.density_ice
+        DENSITY_WATER = prms.density_water
         CTOK = prms.celsius_to_kelvin
         dt = prms.daily_dt
 
@@ -1067,18 +1067,34 @@ class massBalance():
                 dRho = lp[layer]*weight_above/NU_0*exp_term
                 lp[layer] += dRho
 
+        # check if any water was squeezed out by densification
+        squeezed_out = 0
+        for layer in snowfirn_idx:
+            # irreducible water content depends on density
+            if lp[layer] > 500:
+                FRAC_IRREDUC = prms.Sr_dense
+            else:
+                FRAC_IRREDUC = prms.Sr_light
+            porosity = 1 - lp[layer] / DENSITY_ICE
+            lh = lm[layer] / lp[layer]
+            water_irreduc = porosity * lh * DENSITY_WATER * FRAC_IRREDUC
+            if lw[layer] > water_irreduc:
+                squeezed_out += lw[layer] - water_irreduc
+                lw[layer] = water_irreduc
+
         # LAYERS OUT
         layers.ldensity = lp
         layers.lheight = lm / lp
+        layers.lwater = lw
         layers.update_layer_props('depth')
 
         # check if new firn or ice layers were created
         layers.update_layer_types()
 
         # CHECK MASS CONSERVATION
-        change = np.sum(layers.lice + layers.lwater) - initial_mass
+        change = np.sum(layers.lice + layers.lwater) - initial_mass + squeezed_out
         assert np.abs(change) < prms.mb_threshold, f'densification failed mass conservation in {self.output.out_fn}'
-        return
+        return squeezed_out
     
     def phase_changes(self):
         """
@@ -1171,6 +1187,13 @@ class massBalance():
                 # add water to layer if it doesn't cause negativity
                 layers.lwater[0] += dm
 
+        # check we didn't add liquid water to ice layer
+        runoff = 0
+        if layers.ltype[0] == 'ice':
+            for layer in layers.ice_idx:
+                runoff += layers.lwater[layer]
+                layers.lwater[layer] = 0
+
         # set vapor fluxes to self
         self.sublimation = sublimation
         self.deposition = deposition
@@ -1181,10 +1204,10 @@ class massBalance():
         
         # CHECK MASS CONSERVATION
         ins = deposition + condensation
-        outs = sublimation + evaporation
+        outs = sublimation + evaporation + runoff
         change = np.sum(layers.lice + layers.lwater) - initial_mass
         assert np.abs(change - (ins-outs)) < prms.mb_threshold, f'phase change failed mass conservation in {self.output.out_fn}'
-        return
+        return runoff
       
     def thermal_conduction(self):
         """
@@ -1795,22 +1818,31 @@ class Output():
                 layerrefreeze_output = pd.DataFrame.from_dict(self.layerrefreeze_output,orient='index')
                 layerage_output = pd.DataFrame.from_dict(self.layerage_output,orient='index')
                 layertype_output = pd.DataFrame.from_dict(self.layertype_output,orient='index')
-                
+
                 if len(layertemp_output.columns) < prms.max_nlayers:
                     n_columns = len(layertemp_output.columns)
-                    for i in range(n_columns,prms.max_nlayers):
-                        nans = np.zeros(self.n_timesteps)*np.nan
-                        layertemp_output[str(i)] = nans
-                        layerdensity_output[str(i)] = nans
-                        layerheight_output[str(i)] = nans
-                        layerwater_output[str(i)] = nans
-                        layerBC_output[str(i)] = nans
-                        layerOC_output[str(i)] = nans
-                        layerdust_output[str(i)] = nans
-                        layergrainsize_output[str(i)] = nans
-                        layerrefreeze_output[str(i)] = nans
-                        layerage_output[str(i)] = nans
-                        layertype_output[str(i)] = nans
+                    # Build the missing column names
+                    missing_cols = [str(i) for i in range(n_columns, prms.max_nlayers)]
+
+                    # Build a DataFrame of NaNs once
+                    nan_block = pd.DataFrame(
+                        np.full((self.n_timesteps, len(missing_cols)), np.nan),
+                        columns=missing_cols,index=layertemp_output.index,
+                    )
+
+                    # Now append to each output DataFrame in one shot
+                    layertemp_output = pd.concat([layertemp_output, nan_block], axis=1)
+                    layerdensity_output = pd.concat([layerdensity_output, nan_block], axis=1)
+                    layerheight_output = pd.concat([layerheight_output, nan_block], axis=1)
+                    layerwater_output = pd.concat([layerwater_output, nan_block], axis=1)
+                    layerBC_output = pd.concat([layerBC_output, nan_block], axis=1)
+                    layerOC_output = pd.concat([layerOC_output, nan_block], axis=1)
+                    layerdust_output = pd.concat([layerdust_output, nan_block], axis=1)
+                    layergrainsize_output = pd.concat([layergrainsize_output, nan_block], axis=1)
+                    layerrefreeze_output = pd.concat([layerrefreeze_output, nan_block], axis=1)
+                    layerage_output = pd.concat([layerage_output, nan_block], axis=1)
+                    layertype_output = pd.concat([layertype_output, nan_block], axis=1)
+
                 else:
                     n = len(layertemp_output.columns)
                     print(f'Need to increase max_nlayers: currently have {n} layers')
