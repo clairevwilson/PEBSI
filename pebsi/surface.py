@@ -384,11 +384,7 @@ class Surface():
         lgrainsize = layers.lgrainsize[idx].astype(int)
         lwater = layers.lwater[idx] / (layers.lice[idx]+layers.lwater[idx])
 
-        # grain size files are every 1um up to 1500um, then every 500
-        # idx_1500 = lgrainsize>1500
-        # lgrainsize[idx_1500] = np.round(lgrainsize[idx_1500]/500) * 500
-        # lgrainsize[lgrainsize < 30] = 30    # cap minimum grain size
-        # lgrainsize = lgrainsize.tolist()    # make array a list
+        # specific surface area
         ssa = 3 / (lgrainsize/1e6 * np.array(ldensity))
         ssa[ssa > 100] = 100
         ssa = (ssa.astype(float)).tolist()

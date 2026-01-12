@@ -2,7 +2,7 @@
 This script executes a grid search in parallel over
 multiple parameters. These parameters can be specified
 in the params dict below. It is set up to perform the
-search over two parameters for ***Paper 1*** 
+search over two parameters for the first PEBSI publication
 (Boone c5 densification parameter and kp precipitation
 factor) but with minor edits more parameters can be added.
 
@@ -23,7 +23,7 @@ import xarray as xr
 import run_simulation as sim
 import pebsi.input as prms
 import pebsi.massbalance as mb
-from objectives import *
+from PEBSI.shop.processing.objectives import *
 
 # OPTIONS
 repeat_run = True   # True if restarting an already begun run
@@ -118,7 +118,8 @@ for p1 in params[param_1]:
         # Copy over args
         args_run = copy.deepcopy(args)
 
-        # Set parameters MANUALLY
+        # !!!!!!!!!!!!!!!!!!!!!!!
+        # USER MUST MANUALLY SET THESE PARAMETER NAMES
         args_run.lapse_rate = -6.5
         args_run.kp = p2
         args_run.Boone_c5 = p1

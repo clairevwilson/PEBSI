@@ -5,6 +5,7 @@ Shading model for PEBSI
 
 Requirements: - DEM which contains glacier and surrounding ridges
               - Coordinates for point to perform calculations
+Recommended:  - Shapefile (RGI) for plotting the shading results
 
 1. Input site coordinates and time zone
 2. Load DEM and calculate slope/aspect
