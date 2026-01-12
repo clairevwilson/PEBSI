@@ -489,13 +489,10 @@ class massBalance():
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # cap runaway wet metamorphosis
-            drwet[drwet > 200] = 200
+            drwet[drwet > prms.max_wet_metamorph] = prms.max_wet_metamorph
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
-            # if self.time > pd.to_datetime('2024-0'6-01'):
-            #     print(self.time, 'YES aged',aged_grainsize[:3]', 'wet',drwet[:3], 'rfz',f_rfz[:3])
-            # assert self.time < pd.to_datetime('2024-06-20')
                       
             # sum contributions of snow and refreeze
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
