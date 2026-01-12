@@ -7,8 +7,8 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '01.00570'    # RGI glacier ID     WOLV: 09162    KAH: 22193
-use_AWS = False         # Default to using AWS data?
+glac_no = '00.00000'    # RGI glacier ID
+use_AWS = True          # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
 
@@ -54,7 +54,7 @@ enddate = pd.to_datetime('2024-08-20 00:00:00')
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
 station_elevation = {                       # Elevation of the station used in temp quantile mapping
-    'gulkana':1725, 'wolverine':990, 'kahiltna':2377,
+    'gulkana':1725, 'wolverine':990, 'kahiltna':2377, 'test':1500,
 } 
 
 # REANALYSIS DATA
