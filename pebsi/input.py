@@ -53,9 +53,6 @@ enddate = pd.to_datetime('2024-08-20 00:00:00')
 
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
-station_elevation = {                       # Elevation of the station used in temp quantile mapping
-    'gulkana':1725, 'wolverine':990, 'kahiltna':2377, 'test':1500,
-} 
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)

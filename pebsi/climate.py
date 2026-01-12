@@ -72,7 +72,8 @@ class Climate():
 
         # find elevation of temperature data
         if 'temp' in prms.bias_vars:
-            self.temp_elev = prms.station_elevation[self.args.glac_name]
+            glacier_df = pd.read_csv(prms.metadata_fn,index_col=0,converters={0: str})
+            self.temp_elev = glacier_df.loc[args.glac_no,'AWS_elev']
 
         # check if storing the cds
         self.store_cds = prms.store_climate 
