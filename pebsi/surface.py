@@ -229,7 +229,9 @@ class Surface():
                                 else:
                                     if self.args.debug:
                                         print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
-                                    assert 1==0
+                                        assert 1==0
+                                    else:
+                                        print(f'! {self.args.out} energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
                                 # assert result.success, 'energy balance did not converge; check forcings'
                                 
                             break

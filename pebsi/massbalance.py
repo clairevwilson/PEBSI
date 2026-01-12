@@ -261,8 +261,6 @@ class massBalance():
         # get classes
         layers = self.layers
         enbal = self.enbal
-        if self.time > pd.to_datetime('2024-07-20') and self.time < pd.to_datetime('2024-07-22'):
-            print(self.time, snowfall, layers.delayed_snow)
 
         # add delayed snow to snowfall
         snowfall += layers.delayed_snow

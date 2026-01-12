@@ -23,14 +23,15 @@ args = sim.get_args()
 
 # Edit these
 # args.startdate = '2019-04-20 00:00'
-args.startdate = '2002-04-20 00:00'
-args.enddate = '2007-08-20 00:00'
+args.startdate = '2023-04-20 00:00'
+args.enddate = '2025-08-20 00:00'
 args.glac_no = '01.00570'
 args.use_AWS = False
-sites = ['AU','B','D','Z'] # Sites to run in parallel
+sites = ['AU','B','D','Z'] # Sites to run in parallel 
 
 # Probably do not edit
-args.store_data = True              # Ensures output is stored
+args.store_data = True
+# print('! not storing')              # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
@@ -51,7 +52,7 @@ def pack_vars():
         # Output name
         df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
         glac = df_meta.loc[args.glac_no,'name']
-        args_run.out = f'{glac}{site}_{run_date}_base_long_'
+        args_run.out = f'{glac}{site}_{run_date}_base_short_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),

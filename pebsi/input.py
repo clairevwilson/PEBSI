@@ -162,7 +162,7 @@ firn_grainsize = 2000       # Grain size of firn [um]
 rfz_grainsize = 1500        # Grain size of refrozen snow [um]
 ice_grainsize = 5000        # Grain size of ice [um] (placeholder; unused)
 frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow [-] 
-frac_absrad_ice = 0.8       # Fraction of shortwave absorbed radiation for ice/firn [-] 
+frac_absrad_ice = 1       # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]
 extinct_coef_ice = 2.5      # Extinction coefficient for ice/firn [-]
 # <<<<<< Universal constants >>>>>>
