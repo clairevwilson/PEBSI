@@ -7,23 +7,27 @@ import socket
 import copy
 import os,sys
 import pickle
-mpl.rcParams['font.family'] = 'Liberation Sans'
 
 # Get the base filepath
 machine = socket.gethostname()
 if 'trace' in machine:
     base_fp = '/trace/group/rounce/cvwilson/Output/'
-    pygem_fp = '/trace/home/cvwilson/research/PyGEM-EB/'
+    pygem_fp = '/trace/home/cvwilson/research/PEBSI/'
 elif os.path.exists('/mnt/d/grid_search'):
     base_fp = '/mnt/d/grid_search/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
-else:
+    pygem_fp = '/home/claire/research/PEBSI/'
+elif os.path.exists('/home/claire/research/PEBSI/'):
     base_fp = '/home/claire/research/Output/EB/'
-    pygem_fp = '/home/claire/research/PyGEM-EB/'
+    pygem_fp = '/home/claire/research/PEBSI/'
+    mpl.rcParams['font.family'] = 'Liberation Sans'
+else:
+    base_fp = 'C:/users/cvw30/Research/Model/Output/'
+    pygem_fp = 'C:/users/cvw30/Research/Model/PEBSI/'
+    mpl.rcParams['font.family'] = 'sans-serif'
 sys.path.append(pygem_fp)
 from objectives import *
-from pebsi.processing.plotting_fxns import *
-import pebsi.processing.gridsearch_processing as gsproc
+from PEBSI.shop.plotting.plotting_fxns import *
+import PEBSI.shop.processing.gridsearch_processing as gsproc
 
 # Create some dictionaries with useful information
 labels = {'kp':'Precipitation factor','kw':'Wind factor','c5':'Densification c$_5$'}      # Labels for the different parameters we varied
@@ -188,14 +192,16 @@ def plot_pareto_PMF(error_list, pareto_fronts, result_dict,
         error_dict[error] = []
     
     # Store c5 and kp of pareto fronts
-    params_list = {'c5':[],'kp':[]}
-    for (c5,kp) in pareto_fronts:
-        c5 = str(c5)
-        kp = str(kp).replace('.0','')
-        params_list['c5'].append(c5)
-        params_list['kp'].append(kp)
+    parameter_1 = list(gsproc.params.keys())[0]
+    parameter_2 = list(gsproc.params.keys())[0]
+    params_list = {parameter_1:[],parameter_1:[]}
+    for (p1,p2) in pareto_fronts:
+        p1 = str(p1)
+        p2 = str(p2).replace('.0','')
+        params_list[parameter_1].append(p1)
+        params_list[parameter_2].append(p2)
         for error in error_dict:
-            error_dict[error].append(result_dict[c5][kp][site][error+'_'+metric])
+            error_dict[error].append(result_dict[p1][p2][site][error+'_'+metric])
     
     # Create axes
     n_plots = len(error_list)
@@ -1878,33 +1884,37 @@ def plot_fluxes(savefig=False):
         plt.savefig(base_fp + 'fluxes.png',dpi=200,bbox_inches='tight')
     plt.show()
 
-def find_precip_gradient():
-    data = pd.read_csv('../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv')
+def find_precip_gradient(med_site='B',fn='../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv'):
+    data = pd.read_csv(fn)
     grads = []
     colors = plt.get_cmap('Grays')
     norm = mpl.colors.Normalize(vmin=1990, vmax=2025)
     all_elev = []
     all_bw = []
     for year in np.unique(data['Year']):
-        if year > 1999:
+        if year > 2015:
             year_data = data.loc[data['Year'] == year]
             year_elev = year_data['elevation'].values[~np.isnan(year_data['bw'].values)]
             year_bw = year_data['bw'].values[~np.isnan(year_data['bw'].values)]
             try:
-                year_B_bw = year_data.loc[year_data['site_name'] == 'B']['bw'].values
-                winter_abl_B =  year_data.loc[year_data['site_name'] == 'B']['winter_ablation'].values
-                winter_abl_B = 0 if np.isnan(winter_abl_B) else 0
-                year_acc_B = year_B_bw - winter_abl_B
+                year_med_bw = year_data.loc[year_data['site_name'] == med_site]['bw'].values
+                winter_abl_med =  year_data.loc[year_data['site_name'] == med_site]['winter_ablation'].values
+                winter_abl_med = 0 if np.isnan(winter_abl_med) else 0
+                year_acc_med = year_med_bw - winter_abl_med
             except:
-                print('no site B for',year)
+                print(f'no site {med_site} for {year}')
                 continue
             winter_abl = year_data['winter_ablation'].values[~np.isnan(year_data['bw'].values)]
             winter_abl[np.isnan(winter_abl)] = 0
             year_acc = year_bw - winter_abl
-            percentage_acc = year_acc / year_acc_B
+            percentage_acc = year_acc / year_acc_med
+            percentage_acc = percentage_acc[~np.isnan(year_elev)]
+            year_elev = year_elev[~np.isnan(year_elev)]
             for i in range(len(percentage_acc)):
                 all_bw.append(percentage_acc[i])
                 all_elev.append(year_elev[i])
+            if len(year_elev) < 2:
+                continue
             # gradient = np.sum(year_elev * year_acc) / np.sum(year_elev**2)
             gradient ,b = np.polyfit(year_elev, percentage_acc , 1)
             if gradient > 0:
@@ -1913,6 +1923,7 @@ def find_precip_gradient():
                 plt.plot(year_elev, year_elev * gradient+b, color=colors(norm(year)))
     
     gradient ,b = np.polyfit(all_elev, all_bw, 1)
-    print(gradient)
+    plt.plot(all_elev, np.array(all_elev) * gradient+b, color='red')
     
-    return np.nanmean(grads)
+    return gradient
+    # return np.nanmean(grads)

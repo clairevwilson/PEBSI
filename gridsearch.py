@@ -21,17 +21,19 @@ import pandas as pd
 import xarray as xr
 # Internal libraries
 import run_simulation as sim
-import pebsi.input as eb_prms
+import pebsi.input as prms
 import pebsi.massbalance as mb
 from objectives import *
 
 # OPTIONS
 repeat_run = True   # True if restarting an already begun run
 # Define sets of parameters
-# params = {'Boone_c5':[0.018,0.02,0.022,0.024,0.026,0.028,0.03], # 
-#           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5]} # 
-params = {'Boone_c5':[0.01, 0.012, 0.014,0.016,0.018,0.02,0.022,0.024], # 
-          'kp':[0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]} # 
+params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
+# params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
+        #   'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
+        #   'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
+param_1, param_2 = list(params.keys())
 
 # Read command line args
 parser = sim.get_args(parse=False)
@@ -54,38 +56,40 @@ else:
     n_process_with_extra = n_runs % n_processes    # Number of CPUs with one extra run
 
 # Create output directory
-if 'trace' in eb_prms.machine:
-    eb_prms.output_filepath = '/trace/group/rounce/cvwilson/Output/'
-
-if repeat_run:
-    date = '08_01' if args.run_type == 'long' else '08_02'
-    print('Forcing run date to be', date)
-    n_today = '0'
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    if not os.path.exists(eb_prms.output_filepath + out_fp):
-        os.mkdir(eb_prms.output_filepath + out_fp)
-else:
-    date = str(pd.Timestamp.today()).replace('-','_')[5:10]
-    n_today = 0
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    while os.path.exists(eb_prms.output_filepath + out_fp):
-        n_today += 1
-        out_fp = f'{date}_{args.site}_{n_today}/'
-    os.mkdir(eb_prms.output_filepath + out_fp)
+if 'trace' in prms.machine:
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+# Store all variables
+args.store_data = True
+prms.store_vars = ['MB','layers','temp','EB']
 
 # Force some args
-args.store_data = True     # Ensures output is stored
 if args.run_type == '2024': # Short AWS run
     args.use_AWS = True
-    eb_prms.AWS_fn = '../climate_data/AWS/Preprocessed/gulkana2024.csv'
-    eb_prms.store_vars = ['MB','EB','layers','climate']
+    prms.AWS_fn = '../climate_data/AWS/Processed/gulkana2024.csv'
+    prms.store_vars = ['MB','EB','layers','temp']
     args.startdate = pd.to_datetime('2024-04-18 00:00:00')
     args.enddate = pd.to_datetime('2024-08-20 00:00:00')
 else: # Long MERRA-2 run
     args.use_AWS = False
-    eb_prms.store_vars = ['MB','layers','climate','EB']
+    prms.store_vars = ['MB','layers','temp','EB']
     args.startdate = pd.to_datetime('2000-04-15 00:00:00')
     args.enddate = pd.to_datetime('2024-08-20 00:00:00')
+
+if repeat_run:
+    date = '12_09' # if args.run_type == 'long' else '08_02'
+    print('Forcing run date to be', date)
+    n_today = '0'
+    out_fp = f'{date}_{args.site}_{n_today}/'
+    if not os.path.exists(prms.output_fp + out_fp):
+        os.mkdir(prms.output_fp + out_fp)
+else:
+    date = str(pd.Timestamp.today()).replace('-','_')[5:10]
+    n_today = 0
+    out_fp = f'{date}_{args.site}_{n_today}/'
+    while os.path.exists(prms.output_fp + out_fp):
+        n_today += 1
+        out_fp = f'{date}_{args.site}_{n_today}/'
+    os.mkdir(prms.output_fp + out_fp)
 
 # Transform params to strings for comparison
 for key in params:
@@ -99,9 +103,9 @@ set_no = 0  # Index for the parallel process
 
 # Storage for failed runs
 all_runs = []
-missing_fn = eb_prms.output_filepath + out_fp + 'missing.txt'
+missing_fn = prms.output_fp + out_fp + 'missing.txt'
 
-# Special dates for low sites
+# Dates depend on the site
 if args.run_type == 'long':
     if args.site == 'A':
         args.enddate = pd.to_datetime('2015-05-20 00:00:00')
@@ -109,24 +113,25 @@ if args.run_type == 'long':
         args.startdate = pd.to_datetime('2012-04-20 00:00:00')
 
 # Loop through parameters
-for kp in params['kp']:
-    for c5 in params['Boone_c5']:
+for p1 in params[param_1]:
+    for p2 in params[param_2]:
         # Copy over args
         args_run = copy.deepcopy(args)
 
-        # Set parameters
-        args_run.Boone_c5 = c5
-        args_run.kp = kp
-
-        # Get the climate
-        climate_run, args_run = sim.initialize_model(args_run.glac_no,args_run)
+        # Set parameters MANUALLY
+        args_run.lapse_rate = -6.5
+        args_run.kp = p2
+        args_run.Boone_c5 = p1
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
-        all_runs.append((args.site, c5, kp, args_run.out))
+        all_runs.append((args_run.site, p1, p2, args_run.out))
+
+        # Get the climate
+        climate_run, args_run = sim.initialize_model(args_run)
 
         # Specify attributes for output file
-        store_attrs = {'c5':c5,'kp':kp,'site':args.site}
+        store_attrs = {'lapse_rate':-6.5, 'c5':p1,'kp':p2}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -152,10 +157,13 @@ def run_model_parallel(list_inputs):
         args,climate,store_attrs = inputs
 
         # Check if model run should be performed
-        if not os.path.exists(eb_prms.output_filepath + args.out + '0.nc'):
+        if not os.path.exists(prms.output_fp + args.out + '0.nc'):
             try:
                 # Start timer
                 start_time = time.time()
+
+                # Get unique filename
+                args = sim.get_output_name(args, climate)
 
                 # Initialize the mass balance / output
                 massbal = mb.massBalance(args,climate)
@@ -177,7 +185,7 @@ def run_model_parallel(list_inputs):
             except Exception as e:
                 print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,' ... removing',args.out)
                 traceback.print_exc()
-                os.remove(eb_prms.output_filepath + args.out + '0.nc')
+                os.remove(prms.output_fp + args.out + '0.nc')
     return
 
 # Run model in parallel
@@ -187,7 +195,7 @@ with Pool(n_processes) as processes_pool:
 missing = []
 for run in all_runs:
     fn = run[-1]
-    if not os.path.exists(eb_prms.output_filepath + fn + '0.nc'):
+    if not os.path.exists(prms.output_fp + fn + '0.nc'):
         missing.append(run)
 n_missing = len(missing)
 

@@ -1,3 +1,17 @@
+"""
+This script contains functions to find a glacier ID
+from the Randolph Glacier Inventory either by
+a lat/lon coordinate or by some text that might
+appear in the glacier name attribute.
+
+Most useful command line args:
+-reg    RGI region ID to search
+-t      text to search RGI names attribute
+-lat    latitude value
+-lon    longitude value
+
+@author: clairevwilson
+"""
 import pandas as pd
 import geopandas as gpd
 import argparse
@@ -5,9 +19,6 @@ import os
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-
-dcolors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
-              '#F77808','#298282','#999999','#FF89B0','#427801']
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-reg','--region',action='store',
@@ -34,7 +45,7 @@ parser.add_argument('-hr','--help_regions',action='store_true',
                     help='Print all the region names for help identifying your region')
 args = parser.parse_args()
 
-assert args.region != '00', 'Define what region to check with -reg (guess if you have no idea)'
+assert args.region != '00', 'Define what region to check with -reg (best guess)'
 if len(args.region) < 2:
     args.region = '0' + args.region
 

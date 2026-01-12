@@ -46,6 +46,7 @@ varprops = {'surftemp':{'label':'Temperature','type':'Temperature','units':'C'},
            'ground':{'label':'Heat fluxes','type':'Flux','units':'W m$^{-2}$'},
            'layertemp':{'label':'Temperature','type':'Layers','units':'C'},
            'layerdensity':{'label':'Density','type':'Layers','units':'kg m$^{-3}$'},
+           'layerice':{'label':'Mass','type':'Layers','units':'kg m$^{-2}$'},
            'layerwater':{'label':'Water content','type':'Layers','units':'kg m$^{-2}$'},
            'layerBC':{'label':'Black carbon','type':'Layers','units':'ppb'},
            'layerOC':{'label':'Organic carbon','type':'Layers','units':'ppb'},
@@ -1119,7 +1120,7 @@ def plot_layers(ds,vars,dates):
 def visualize_layers(ds,dates,vars,force_layers=False,
                      t='',plot_ax=False,
                      plot_firn=True,plot_ice=False,ylim=False,
-                     colorbar=True):
+                     colorbar=True, diverging=False):
     """
     force_layers:
         Three options:
@@ -1143,7 +1144,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
 
     fig,axes = plt.subplots(len(vars),figsize=(5,1.7*len(vars)),sharex=True,layout='constrained')
     if plot_ax:
-        assert len(plot_ax) == len(vars)
+        assert len(plot_ax) == len(vars), f"plot_ax should be length {len(vars)}"
         axes = plot_ax
     if len(vars) == 1 and '__iter__' not in dir(axes):
         axes = [axes]
@@ -1157,13 +1158,13 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layerdensity']:
             bounds = [50,800] if plot_firn else [0,500]
         elif var in ['layerwater']:
-            bounds = [-1,6]
+            bounds = [-1,15]
         elif var in ['layertemp']:
             bounds = [-10,0]
         elif var in ['layergrainsize']:
-            bounds = [50,1500]
+            bounds = [400,600] # [50, 800]
         elif var in ['layerrefreeze']:
-            bounds = [0,0.4]
+            bounds = [-1,20]
         dens_lim = 890 if plot_firn else 600
         dens_lim = 1000 if plot_ice else dens_lim
         assert 'layer' in var, 'choose layer variable'
@@ -1189,10 +1190,13 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             # flip order so they stack bottom to top
             height = np.flip(height[layers_to_plot])
             vardata = np.flip(vardata[layers_to_plot])
+            dens_flip = np.flip(dens[layers_to_plot])
             if var in ['layerwater']:
-                vardata = vardata / height / 1000 * 100
+                porosity = 1 - dens_flip / 900
+                vardata = vardata / (porosity * 1000 * height) * 100
+                # vardata = vardata / (height * dens_flip)* 100
             if var in ['layerrefreeze']:
-                vardata = vardata / (np.flip(dens[layers_to_plot]) * height)
+                vardata = vardata / (dens_flip * height) * 100
             # if plot_ice:
             #     height = np.log(height)
 
@@ -1201,6 +1205,13 @@ def visualize_layers(ds,dates,vars,force_layers=False,
                       'layertemp':'plasma','layerdensity':'Greens','layerwater':'Blues',
                       'layergrainsize':'PuRd','layerrefreeze':'Purples'}
             ctype = ctypes[var]
+            if diverging:
+                ctype = 'coolwarm'
+                bounds = (-10, 10)
+                if var == 'layergrainsize':
+                    bounds = (-100, 100)
+                if var == 'layertemp':
+                    bounds = (-1, 1)
             if np.sum(height) < 0.05 and first and not last and step.month<9:
                 last = step
             for [dh,data] in zip(height,vardata):
@@ -1261,7 +1272,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
     # Show plot
     # plt.show()
     if not plot_ax:
-        return fig,ax
+        return fig,axes
     else:
         plt.close()
         return axes

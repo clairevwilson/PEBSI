@@ -59,8 +59,10 @@ def get_args(parse=True):
                         help='use dates from input AWS data?')
     
     # USER OPTIONS
-    parser.add_argument('-use_AWS', action='store_true',
-                        default=prms.use_AWS,help='use AWS or just reanalysis?')
+    parser.add_argument('-use_AWS', action='store_true',default=prms.use_AWS,
+                        help='use AWS or just reanalysis?')
+    parser.add_argument('-cds','--input_climate',action='store_true',
+                        help='use existing cds?')
     parser.add_argument('-store_data', action='store_true',
                         default=prms.store_data, help='store the model output?')
     parser.add_argument('-debug', action='store_true',
@@ -83,15 +85,17 @@ def get_args(parse=True):
                         help='Parameter for Boone densification scheme')
     parser.add_argument('-a_ice',default=prms.albedo_ice,action='store',type=float,
                         help='Bare ice albedo')
+    parser.add_argument('-lapse_rate',default=prms.lapserate,action='store',type=float,
+                        help='Temperature lapse rate [K km-1]')
     
     # FILEPATHS
-    parser.add_argument('-initial_temp_fp',default=prms.initial_temp_fp,type=str,
+    parser.add_argument('-initial_temp_fn',default=prms.initial_temp_fn,type=str,
                         action='store',help='Filepath for initializing temperature')
-    parser.add_argument('-initial_density_fp',default=prms.initial_density_fp,type=str,
+    parser.add_argument('-initial_density_fn',default=prms.initial_density_fn,type=str,
                         action='store',help='Filepath for initializing density')
-    parser.add_argument('-initial_grains_fp',default=prms.initial_grains_fp,type=str,
+    parser.add_argument('-initial_grains_fn',default=prms.initial_grains_fn,type=str,
                         action='store',help='Filepath for initializing grain size')
-    parser.add_argument('-initial_LAP_fp',default=prms.initial_LAP_fp,type=str,
+    parser.add_argument('-initial_LAP_fn',default=prms.initial_LAP_fn,type=str,
                         action='store',help='Filepath for initializing LAPs')
     
     # PARALLELIZATION
@@ -146,24 +150,49 @@ def get_site_table(site_df, args):
         if args.debug:
             print(f'~ Using AWS site: ({args.lat}, {args.lon}) at {args.elev} m a.s.l.')
 
+    # Check if initial data exists
+    initial_fns = {'temp':args.initial_temp_fn,
+                   'density':args.initial_density_fn,
+                   'grains':args.initial_grains_fn,
+                   'LAP':args.initial_LAP_fn}
+    for prop in initial_fns:
+        if prop in os.listdir(args.glac_fp):
+            fn_prop = f'{prop}/{args.glac_name}{args.site}{prop}.csv'
+            if os.path.exists(args.glac_fp + fn_prop):
+                initial_fns[prop] = args.glac_fp + fn_prop
+    args.initial_temp_fn = initial_fns['temp']
+    args.initial_density_fn = initial_fns['density']
+    args.initial_grains_fn = initial_fns['grains']
+    args.initial_LAP_fn = initial_fns['LAP']
+
     # *****Special HARD-CODED handling for Gulkana*****
     if args.glac_name == 'gulkana' and args.site != 'center':
         # set scaling albedo
-        slope = (0.485 - 0.315)/(site_df.loc['B','elevation'] - site_df.loc['A','elevation'])
-        intercept = 0.315
+        albedo_B = 0.337 # 485 in 2024, 337 in 2025
+        albedo_A = 0.315
+        slope = (albedo_B - albedo_A)/(site_df.loc['B','elevation'] - site_df.loc['A','elevation'])
+        intercept = albedo_A
         args.a_ice = intercept + (args.elev - site_df.loc['A','elevation'])*slope
-        args.a_ice = min(0.485,args.a_ice)
+        args.a_ice = min(albedo_B,args.a_ice)
+
+        # HARD CODING:
+        if args.site == 'AB':
+            args.a_ice = 0.2777
+        elif args.site == 'AU':
+            args.a_ice = 0.3134
+        elif args.site == 'B':
+            args.a_ice = 0.3471
 
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
             if pd.to_datetime(args.startdate) > pd.to_datetime('2023-12-31'):
-                args.initial_density_fp = f'data/by_glacier/gulkana/density/gulkana{args.site}density24.csv'
+                args.initial_density_fn = f'data/by_glacier/gulkana/density/gulkana{args.site}density24.csv'
             else:
-                args.initial_density_fp = f'data/by_glacier/gulkana/density/gulkana{args.site}meandensity.csv'
+                args.initial_density_fn = f'data/by_glacier/gulkana/density/gulkana{args.site}meandensity.csv'
         elif args.site in ['ABB','BD']:
-            args.initial_density_fp = 'data/by_glacier/gulkana/density/gulkanaBdensity24.csv'
+            args.initial_density_fn = 'data/by_glacier/gulkana/density/gulkanaBdensity24.csv'
         elif args.site in ['AB']:
-            args.initial_density_fp = 'data/by_glacier/gulkana/density/gulkanaAUdensity24.csv'
+            args.initial_density_fn = 'data/by_glacier/gulkana/density/gulkanaAUdensity24.csv'
     return args
 
 def get_shading(args):
@@ -188,11 +217,11 @@ def get_shading(args):
     args.store = ['result','result_plot','search_plot']
 
     # check if we can index the lat/lon for this site
-    site_fp = prms.site_fp.replace('GLACIER', args.glac_name)
-    if os.path.exists(site_fp):
+    site_fn = args.glac_fp + 'site_constants.csv'
+    if os.path.exists(site_fn):
         # open site constants file and check if our site is there
-        site_df = pd.read_csv(site_fp,index_col='site')
-        assert args.site in site_df.index, f'Add lat/lon for {args.site} in site_constants.csv'
+        site_df = pd.read_csv(site_fn,index_col='site')
+        assert args.site in site_df.index, f'Add lat/lon for {args.site} in {args.glac_name}/site_constants.csv'
         
         # grab the lat/lon from site_constants
         args.lat = site_df.loc[args.site,'lat']
@@ -223,7 +252,7 @@ def get_shading(args):
     print(f'~ Calculated shading for {args.glac_name} {args.site} in {shading_elapsed_time:.1f} seconds ~')
     return args
     
-def check_inputs(glac_no, args):
+def check_inputs(args):
     """
     Checks that the glacier point has all required inputs.
     - Shading file: if not found, executes the shading 
@@ -235,12 +264,13 @@ def check_inputs(glac_no, args):
     
     Parameters
     ==========
-    glac_no : str
-        Individual glacier RGI ID
     args : command line arguments
     """
+    # get glac_no from args
+    glac_no = args.glac_no 
+
     # check if the RGI ID is in the metadata file
-    all_df = pd.read_csv(prms.metadata_fp,index_col=0,converters={0: str})
+    all_df = pd.read_csv(prms.metadata_fn,index_col=0,converters={0: str})
     assert glac_no in all_df.index, f'Add {glac_no} to data/glacier_metadata.csv'
 
     # load the metadata for the glacier
@@ -254,25 +284,27 @@ def check_inputs(glac_no, args):
         if args.debug:
             print('Test glacier: using sample AWS data')
     else:
-        args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
+        if args.use_AWS:
+            args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
 
     # specify filepaths to args
-    args.shading_fp = prms.shading_fp.replace('GLACIER',args.glac_name).replace('SITE',args.site)
-    args.dem_fp = prms.dem_fp.replace('GLACIER', args.glac_name)
+    args.shading_fn = prms.shading_fn.replace('GLACIER',args.glac_name).replace('SITE',args.site)
+    args.dem_fn = prms.dem_fn.replace('GLACIER', args.glac_name)
+    args.glac_fp = prms.glac_fp.replace('GLACIER', args.glac_name)
 
     # check if the shading file exists
-    if not os.path.exists(args.shading_fp):
+    if not os.path.exists(args.shading_fn):
         args = get_shading(args)
     
     # load site constants table
-    site_fp = prms.site_fp.replace('GLACIER', args.glac_name)
-    site_df = pd.read_csv(site_fp,index_col='site')
+    site_fn = args.glac_fp + 'site_constants.csv'
+    site_df = pd.read_csv(site_fn,index_col='site')
 
     # update args from the site table
     args = get_site_table(site_df, args)
 
     # check if time should be taken from AWS data
-    if args.dates_from_data:
+    if args.dates_from_data and args.use_AWS:
         cdf = pd.read_csv(args.AWS_fn,index_col=0)
         cdf.index = pd.to_datetime(cdf.index)
 
@@ -280,33 +312,21 @@ def check_inputs(glac_no, args):
         startdate = pd.to_datetime(cdf.index[0])
         enddate = pd.to_datetime(cdf.index.to_numpy()[-1])
 
-        # have to offset by 30 minutes for MERRA-2
-        if prms.reanalysis == 'MERRA2' and startdate.minute != 30:
-            startdate += pd.Timedelta(minutes=30)
-            enddate -= pd.Timedelta(minutes=30)
-
         # add dates to args
         args.startdate = startdate
         args.enddate = enddate
-
-    # create model run name
-    if args.out == '':
-        model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
-        args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
     
     if args.debug:
         print('~ Inputs verified ~')
     return args
 
-def initialize_model(glac_no,args):
+def initialize_model(args):
     """
     Loads glacier table and climate dataset for one
     glacier to initialize the model inputs.
 
     Parameters
     ==========
-    glac_no : str
-        RGI glacier ID
     args : command-line arguments
     
     Returns
@@ -315,30 +335,64 @@ def initialize_model(glac_no,args):
         Class object from climate.py
     """
     # ===== CHECK GLACIER INPUTS (LAT,LON,ELEV,...) =====
-    args = check_inputs(glac_no, args)
+    args = check_inputs(args)
 
     # ===== GET GLACIER CLIMATE =====
     # initialize the climate class
     climate = Climate(args)
 
-    # load in available AWS data, then reanalysis
-    if args.use_AWS:
-        need_vars = climate.get_AWS(args.AWS_fn)
-        if len(need_vars) > 1:
-            climate.get_reanalysis(need_vars)
-    else:
-        climate.get_reanalysis(climate.all_vars)
+    # check if already loaded cds
+    if not climate.loaded_climate:
+        # load in available AWS data, then reanalysis
+        if args.use_AWS:
+            need_vars = climate.get_AWS(args.AWS_fn)
+            if len(need_vars) > 1:
+                climate.get_reanalysis(need_vars)
+        else:
+            climate.get_reanalysis(climate.all_vars)
 
     # check the climate dataset is ready to go
     climate.check_ds()
+
+    # adjust elevation-dependent variables
+    climate.adjust_to_elevation()
 
     # ===== PRINT MODEL RUN INFO =====
     start = pd.to_datetime(args.startdate)
     end = pd.to_datetime(args.enddate)
     n_months = np.round((end-start)/pd.Timedelta(days=30))
     start_fmtd = start.month_name()+', '+str(start.year)
-    print(f'~ Running {glac_no} at {args.elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
+    print(f'~ Running {args.glac_no} at {args.elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
     return climate, args
+
+def get_output_name(args, climate):
+    """
+    Finds a unique filename to store the output.
+    If store_climate is specified in input.py,
+    or if the args.cds = True and the cds does
+    not already exist for this simulation, stores
+    the climate dataset.
+
+    Parameters
+    ==========
+    args : command-line arguments
+    climate
+        Class object from climate.py
+    """
+    # get output name and store the climate data
+    if args.out == '':
+        model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
+        args.out = f'{args.glac_name}{args.site}_{model_run_date}_'
+    # make file name unique by adding an indexer
+    i = 0
+    while os.path.exists(prms.output_fp + args.out+f'{i}.nc'):
+        i += 1
+    args.out += str(i) + '.nc'
+
+    # store climate if specified
+    if climate.store_cds:
+        climate.store()
+    return args
 
 def run_model(climate,args,store_attrs=None):
     """
@@ -354,6 +408,9 @@ def run_model(climate,args,store_attrs=None):
         Dictionary of additional metadata to store 
         in the model output .nc
     """
+    # get a unique filename to store the output
+    args = get_output_name(args,climate)
+
     # ===== RUN ENERGY BALANCE =====
     model = massBalance(args,climate)
     model.main()
@@ -389,7 +446,7 @@ if __name__ == '__main__':
     args = get_args()
 
     # initialize the model
-    climate, args = initialize_model(args.glac_no,args)
+    climate, args = initialize_model(args)
     
     # run the model
     run_model(climate,args)

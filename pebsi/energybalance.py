@@ -36,6 +36,10 @@ class energyBalance():
             Timestamp to index the climate dataset.
         args : command-line arguments
         """
+        # CONSTANTS
+        SPH = prms.seconds_per_hour
+        CTOK = prms.celsius_to_kelvin
+
         # pull other classes from mass balance class
         climate = massbal.climate
         args = massbal.args
@@ -79,8 +83,8 @@ class energyBalance():
         self.args = args
 
         # define additional useful values
-        self.tempK = self.tempC + 273.15
-        self.prec =  self.tp / 3600     # tp is hourly total precip, prec is the rate in m/s
+        self.tempK = self.tempC + CTOK
+        self.prec =  self.tp / SPH     # tp is hourly total precip, prec is the rate in m/s
         self.rh = 100 if self.rh > 100 else self.rh
         self.get_roughness(surface.days_since_snowfall,layers)
 
@@ -119,8 +123,6 @@ class energyBalance():
         """
         # SHORTWAVE RADIATION  (Snet)
         SWin,SWout = self.get_SW(surface)
-        self.SWin = SWin
-        self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
 
         # Handle penetrating shortwave separately
         if prms.option_SWpen:
@@ -132,6 +134,12 @@ class energyBalance():
             FRAC_ABSRAD = 1
         self.SWnet_surf = (SWin + SWout) * FRAC_ABSRAD
         self.SWnet_penetrating = (SWin + SWout) * (1 - FRAC_ABSRAD)
+
+        # Store with surface fraction applied
+        self.SWin = SWin
+        self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
+        self.SWin *= FRAC_ABSRAD 
+        self.SWout *= FRAC_ABSRAD
                     
         # LONGWAVE RADIATION (Lnet)
         LWin,LWout = self.get_LW(surftemp)
@@ -158,7 +166,7 @@ class energyBalance():
         # TURBULENT FLUXES (Qs and Ql)
         Qs, Ql = self.get_turbulent(surftemp)
         self.sens = Qs[0] if '__iter__' in dir(Qs) else Qs
-        self.lat = Ql[0] if '__iter__' in dir(Qs) else Ql
+        self.lat = Ql[0] if '__iter__' in dir(Ql) else Ql
 
         # OUTPUTS
         Qm = NR + Qp + Qs + Ql + Qg
@@ -167,6 +175,8 @@ class energyBalance():
             return Qm
         elif mode in ['optim']:
             return np.abs(Qm)
+        elif mode in ['list']:
+            return [self.SWin, self.SWout, LWin, LWout, Qs, Ql, Qp, Qg]
         else:
             assert 1==0, 'argument \'mode\' in function surfaceEB should be sum or optim'
     
@@ -278,21 +288,26 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+        # CONSTANTS
+        SIGMA_SB = prms.sigma_SB
+        CTOK = prms.celsius_to_kelvin
+
         if self.nanLWout:
             # calculate LWout frmo surftemp
-            surftempK = surftemp+273.15
-            LWout = -prms.sigma_SB*surftempK**4
+            surftempK = surftemp + CTOK
+            LWout = -SIGMA_SB*surftempK**4
         else:
             # take LWout from data
             LWout = -self.LWout_ds/self.dt
         
         if self.nanLWin and self.nanNR:
             # calculate LWin from air temperature
-            ezt = self.vapor_pressure(self.tempC)    # vapor pressure in hPa
+            ezt = self.sat_vapor_pressure(self.tempC) / 100   # vapor pressure in hPa
             Ecs = .23+ .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
             Ecl = 0.984               # cloud emissivity, Klok and Oerlemans, 2002
             Esky = Ecs*(1-self.tcc**2)+Ecl*self.tcc**2    # sky emissivity
-            LWin = prms.sigma_SB*(Esky*self.tempK**4)
+            LWin = SIGMA_SB*(Esky*self.tempK**4)
+            print('! Using untested LWin method')
         elif not self.nanLWin:
             # take LWin from data
             LWin = self.LWin_ds/self.dt
@@ -343,8 +358,10 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
-        # calculate ground flux from surface temperature
+        # CONSTANTS
         K_ICE = prms.k_ice
+        
+        # calculate ground flux from surface temperature
         if prms.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
         else:
@@ -386,8 +403,8 @@ class energyBalance():
             wind_2m = self.wind
 
         # transform humidity into mixing ratio (q) 
-        Ewz = self.vapor_pressure(self.tempC)  # vapor pressure at 2m
-        Ew0 = self.vapor_pressure(surftemp)    # vapor pressure at the surface
+        Ewz = self.sat_vapor_pressure(self.tempC)  # saturation vapor pressure at 2m
+        Ew0 = self.sat_vapor_pressure(surftemp)    # saturation vapor pressure at the surface
         qz = (self.rh/100)*0.622*(Ewz/(self.sp-Ewz))
         q0 = 1.0*0.622*(Ew0/(self.sp-Ew0))
 
@@ -519,7 +536,7 @@ class energyBalance():
         self.roughness = sigma / 1000
         return 
     
-    def vapor_pressure(self,airtemp,method='ARM'):
+    def sat_vapor_pressure(self,airtemp,method='ARM'):
         """
         Calculates vapor pressure [Pa] 
         from air temperature 
@@ -529,15 +546,21 @@ class energyBalance():
         airtemp : float
             Air temperature [C]
         """
+        # CONSTANTS
+        CTOK = prms.celsius_to_kelvin
+
+        # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
             P = 0.61094*np.exp(17.625*airtemp/(airtemp+243.04)) # kPa
         elif method in ['Sonntag']:
             # follows COSIPY
-            airtemp += 273.15
-            if airtemp > 273.15: # over water
-                P = 0.6112*np.exp(17.67*(airtemp-273.15)/(airtemp-29.66))
+            airtemp += CTOK
+            if airtemp > CTOK: # over water
+                P = 0.6112*np.exp(17.67*(airtemp-CTOK)/(airtemp-29.66))
             else: # over ice
-                P = 0.6112*np.exp(22.46*(airtemp-273.15)/(airtemp-0.55))
+                P = 0.6112*np.exp(22.46*(airtemp-CTOK)/(airtemp-0.55))
+
+        # return vapor pressure in Pa
         return P*1000
 
     def diffuse_fraction(self,rad_glob,solar_zenith):

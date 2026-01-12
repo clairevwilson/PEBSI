@@ -7,56 +7,66 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '00.00000'    # RGI glacier ID
+glac_no = '01.00570'    # RGI glacier ID     WOLV: 09162    KAH: 22193
 use_AWS = False         # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
 
 # ========== DIRECTORIES AND FILEPATHS ========== 
 machine = socket.gethostname()
+# ALL FILEPATHS ARE RELATIVE TO PEBSI/
 # GLACIER
-metadata_fp = 'data/glacier_metadata.csv'                   # Glacier metadata filename
-site_fp = 'data/by_glacier/GLACIER/site_constants.csv'      # Generalized glacier site info filepath
+metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
+glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
 RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
 AWS_fp = '../climate_data/AWS/Processed/'                   # Weather station data filepath
 AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # SNICAR
-grainsize_fp = 'data/grainsize/drygrainsize(SSAin=##).nc'   # Grain size evolution lookup table filepath
-snicar_input_fp = 'biosnicar-py/biosnicar/inputs.yaml'      # SNICAR input filepath
-clean_ice_fp = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
+grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
+# snicar_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'      # SNICAR input filepath
+snicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'
+clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 # INITIAL CONDITIONS
-initial_temp_fp = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
-initial_density_fp = 'data/sample_initial_density.csv'      # Initial density profile filepath
-initial_grains_fp = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
-initial_LAP_fp = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
+initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
+initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
+initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
+initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
 # SHADING
-dem_fp = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
-shading_fp = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
+dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
+shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-bias_fp = 'data/bias_adjustment/METHOD_VAR.csv'             # Generalized bias adjustment filepath
 climate_fp = '../climate_data/'                             # Climate data filepath
+merra2_eg_fn = '../climate_data/MERRA2/MERRA2constants.nc4' # Global file of MERRA-2 geopotential
+bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
+cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
 # OUTPUT
-output_filepath = '../Output/'                              # Output filepath
-albedo_out_fp = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
+output_fp = '../Output/'                                    # Output filepath
+albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
+cds_output_fn = 'default'                                   # 'default' or climate dataset filename ++
+# ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
+#    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
 
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME
 startdate = pd.to_datetime('2024-04-20 00:00:00') 
-enddate = pd.to_datetime('2025-04-20 00:00:00')
+enddate = pd.to_datetime('2024-08-20 00:00:00')
 
-# WEATHER STATION
-use_AWS_site = False                        # True to override site (lat, lon, etc.) to the AWS site
+# SITE
+use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
+station_elevation = {                       # Elevation of the station used in temp quantile mapping
+    'gulkana':1725, 'wolverine':990, 'kahiltna':2377,
+} 
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','SWin','temp','rh']     # Vars to correct by quantile mapping
-    
+bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping 
+
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
 initialize_temp = 'interpolate'     # 'interpolate' or 'ripe'
 initialize_density = 'interpolate'  # 'interpolate' or 'constant'
-initialize_LAPs = 'clean'           # 'interpolate' or 'clean' 
+initialize_LAPs = 'interpolate'     # 'interpolate' or 'clean' 
 initialize_water = 'dry'            # 'dry' or 'saturated'
 surftemp_guess =  -10               # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1              # default amount of initial snow [m]
@@ -80,6 +90,8 @@ method_conductivity = 'Douville'        # 'Sauter', 'Douville','Jansson','OstinA
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
+option_uniform_ice = True               # Uniform size for ice bins?
+option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
@@ -103,32 +115,35 @@ band_indices = {}           # dictionary for storing spectral albedo
 for i in np.arange(0,480):
     band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
-grainsize_ds = xr.open_dataset(grainsize_fp.replace('##',str(initSSA)))
+grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA)))
 
 # ========== PARAMETERS and CONSTANTS ==========
-# <<<<<< Climate downscaling >>>>>
+# <<<<<< Climate downscaling >>>>>>
 sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
-precgrad = 0.000130         # Precipitation gradient with elevation [% m-1]
-lapserate = -0.0065         # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [C m-1]
+precgrads = {'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
+precgrad = 0                # Precipitation gradient with elevation [% m-1] 
+lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
 wind_ref_height = 10 if reanalysis in ['ERA5-hourly'] else 2  # Reference height for wind speed [m]
-# <<<<<< Numerical >>>>>
-dz_toplayer = 0.03          # Thickness of the uppermost layer [m]
-layer_growth = 0.5          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 80            # Maximum number of vertical layers allowed (more layers --> larger file size)
-max_dz = 2                  # Max layer thickness
-min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice [m]
-mb_threshold = 0.1          # Threshold to consider not conserving mass (kg m-2 = mm w.e.)
+# <<<<<< Numerical >>>>>>
+dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
+dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
+dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
+layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
+max_nlayers = 120            # Maximum number of vertical layers allowed (more layers --> larger file size)
+min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
+min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
+mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
 min_glacier_depth = 2       # Minimum ice depth to end the model run [m]
-max_temp_change = 5         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
-# <<<<<< Boundary conditions >>>>>
+max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
+# <<<<<< Boundary conditions >>>>>>
 temp_temp = 0               # Temperature of temperate ice [C]
 temp_depth = 10             # Depth of temperate ice [m]
-# <<<<<< Physical properties of snow, ice, water and air >>>>>
+# <<<<<< Physical properties of snow, ice, water and air >>>>>>
 density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]
 density_firn = 700          # Density threshold for firn [kg m-3]
@@ -147,21 +162,28 @@ firn_grainsize = 2000       # Grain size of firn [um]
 rfz_grainsize = 1500        # Grain size of refrozen snow [um]
 ice_grainsize = 5000        # Grain size of ice [um] (placeholder; unused)
 frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow [-] 
-frac_absrad_ice = 0.8       # Fraction of shortwave absorbed radiation for ice/firn [-] 
+frac_absrad_ice = 1       # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]
 extinct_coef_ice = 2.5      # Extinction coefficient for ice/firn [-]
-# <<<<<< Universal constants >>>>>
+# <<<<<< Universal constants >>>>>>
 gravity = 9.81              # Gravity [m s-2]
 karman = 0.4                # von Karman's constant [-]
 sigma_SB = 5.67037e-8       # Stefan-Boltzmann constant [W m-2 K-4]
 solar_constant = 1367       # Solar constant [W m-2]
-# <<<<<< Ideal gas law >>>>>
+# <<<<<< Unit conversions >>>>>>
+celsius_to_kelvin = 273.15
+seconds_per_hour = 3600
+# <<<<<< Ideal gas law >>>>>>
 R_gas = 8.3144598           # Universal gas constant [J mol-1 K-1]
 molarmass_air = 0.0289644   # Molar mass of Earth's air [kg mol-1]
 pressure_std = 101325       # Standard pressure [Pa]
 temp_std = 293.15           # Standard temperature [K]
 density_std = 1.225         # Air density at sea level [kg m-3]
-# <<<<<< Model parameterizations >>>>>
+# <<<<<< Model parameterizations >>>>>>
+Boone_c1 = 2.7e-6           # Densification c1 [s-1]
+Boone_c2 = 0.042            # Densification c2 [K-1]
+Boone_c3 = 0.046            # Densification c3 [m3 kg-1]
+Boone_c4 = 0.081            # Densification c4 [K-1]
 Boone_c5 = 0.016            # Densification parameter [m3 kg-1]
 roughness_fresh_snow = 0.24 # Surface roughness length for fresh snow [mm] (Moelg et al. 2012, TC)
 roughness_aged_snow = 10    # Surface roughness length for aged snow [mm]
@@ -170,6 +192,8 @@ roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
 wet_snow_C = 4.22e-13       # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.033                  # Fraction of irreducible water content for percolation [-]
+Sr_dense = 0.033             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
+Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
 albedo_ground = 0.2         # Albedo of ground [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
@@ -179,7 +203,7 @@ grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koc
 # <<<<<< Constants for switch runs >>>>>
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
 average_grainsize = 300     # Grainsize to treat as constant if switch_melt is 0 [um]
-albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-] (Moelg et al. 2012, TC)
+albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 albedo_firn = 0.5           # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
