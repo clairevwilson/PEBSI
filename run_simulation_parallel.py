@@ -5,7 +5,6 @@ This script executes parallel runs for multiple sites.
 """
 
 # Built-in libraries
-import sys
 import time
 import copy
 from multiprocessing import Pool
@@ -16,7 +15,7 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 4    # Step if you're going to run this script more than once
+n_runs_ahead = 0    # Step if you're going to run this script more than once simultaneously
 
 # Read command line args
 args = sim.get_args()
@@ -30,8 +29,7 @@ args.use_AWS = False
 sites = ['AU','B','D','Z'] # Sites to run in parallel 
 
 # Probably do not edit
-args.store_data = True
-# print('! not storing')              # Ensures output is stored
+args.store_data = True      # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
@@ -52,7 +50,7 @@ def pack_vars():
         # Output name
         df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
         glac = df_meta.loc[args.glac_no,'name']
-        args_run.out = f'{glac}{site}_{run_date}_base_short_'
+        args_run.out = f'{glac}{site}_{run_date}_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
@@ -63,10 +61,6 @@ def pack_vars():
 
         # Store model inputs
         climate, args_run = sim.initialize_model(args_run)
-        # climate.cds['ocwet'] *= 0
-        # climate.cds['ocdry'] *= 0
-        # climate.cds['bcwet'] *= 0
-        # climate.cds['bcdry'] *= 0
         packed_vars[run_no].append((args_run,climate,store_attrs))
 
         # Advance counter

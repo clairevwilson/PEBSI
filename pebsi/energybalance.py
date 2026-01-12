@@ -365,7 +365,7 @@ class energyBalance():
         if prms.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
         else:
-            assert 1==0, 'Ground flux method not accepted; choose from [\'MolgHardy\']'
+            assert prms.method_ground in ['MolgHardy'], 'Invalid ground heat flux method'
         return Qg
     
     def get_turbulent(self,surftemp):
@@ -470,7 +470,7 @@ class energyBalance():
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
         else:
-            assert 1==0, 'Choose turbulent method from MO-similarity or BulkRichardson'
+            assert prms.method_turbulent in ['BulkRichardson','MO-similarity'], 'Invalid turbulent method'
         
         return Qs, Ql
     
