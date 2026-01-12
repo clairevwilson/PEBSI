@@ -25,7 +25,7 @@ else:
     pygem_fp = 'C:/users/cvw30/Research/Model/PEBSI/'
     mpl.rcParams['font.family'] = 'sans-serif'
 sys.path.append(pygem_fp)
-from objectives import *
+from PEBSI.shop.processing.objectives import *
 from PEBSI.shop.plotting.plotting_fxns import *
 import PEBSI.shop.processing.gridsearch_processing as gsproc
 

@@ -28,11 +28,8 @@ from PEBSI.shop.processing.objectives import *
 # OPTIONS
 repeat_run = True   # True if restarting an already begun run
 # Define sets of parameters
-params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
+params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024], # grid search used in JoG paper
           'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
-# params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
-        #   'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
-        #   'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
 param_1, param_2 = list(params.keys())
 
 # Read command line args
