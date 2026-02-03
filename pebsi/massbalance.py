@@ -202,15 +202,7 @@ class massBalance():
             self.check_glacier_exists()
 
         # ===== COMPLETED SIMULATION: STORE DATA =====
-        if self.args.store_data:
-            self.output.store_data()
-
-        # optionally store spectral albedo
-        if prms.store_bands:
-            surface.albedo_df.to_csv(prms.albedo_out_fn.replace('.csv',f'_{self.args.elev}.csv'))
-        
-        # delete temporary files
-        self.delete_temp_files()
+        self.store_simulation()
         return
     
     def get_precip(self):
@@ -1536,6 +1528,26 @@ class massBalance():
             self.exit(failed=False)
         return
     
+    def store_simulation(self):
+        """
+        Stores data model output and
+        deletes temporary files used in 
+        the simulation.
+        """
+        # store main simulation
+        if self.args.store_data:
+            if self.args.debug:
+                print('~ Success! Storing data . . . ~')
+            self.output.store_data()
+
+        # optionally store spectral albedo
+        if prms.store_bands:
+            self.surface.albedo_df.to_csv(prms.albedo_out_fn.replace('.csv',f'_{self.args.elev}.csv'))
+        
+        # delete temporary files
+        self.delete_temp_files()
+        return
+    
     def delete_temp_files(self):
         """
         Deletes any temporary files that were created
@@ -1994,7 +2006,9 @@ class Output():
 
         # save NetCDF
         ds.to_netcdf(self.out_fn)
-        print(f'~ Success: saved to {self.out_fn}')
+
+        # success printout
+        print(f'~ Saved {args.glac_name.capitalize()} {args.site} model output to {self.out_fn} ~')
         return
     
     def add_attrs(self,new_attrs):
@@ -2058,9 +2072,9 @@ class ProgressTimer:
         self.elapsed = elapsed
 
     def printout(self):
-        percent_done = self.step / self.total_steps
+        percent_done = self.step / self.total_steps * 100
         blocks_total = 48
-        n_blocks_filled = int(percent_done * blocks_total)
+        n_blocks_filled = int(percent_done / 100 * blocks_total)
         n_blocks_empty = blocks_total - n_blocks_filled
         print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
         print(
