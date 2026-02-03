@@ -9,6 +9,7 @@ in an hourly time loop.
 """
 # Built-in libraries
 import os, sys
+import time
 # External libraries
 import numpy as np
 import pandas as pd
@@ -46,12 +47,14 @@ class massBalance():
         self.days_since_snowfall = 0
         self.time_list = climate.dates
         self.firn_converted = False
+        self.ice_exposed = False
 
         # initialize climate, layers and surface classes
         self.args = args
         self.climate = climate
         self.layers = Layers(climate,args)
         self.surface = Surface(self.layers,self.time_list,args,climate)
+        self.timer = ProgressTimer(total_steps=len(self.time_list))
 
         # initialize output class
         self.output = Output(self.time_list,args)
@@ -82,6 +85,7 @@ class massBalance():
         for time in self.time_list:
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
+            self.timer.update()
 
             # initialize the energy balance to unpack climate data for this timestep
             enbal = energyBalance(self,time)
@@ -118,7 +122,7 @@ class massBalance():
             # >>> MELTING <<<
             # calculate subsurface heating from penetrating SW
             subsurf_layermelt = self.subsurface_heating()
-    
+
             # combine surface and subsurface melt into one array
             layermelt = self.melting(subsurf_layermelt)
 
@@ -162,9 +166,16 @@ class massBalance():
             if date_in_range and time.hour == 0 and not self.firn_converted:
                 self.end_of_summer()
 
-            # if start of calendar year, reset firn tracker
+            # if ice is first exposed, re-size ice layers
+            if layers.ltype[0] == 'ice' and not self.ice_exposed:
+                self.ice_exposed = True 
+                if prms.option_uniform_ice:
+                    layers.resize_ice()
+
+            # if start of calendar year, reset annual trackers
             if time.day_of_year == 1 and time.hour == 0:
                 self.firn_converted = False
+                self.ice_exposed = False
 
             # check mass conserves
             mass_in = snowfall + rainfall + self.condensation + self.deposition
@@ -322,9 +333,9 @@ class massBalance():
                             layers.ltype[0] in 'firn',
                             layers.ldensity[0] > new_density*3])
         # unless there is a small surface layer, then combine new snow
-        small_surf_layer = layers.lheight[0] < 1e-3
+        small_surf_layer = layers.lheight[0] < 1e-3 and layers.ltype[0] != 'ice'
 
-        # check conditions
+        # check conditions for a new layer
         if np.any(new_layer_cond) and not small_surf_layer:
             # check if there is enough snow to create a new layer (1 mm cutoff)
             if new_height < 1e-3:
@@ -710,7 +721,6 @@ class massBalance():
         DENSITY_WATER = prms.density_water
         DENSITY_ICE = prms.density_ice
         FRAC_IRREDUC = prms.Sr
-        dt = self.dt
 
         # get index of percolating (snow/firn) layers
         snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
@@ -1447,6 +1457,7 @@ class massBalance():
         icedepth = np.sum(layers.lheight[layers.ice_idx])
 
         # begin prints
+        self.timer.printout()
         print(f'MONTH COMPLETED: {ended_month} {year} with +{accum:.2f} and -{melt:.2f} m w.e.')
         print(f'Currently {airtemp:.2f} C with {melte:.0f} W m-2 melt energy')
         print(f'----------surface albedo: {albedo:.3f} -----------')
@@ -1855,11 +1866,23 @@ class Output():
                 ds['layerdust'].values = layerdust_output
                 ds['layergrainsize'].values = layergrainsize_output
                 ds['layerrefreeze'].values = layerrefreeze_output
-                ds['layerage'].values = layerage_output
                 ds['layertype'].values = layertype_output
 
+                # handle datetime object for layerage
+                arr = np.asarray(layerage_output, dtype=object)
+                arr[pd.isna(arr)] = np.datetime64("NaT")
+                ds['layerage'].values = arr.astype("datetime64[ns]")
+
+        encoding = {
+            "layerage": {
+                "units": "seconds since 1970-01-01 00:00:00",
+                "calendar": "standard",
+                "dtype":"float64"
+            }
+        }
+
         # save NetCDF
-        ds.to_netcdf(self.out_fn)
+        ds.to_netcdf(self.out_fn, encoding=encoding)
 
         return ds
     
@@ -2005,3 +2028,42 @@ class MeltedLayers():
         self.BC = layers.lBC[fully_melted]
         self.OC = layers.lOC[fully_melted]
         self.dust = layers.ldust[fully_melted]
+
+class ProgressTimer:
+    """
+    Keeps track of time elapsed and 
+    estimates time remaining based on
+    the number of timesteps.
+    """
+    def __init__(self, total_steps):
+        self.total_steps = total_steps
+        self.start = time.perf_counter()
+        self.elapsed = 0
+        self.remaining = float("inf")
+        self.step = -1
+
+    def update(self):
+        """
+        Steps counter and estimates remaining time.
+        """
+        now = time.perf_counter()
+        elapsed = now - self.start
+        self.step += 1
+
+        frac = self.step / self.total_steps
+        est_total = elapsed / frac if frac > 0 else float("inf")
+        remaining = est_total - elapsed
+
+        self.remaining = remaining 
+        self.elapsed = elapsed
+
+    def printout(self):
+        percent_done = self.step / self.total_steps
+        blocks_total = 48
+        n_blocks_filled = int(percent_done * blocks_total)
+        n_blocks_empty = blocks_total - n_blocks_filled
+        print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
+        print(
+            f"{percent_done:.0f}%  "
+            f"[ Elapsed: {self.elapsed/60:.2f} min | Remaining: {self.remaining/60:.2f} min ]"
+        )

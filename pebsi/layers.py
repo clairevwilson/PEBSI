@@ -488,8 +488,9 @@ class Layers():
             self.ice_idx = np.where(self.ltype=='ice')[0]
 
             # only check minimum size
-            layer = 0
-            while layer < len(self.ice_idx):
+            layer = self.ice_idx[0]
+            while layer < len(self.ice_idx) - 1:
+                # don't check the bottom layer
                 dz = self.lheight[layer]
                 if dz < prms.min_dz:
                     self.merge_layers(layer)
@@ -562,6 +563,7 @@ class Layers():
             self.ldepth = np.array([np.sum(lh[:i+1])-(lh[i]/2) for i in range(self.nlayers)])
         if 'density' in do:
             self.ldensity = self.lice / self.lheight
+            self.ldensity[self.ice_idx] = prms.density_ice
         return
     
     def update_layer_types(self):
@@ -596,6 +598,80 @@ class Layers():
 
         # bound density of superimposed ice
         self.ldensity[self.snow_idx][self.ldensity[self.snow_idx] > DENSITY_ICE] = DENSITY_ICE
+        return
+    
+    def resize_ice(self):
+        """
+        Resizes ice layers to be uniform heights.
+
+        This function is run when option_uniform_ice=True
+        and ice is first exposed in a given year.
+        This makes it so ice melt is identical between
+        simulations with the same forcings.
+        """
+        # define initial mass for conservation check
+        initial_mass = np.sum(self.lice + self.lwater)
+
+        # CONSTANTS
+        DZ_ICE = prms.dz_icelayer
+        DENSITY_ICE = prms.density_ice
+        ICE_GRAINSIZE = prms.ice_grainsize
+
+        # get information about existing layers
+        ice_mass = np.sum(self.lice[self.ice_idx])
+        old_depths = self.ldepth[self.ice_idx]
+        sf_idx = np.concatenate([self.snow_idx,self.firn_idx])
+        assert len(sf_idx) == 0, 'surface ice identified but there is snow/firn'
+
+        # stack new ice layers using constant height
+        target_height = ice_mass / DENSITY_ICE
+        n_full_layers = int(target_height // DZ_ICE)
+        new_heights = [DZ_ICE] * n_full_layers
+
+        # fill bottom layer with excess
+        bottom_height = target_height - n_full_layers * DZ_ICE
+        if bottom_height > 0:
+            new_heights.append(bottom_height)
+
+        # recalculate layer depths
+        new_depths = np.array([np.sum(new_heights[:i+1])-(new_heights[i]/2) for i in range(len(new_heights))])
+        new_heights = np.array(new_heights)
+        
+        # interpolate layer properties to the new depths
+        new_density = np.interp(new_depths, old_depths, self.ldensity)
+        new_temp = np.interp(new_depths, old_depths, self.ltemp)
+        lage_num = self.lage.astype('datetime64[ns]').astype('int64')
+        new_age_num = np.interp(new_depths, old_depths, lage_num)
+        new_age = new_age_num.round().astype('int64').astype('datetime64[ns]')
+
+        # fill in interpolated variables where ice layers were
+        self.ldensity = np.append(self.ldensity[sf_idx], new_density)
+        self.ltemp = np.append(self.ltemp[sf_idx], new_temp)
+        self.lage = np.append(self.lage[sf_idx], new_age)
+        
+        # fill in constant variables
+        self.ltype = np.append(self.ltype[sf_idx], np.ravel(['ice']*len(new_depths)))
+        self.lwater = np.append(self.lwater[sf_idx], np.ones_like(new_depths)*0)
+        self.lgrainsize = np.append(self.lgrainsize[sf_idx], np.ones_like(new_depths)*ICE_GRAINSIZE)
+        self.lBC = np.append(self.lBC[sf_idx], np.ones_like(new_depths)*0)
+        self.lOC = np.append(self.lOC[sf_idx], np.ones_like(new_depths)*0)
+        self.ldust = np.append(self.ldust[sf_idx], np.ones_like(new_depths)*0)
+        self.lrefreeze = np.append(self.lrefreeze[sf_idx], np.ones_like(new_depths)*0)
+        self.drefreeze = np.append(self.drefreeze[sf_idx], np.ones_like(new_depths)*0)
+
+        # add back in height and depth
+        self.lheight = np.append(self.lheight[sf_idx], new_heights)
+        self.ldepth = np.append(self.ldepth[sf_idx], new_depths)
+
+        # calculate new layer mass
+        self.lice = np.append(self.lice[sf_idx], new_heights*new_density)
+
+        # make sure nlayers and type indexes are updated
+        self.update_layer_props(do=[])
+
+        # CHECK MASS CONSERVATION
+        change = np.sum(self.lice + self.lwater) - initial_mass
+        assert np.abs(change) < prms.mb_threshold, f'resize_ice failed mass conservation in {self.args.out}'
         return
     
     def to_decimal_year(self, dates):
