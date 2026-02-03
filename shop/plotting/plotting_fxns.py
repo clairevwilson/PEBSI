@@ -1165,6 +1165,8 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             bounds = [400,600] # [50, 800]
         elif var in ['layerrefreeze']:
             bounds = [-1,20]
+        elif var in ['layerheight']:
+            bounds = [0, 2]
         dens_lim = 890 if plot_firn else 600
         dens_lim = 1000 if plot_ice else dens_lim
         assert 'layer' in var, 'choose layer variable'
@@ -1203,7 +1205,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             bottom = 0
             ctypes = {'layerBC':'Greys','layerOC':'Oranges','layerdust':'Reds',
                       'layertemp':'plasma','layerdensity':'Greens','layerwater':'Blues',
-                      'layergrainsize':'PuRd','layerrefreeze':'Purples'}
+                      'layergrainsize':'PuRd','layerrefreeze':'Purples','layerheight':'magma'}
             ctype = ctypes[var]
             if diverging:
                 ctype = 'coolwarm'
@@ -1230,7 +1232,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         # Add colorbar
         units = {'layerBC':'ppb','layerdust':'ppm','layerOC':'ppb','layertemp':'$^{\circ}$C',
                 'layerdensity':'kg m$^{-3}$','layerwater':'%','layergrainsize':'um',
-                'layerrefreeze':'kg m-2'}
+                'layerrefreeze':'kg m-2','layerheight':'m'}
         if colorbar:
             sm = mpl.cm.ScalarMappable(cmap=ctype,norm=plt.Normalize(bounds[0],bounds[1]))
             leg = plt.colorbar(sm,ax=ax,aspect=7)
