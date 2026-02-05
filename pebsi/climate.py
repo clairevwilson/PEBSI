@@ -255,7 +255,7 @@ class Climate():
 
         # special check for RH: must be calculated from QV
         if var == 'rh' and not os.path.exists(fn):
-            assert prms.reanalysis == 'MERRA2', 'RH conversion not yet set up for ERA-5'
+            assert prms.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
 
         # open and check units of climate data
@@ -270,7 +270,7 @@ class Climate():
             if prms.reanalysis == 'ERA5-hourly':
                 lat_vn,lon_vn = ['lat','lon']
 
-        # index by lat and lon
+        # index by lat and lon and select variable
         if ds.coords[lat_vn].values.size > 1:
             ds = ds.sel({lat_vn:self.lat,lon_vn:self.lon}, method='nearest')[vn]
         else:

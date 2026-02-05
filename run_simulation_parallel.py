@@ -16,17 +16,18 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 3    # Step if you're going to run this script more than once
+n_runs_ahead = 1    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
 args.startdate = '2000-04-20 00:00'
-args.enddate = '2025-08-20 00:00'
-args.glac_no = '01.00570'
+args.enddate = '2024-08-20 00:00'
+# args.glac_no = '01.00570'
+args.glac_no = '01.09162'
 args.use_AWS = False
-sites = ['AU','D'] # Sites to run in parallel ,'B','D','Z'
+sites = ['EC'] # Sites to run in parallel ,'B','D','Z'
  
 # Probably do not edit
 args.store_data = True

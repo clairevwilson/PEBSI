@@ -59,8 +59,8 @@ station_elevation = {                       # Elevation of the station used in t
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
-MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind','temp','rh','SWin']     # Vars to correct by quantile mapping 
+MERRA2_filetag = 'wolverine'                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
+bias_vars = []     # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
