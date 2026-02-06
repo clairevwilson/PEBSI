@@ -751,7 +751,7 @@ class Climate():
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
         flat = str(ds_closest.lat.values)
         flon = str(ds_closest.lon.values)
-        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
+        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon[:6]}'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp

@@ -25,9 +25,10 @@ args = sim.get_args()
 args.startdate = '2000-04-20 00:00'
 args.enddate = '2024-08-20 00:00'
 # args.glac_no = '01.00570'
-args.glac_no = '01.09162'
+args.glac_no = '01.22193' # WOLV: 09162   KAH: 22193   LEM 01104   TAKU 01390
+
 args.use_AWS = False
-sites = ['EC'] # Sites to run in parallel ,'B','D','Z'
+sites = ['KPS'] # Sites to run in parallel ,'B','D','Z'
  
 # Probably do not edit
 args.store_data = True
