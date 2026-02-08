@@ -16,7 +16,7 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 1    # Step if you're going to run this script more than once
+n_runs_ahead = 0    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
@@ -24,11 +24,18 @@ args = sim.get_args()
 # Edit these
 args.startdate = '2000-04-20 00:00'
 args.enddate = '2024-08-20 00:00'
-# args.glac_no = '01.00570'
-args.glac_no = '01.22193' # WOLV: 09162   KAH: 22193   LEM 01104   TAKU 01390
-
+args.glac_no = '01.09162'
 args.use_AWS = False
-sites = ['KPS'] # Sites to run in parallel ,'B','D','Z'
+
+# sites to run in parallel
+site_dict = {'01.22193':['K17b','K14C'], # KAHILTNA     'KPS',
+             '01.15645':['KCH','KCO'], # KENNICOTT
+             '01.00570':['AU','B','D'], # GULKANA
+             '01.09162':['N','B'], # WOLVERINE     ,'EC'
+             '01.01104':['B','C','D'], # LEMON CREEK
+             '01.01390':['B','C','D'], # TAKU
+             }
+sites = site_dict[args.glac_no]
  
 # Probably do not edit
 args.store_data = True
@@ -53,7 +60,7 @@ def pack_vars():
         # Output name
         df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
         glac = df_meta.loc[args.glac_no,'name']
-        args_run.out = f'{glac}{site}_{run_date}_noBCOC_long_'
+        args_run.out = f'{glac}{site}_{run_date}_base_long_'
 
         # Store model parameters
         store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
@@ -64,10 +71,10 @@ def pack_vars():
 
         # Store model inputs
         climate, args_run = sim.initialize_model(args_run)
-        climate.cds['ocwet'] *= 0
-        climate.cds['ocdry'] *= 0
-        climate.cds['bcwet'] *= 0
-        climate.cds['bcdry'] *= 0
+        # climate.cds['ocwet'] *= 0
+        # climate.cds['ocdry'] *= 0
+        # climate.cds['bcwet'] *= 0
+        # climate.cds['bcdry'] *= 0
         packed_vars[run_no].append((args_run,climate,store_attrs))
 
         # Advance counter
