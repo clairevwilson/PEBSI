@@ -140,6 +140,12 @@ def get_site_table(site_df, args):
     if 'firndepth' in site_df.columns:
         if not np.isnan(site_df.loc[site,'firndepth']):
             args.initial_firn_depth = site_df.loc[site,'firndepth']
+    elif args.elev > site_df.loc['center','elevation']:
+        # above median glacier elevation: initialize with firn
+        args.initial_firn_depth = prms.initial_firn_depth
+    else:
+        # below median glacier elevation: no firn
+        args.initial_firn_depth = 0
 
     # Override site lat/lon/elevation with the AWS site
     if args.use_AWS and prms.use_AWS_site:
@@ -237,6 +243,7 @@ def get_shading(args):
         # grab the lat/lon from RGI
         args.lat = RGI_df.loc[args.glac_no,'CenLat']
         args.lon = RGI_df.loc[args.glac_no,'CenLon']
+        args.elev = RGI_df.loc[args.glac_no,'Zmed']
         if args.site != 'center':
             print('~ Using centerpoint lat/lon: changed site name to \"center\"')
 

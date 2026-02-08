@@ -49,7 +49,7 @@ cds_output_fn = 'default'                                   # 'default' or clima
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME
 startdate = pd.to_datetime('2024-04-20 00:00:00') 
-enddate = pd.to_datetime('2024-08-20 00:00:00')
+enddate = pd.to_datetime('2024-04-20 02:00:00')
 
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
@@ -70,7 +70,7 @@ initialize_LAPs = 'interpolate'     # 'interpolate' or 'clean'
 initialize_water = 'dry'            # 'dry' or 'saturated'
 surftemp_guess =  -10               # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1              # default amount of initial snow [m]
-initial_firn_depth = 0              # default amount of initial firn [m]
+initial_firn_depth = 10             # default amount of initial firn [m] * only for sites identified as accumulation area
 initial_ice_depth = 200             # default amount of initial ice [m]
 # Initial depths of snow and firn may be specified in site_constants or the command line using --s0, --f0
 
