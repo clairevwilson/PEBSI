@@ -33,7 +33,7 @@ site_dict = {'01.22193':['K17b','K14C'], # KAHILTNA     'KPS',
              '01.00570':['AU','B','D'], # GULKANA
              '01.09162':['N','B'], # WOLVERINE     ,'EC'
              '01.01104':['B','C','D'], # LEMON CREEK
-             '01.01390':['B','C','D'], # TAKU
+             '01.01390':['MG1','NWB1','TKG3'], # TAKU
              }
 sites = site_dict[args.glac_no]
  

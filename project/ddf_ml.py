@@ -16,7 +16,7 @@ if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
     home_fp = '/trace/home/cvwilson/research/'
 else:
-    base_fp = 'C:/Users/cvw30/Research/Output/'
+    base_fp = 'C:/Users/cvw30/Research/Output/ddf/'
     home_fp = 'C:/Users/cvw30/Research/'
 
 colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
@@ -27,7 +27,7 @@ site_dict = {'kahiltna':['KPS','K17b','K14C'], #
              'gulkana':['AU','B','D'], # GULKANA ,'D'
              'wolverine':['N','B','EC'], # WOLVERINE     
              'lemoncreek':['B','C','D'], # LEMON CREEK
-             'taku':['B','C','D'], # TAKU
+             'taku':['MG1','NWB1','TKG3'], # TAKU
              }
 coord_dict = {'wolverine':'60.5_-148.7',
                 'kahiltna':'63.0_-151.2',
@@ -38,7 +38,7 @@ coord_dict = {'wolverine':'60.5_-148.7',
 date_dict = {'wolverine':'02_06',
                 'kahiltna':'02_05',
                 'kennicott':'02_09',
-                'taku':'02_09',
+                'taku':'02_10',
                 'lemoncreek':'', # DONT HAVE
                 'gulkana':'02_03'}
 
@@ -211,8 +211,12 @@ for glaciersite in ['all']:
         vars_use = vars_use[vars_use != least_important]
 
     # plot the best model performance 
-    y_pred = best_model.predict(best_data['X_test'])
+    y_pred_test = best_model.predict(best_data['X_test'])
+    y_pred_train = best_model.predict(best_data['X_train'])
     y_test = best_data['y_test']
+    y_train = best_data['y_train']
+    r2_test = sk.metrics.r2_score(y_test, y_pred_test)
+    r2_train = sk.metrics.r2_score(y_train, y_pred_train)
     n_features = len(best_vars)
     vars_joined = ', '.join(best_vars)
     if len(best_vars) > 3:
@@ -221,36 +225,38 @@ for glaciersite in ['all']:
     print(f'Best model for {glaciersite} uses {n_features}: {vars_joined}')
     
     plt.figure()
-    plt.scatter(y_test, y_pred, alpha=0.8, color='#BF1F6A', label='Data')
+    plt.scatter(y_train, y_pred_train, alpha=0.8, color='#63c4c7', label='Train')
+    plt.scatter(y_test, y_pred_test, alpha=0.8, color='#BF1F6A', label='Test')
     plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
     plt.xlim(-5, 75)
     plt.ylim(-5, 75)
     plt.xlabel('Modeled degree-day factor')
     plt.ylabel('Predicted degree-day factor')
-    plt.text(0.98, 0.05, f'Using {n_features} features\nR$2=$ {best_r2:.3f}',
+    plt.text(0.98, 0.05, f'Using {n_features} features\nR$^2$ (train)$=$ {r2_train:.3f}\nR$^2$ (test)$=$ {r2_test:.3f}',
              transform=plt.gca().transAxes,ha='right',va='bottom')
     plt.title(f'Best model for {glaciersite}\n{vars_joined}')
+    plt.legend()
     plt.savefig(base_fp + f'{glaciersite}_predictions.png', dpi=300)
     plt.close()
 
-    for compare in all_dfs:
-        if compare != glaciersite:
-            X = all_dfs[compare][best_vars]
-            y = all_dfs[compare][target]
-            y_pred = best_model.predict(X)
-            r2 = sk.metrics.r2_score(y, y_pred)
+for compare in all_dfs:
+    if compare != glaciersite:
+        X = all_dfs[compare][best_vars]
+        y = all_dfs[compare][target]
+        y_pred = best_model.predict(X)
+        r2 = sk.metrics.r2_score(y, y_pred)
 
-            plt.figure()
-            plt.scatter(y, y_pred, alpha=0.8, color='#BF1F6A', label='Data')
-            plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
-            plt.xlim(-5, 75)
-            plt.ylim(-5, 75)
-            plt.xlabel('Modeled degree-day factor')
-            plt.ylabel('Predicted degree-day factor')
-            plt.text(0.98, 0.05, f'R$2=$ {r2:.3f}',transform=plt.gca().transAxes,ha='right',va='bottom')
-            plt.title(f'Best model for {glaciersite}\napplied on {compare}')
-            plt.savefig(base_fp + f'{glaciersite}_on{compare}_predictions.png', dpi=300)
-            plt.close()
+        plt.figure()
+        plt.scatter(y, y_pred, alpha=0.8, color='#BF1F6A', label='Data')
+        plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
+        plt.xlim(-5, 75)
+        plt.ylim(-5, 75)
+        plt.xlabel('Modeled degree-day factor')
+        plt.ylabel('Predicted degree-day factor')
+        plt.text(0.98, 0.05, f'R$2=$ {r2:.3f}',transform=plt.gca().transAxes,ha='right',va='bottom')
+        plt.title(f'Best model for {glaciersite}\napplied on {compare}')
+        plt.savefig(base_fp + f'{glaciersite}_on{compare}_predictions.png', dpi=300)
+        plt.close()
     
     # plt.figure()
     # plt.plot(n_features, maes)

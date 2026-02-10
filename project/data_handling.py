@@ -5,6 +5,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
+import socket
+if 'trace' in socket.gethostname():
+    base_fp = '/trace/group/rounce/cvwilson/Output/'
+    home_fp = '/trace/home/cvwilson/research/'
+else:
+    base_fp = 'C:/Users/cvw30/Research/Output/'
+    home_fp = 'C:/Users/cvw30/Research/'
 
 class Data():
     def __init__(self, name, site,
@@ -51,7 +58,10 @@ class Data():
             
         if self.name.replace('_','') in benchmark_glaciers or use == 'benchmark':
             # BENCHMARK glacier
-            name_fmtd = sum([f.capitalize() for f in self.name.split('_')])
+            name_parts = [f.capitalize() for f in self.name.split('_')]
+            name_fmtd = ''
+            for f in name_parts:
+                name_fmtd += f
             data_fn = benchmark_fp + f'{name_fmtd}/Input_{name_fmtd}_Glaciological_Data.csv'
             df = pd.read_csv(data_fn, parse_dates=True)
             df = df.loc[df['site_name'] == site]
@@ -61,9 +71,9 @@ class Data():
             if n_winter_obs < 5:
                 # insufficient data to compare seasonal, so grab annual periods
                 index_fall = np.where(~np.isnan(df['ba']))[0][1:]
-                annual_starts = df.loc[index_fall - 1, 'fall_date']
-                annual_ends = df.loc[index_fall, 'fall_date']
-                annual_data = df.loc[index_fall, 'ba']
+                annual_starts = pd.to_datetime(df.iloc[index_fall - 1]['fall_date'].values)
+                annual_ends = pd.to_datetime(df.iloc[index_fall]['fall_date'].values)
+                annual_data = df.iloc[index_fall]['ba'].values
 
                 no_nans = np.where((~np.isnan(annual_starts) &
                                     ~np.isnan(annual_ends)))[0]
