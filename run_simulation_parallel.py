@@ -24,7 +24,7 @@ args = sim.get_args()
 # Edit these
 args.startdate = '2000-04-20 00:00'
 args.enddate = '2024-08-20 00:00'
-args.glac_no = '01.09162'
+args.glac_no = '01.01390'
 args.use_AWS = False
 
 # sites to run in parallel
@@ -42,7 +42,7 @@ args.store_data = True
 # print('! not storing')              # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
 # Determine number of runs for each process
 n_processes = len(sites)
