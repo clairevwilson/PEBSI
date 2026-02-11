@@ -24,7 +24,7 @@ colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
 
 site_dict = {'kahiltna':['KPS','K17b','K14C'], #  
              'kennicott':['KCH','KCO'], # KENNICOTT
-             'gulkana':['AU','B','D'], # GULKANA ,'D'
+             'gulkana':['AU','B','D','B_noqm'], # GULKANA
              'wolverine':['N','B','EC'], # WOLVERINE     
              'lemoncreek':['B','C','D'], # LEMON CREEK
              'taku':['MG1','NWB1','TKG3'], # TAKU
@@ -66,7 +66,10 @@ for glacier in glaciers:
         if os.path.exists(df_fn):
             df = pd.read_csv(df_fn, index_col=0, parse_dates=True)
         else:
-            ds_in = xr.open_dataset(base_fp + f'{glacier}{site}_2026_{date}_base_long_0.nc') 
+            if 'noqm' in site:
+                ds_in = xr.open_dataset(base_fp + f'../{glacier}B_2026_02_04_base_long_0.nc')
+            else:
+                ds_in = xr.open_dataset(base_fp + f'{glacier}{site}_2026_{date}_base_long_0.nc') 
             
             # Clip temperature to positive values
             positive_temp = ds_in['airtemp'].clip(min=0)
@@ -155,7 +158,9 @@ for glacier in glaciers:
 
         # store
         all_dfs[glacier+site] = df
-        if all_df is not None:
+        if 'noqm' in site:
+            kk = 0
+        elif all_df is not None:
             all_df = pd.concat([all_df, df])
         else:
             all_df = df
@@ -239,25 +244,26 @@ for glaciersite in ['all']:
     plt.savefig(base_fp + f'{glaciersite}_predictions.png', dpi=300)
     plt.close()
 
-for compare in all_dfs:
-    if compare != glaciersite:
-        X = all_dfs[compare][best_vars]
-        y = all_dfs[compare][target]
-        y_pred = best_model.predict(X)
-        r2 = sk.metrics.r2_score(y, y_pred)
+    if glaciersite in ['gulkanaB','all']:
+        for compare in all_dfs:
+            if compare != glaciersite:
+                X = all_dfs[compare][best_vars]
+                y = all_dfs[compare][target]
+                y_pred = best_model.predict(X)
+                r2 = sk.metrics.r2_score(y, y_pred)
 
-        plt.figure()
-        plt.scatter(y, y_pred, alpha=0.8, color='#BF1F6A', label='Data')
-        plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
-        plt.xlim(-5, 75)
-        plt.ylim(-5, 75)
-        plt.xlabel('Modeled degree-day factor')
-        plt.ylabel('Predicted degree-day factor')
-        plt.text(0.98, 0.05, f'R$2=$ {r2:.3f}',transform=plt.gca().transAxes,ha='right',va='bottom')
-        plt.title(f'Best model for {glaciersite}\napplied on {compare}')
-        plt.savefig(base_fp + f'{glaciersite}_on{compare}_predictions.png', dpi=300)
-        plt.close()
-    
+                plt.figure()
+                plt.scatter(y, y_pred, alpha=0.8, color='#BF1F6A', label='Data')
+                plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
+                plt.xlim(-5, 75)
+                plt.ylim(-5, 75)
+                plt.xlabel('Modeled degree-day factor')
+                plt.ylabel('Predicted degree-day factor')
+                plt.text(0.98, 0.05, f'R$2=$ {r2:.3f}',transform=plt.gca().transAxes,ha='right',va='bottom')
+                plt.title(f'Best model for {glaciersite}\napplied on {compare}')
+                plt.savefig(base_fp + f'{glaciersite}_on{compare}_predictions.png', dpi=300)
+                plt.close()
+        
     # plt.figure()
     # plt.plot(n_features, maes)
     # plt.ylabel('MAE')
