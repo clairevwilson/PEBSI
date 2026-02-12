@@ -167,7 +167,7 @@ class massBalance():
                 self.end_of_summer()
 
             # if ice is first exposed, re-size ice layers
-            if layers.ltype[0] == 'ice' and not self.ice_exposed:
+            if len(layers.snow_idx) + len(layers.firn_idx) < 1 and not self.ice_exposed:
                 self.ice_exposed = True 
                 if prms.option_uniform_ice:
                     layers.resize_ice()
