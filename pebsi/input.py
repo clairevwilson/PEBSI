@@ -53,14 +53,14 @@ enddate = pd.to_datetime('2024-04-20 02:00:00')
 
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
-station_elevation = {                       # Elevation of the station used in temp quantile mapping
-    'gulkana':1725, 'wolverine':990, 'kahiltna':2377,
+station_elevation = {                       # Elevation of the station used in temp quantile mapping [m a.s.l.]
+    'gulkana':1725, 'wolverine':990, 'kahiltna':2377, 'lemon_creek':1280,
 } 
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = []     # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
+bias_vars = ['wind']     # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
@@ -90,7 +90,7 @@ method_conductivity = 'Douville'        # 'Sauter', 'Douville','Jansson','OstinA
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
-option_uniform_ice = True               # Uniform size for ice bins?
+option_uniform_ice = False              # Uniform size for ice bins?
 option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
@@ -134,7 +134,7 @@ dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
 dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 120            # Maximum number of vertical layers allowed (more layers --> larger file size)
+max_nlayers = 80            # Maximum number of vertical layers allowed (more layers --> larger file size)
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
 mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
@@ -228,56 +228,3 @@ start_end_summer = 228      # Julian day of year to start checking for end of su
 new_snow_threshold = 0.02   # Threshold for new snow to consider the start of winter [m w.e.]
 new_snow_days = 10          # Number of days to sum snow over and compare against threshold [d]
 firn_age = 60               # Number of days old a snow layer has to be to turn it into firn [d]
-
-# ========== OTHER PYGEM INPUTS ========== 
-# rgi_regionsO1 = [1]
-# rgi_regionsO2 = [2]
-# rgi_glac_number = 'all'
-
-# # Types of glaciers to include (True) or exclude (False)
-# include_landterm = True                # Switch to include land-terminating glaciers
-# include_laketerm = True                # Switch to include lake-terminating glaciers
-# include_tidewater = True               # Switch to include tidewater glaciers
-# ignore_calving = False                 # Switch to ignore calving and treat tidewater glaciers as land-terminating
-# oggm_base_url = 'https://cluster.klima.uni-bremen.de/~oggm/gdirs/oggm_v1.4/L1-L2_files/elev_bands/'
-# logging_level = 'DEBUG' # DEBUG, INFO, WARNING, ERROR, WORKFLOW, CRITICAL (recommended WORKFLOW)
-# option_leapyear = 1 # 0 to exclude leap years
-
-# # Reference period runs (runs up to present)
-# ref_startyear = 1980                # first year of model run (reference dataset)
-# ref_endyear = 2019                  # last year of model run (reference dataset)
-# ref_wateryear = 'calendar'          # options for years: 'calendar', 'hydro', 'custom'
-# ref_spinupyears = 0                 # spin up years
-
-# # This is where the simulation runs climate data will be set up once we're there
-# # Simulation runs (refers to period of simulation and needed separately from reference year to account for bias adjustments)
-# gcm_startyear = 1980            # first year of model run (simulation dataset)
-# gcm_endyear = 2019              # last year of model run (simulation dataset)
-# gcm_wateryear = 'calendar'      # options for years: 'calendar', 'hydro', 'custom'
-# gcm_spinupyears = 0             # spin up years for simulation (output not set up for spinup years at present)
-# constantarea_years = 0          # number of years to not let the area or volume change
-# if gcm_spinupyears > 0:
-#     assert 0==1, 'Code needs to be tested to enure spinup years are correctly accounted for in output files'
-
-# GRAVEYARD
-# WAYS OF MAKING BIN_ELEV
-# dynamics = False
-# if dynamics:
-#     gdir = oggm.single_flowline_glacier_directory(glac_no, logging_level='CRITICAL') #,has_internet=False
-#     all_fls = oggm.get_glacier_zwh(gdir)
-#     fls = all_fls.iloc[np.nonzero(all_fls['h'].to_numpy())] # remove empty bins
-#     bin_indices = np.linspace(len(fls.index)-1,0,n_bins,dtype=int)
-#     bin_elev = fls.iloc[bin_indices]['z'].to_numpy()
-#     bin_ice_depth = fls.iloc[bin_indices]['h'].to_numpy()
-# bin_elev = np.array([1270,1385,1470,1585,1680,1779]) # From Takeuchi 2009
-# bin_elev = np.array([1526,1693,1854])
-# bin_ice_depth = np.ones(len(bin_elev)) * 200
-
-# temp_bias_adjust = False                        # Adjust MERRA-2 temperature linearly? ***** probably can delete these
-# temp_bias_slope = 0.57596                       # Slope of MERRA-2 --> ON-ICE AWS
-# temp_bias_intercept = 1.799                     # Intercept of MERRA-2 --> ON-ICE AWS
-# in climate.py under if eb_prms.reanalysis == 'MERRA2':
-            # Correct MERRA-2 temperature bias
-            # temp_filled = True if not self.args.use_AWS else 'temp' in self.need_vars
-            # if eb_prms.temp_bias_adjust and temp_filled:
-            #     self.adjust_temp_bias()
