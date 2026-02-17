@@ -5,7 +5,7 @@ This script executes parallel runs for multiple sites.
 """
 
 # Built-in libraries
-import sys
+import os
 import time
 import copy
 from multiprocessing import Pool
@@ -23,19 +23,25 @@ args = sim.get_args()
 
 # Edit these
 args.startdate = '2000-04-20 00:00'
-args.enddate = '2024-08-20 00:00'
-args.glac_no = '01.01390'
+args.enddate = '2025-08-20 00:00'
 args.use_AWS = False
 
+args.kp = 2
+
 # sites to run in parallel
-site_dict = {'01.22193':['K17b','K14C'], # KAHILTNA     'KPS',
-             '01.15645':['KCH','KCO'], # KENNICOTT
-             '01.00570':['AU','B','D'], # GULKANA
-             '01.09162':['N','B'], # WOLVERINE     ,'EC'
-             '01.01104':['B','C','D'], # LEMON CREEK
-             '01.01390':['MG1','NWB1','TKG3'], # TAKU
-             }
-sites = site_dict[args.glac_no]
+glac_nos = ['01.01104','01.01390'] # '01.22193', '01.15645','01.09162',
+site_dict = {
+    '01.22193':['K17b','K14k','K53'], # KAHILTNA     'KPS',
+    '01.15645':['GTH','KC31','GTL'], # KENNICOTT
+    '01.00570':['AU','B','D'], # GULKANA
+    '01.09162':['N','B','EC'], # WOLVERINE
+    '01.01104':['B','C','D'], # LEMON CREEK
+    '01.01390':['MG1','NWB1','TKG3'], # TAKU
+    #  '02.06675':[], # ATHABASCA
+    #  '02.05098':[], # PEYTO
+    #  '02.17023':[], # SPERRY
+    #  '02.18778':[], # SOUTH CASCADE
+}
  
 # Probably do not edit
 args.store_data = True
@@ -45,69 +51,81 @@ if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
 # Determine number of runs for each process
-n_processes = len(sites)
+n_processes = sum([len(site_dict[gn]) for gn in glac_nos])
 args.n_processes = n_processes
 
 def pack_vars():
     # Parse list for inputs to Pool function
     packed_vars = [[] for _ in range(n_processes)]
     run_no = 0
-    for site in sites:
-        # Get current site args
-        args_run = copy.deepcopy(args)
-        args_run.site = site
+    for glac_no in glac_nos:
+        args_glac = copy.deepcopy(args)
+        args_glac.glac_no = glac_no
+        sites = site_dict[args_glac.glac_no]
 
-        # Output name
-        df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
-        glac = df_meta.loc[args.glac_no,'name']
-        args_run.out = f'{glac}{site}_{run_date}_base_long_'
+        for site in sites:
+            # Get current site args
+            args_run = copy.deepcopy(args_glac)
+            args_run.site = site
 
-        # Store model parameters
-        store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
-                       'lr':str(args_run.lapse_rate)}
+            # Output name
+            df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
+            glac = df_meta.loc[args_run.glac_no,'name']
+            args_run.out = f'{glac}{site}_{run_date}_base_qmlemonwindkp{args_run.kp}_' # run_date
 
-        # Set task ID for SNICAR input file
-        args_run.task_id = run_no + n_runs_ahead*n_processes
+            # Store model parameters
+            store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
+                        'lr':str(args_run.lapse_rate)}
 
-        # Store model inputs
-        climate, args_run = sim.initialize_model(args_run)
-        # climate.cds['ocwet'] *= 0
-        # climate.cds['ocdry'] *= 0
-        # climate.cds['bcwet'] *= 0
-        # climate.cds['bcdry'] *= 0
-        packed_vars[run_no].append((args_run,climate,store_attrs))
+            # Set task ID for SNICAR input file
+            args_run.task_id = run_no + n_runs_ahead*n_processes
 
-        # Advance counter
-        run_no += 1
+            # Store model inputs
+            climate, args_run = sim.initialize_model(args_run)
+            # climate.cds['ocwet'] *= 0
+            # climate.cds['ocdry'] *= 0
+            # climate.cds['bcwet'] *= 0
+            # climate.cds['bcdry'] *= 0
+            packed_vars[run_no].append((args_run,climate,store_attrs))
+
+            # Advance counter
+            run_no += 1
     return packed_vars
 
 def run_model_parallel(list_inputs):
     # Loop through the variable sets
     for inputs in list_inputs:
-        # Unpack inputs
-        args,climate,store_attrs = inputs
+        try:
+            # Unpack inputs
+            args,climate,store_attrs = inputs
 
-        # Get file name
-        args = sim.get_output_name(args, climate)
-        
-        # Start timer
-        start_time = time.time()
+            # Get file name
+            args = sim.get_output_name(args, climate)
+            if os.path.exists(args.out):
+                print(args.out, 'already exists')
+                return
+            
+            # Start timer
+            start_time = time.time()
 
-        # Run the model
-        massbal = mb.massBalance(args,climate)
-        massbal.main()
+            # Run the model
+            massbal = mb.massBalance(args,climate)
+            massbal.main()
 
-        # Completed model run: end timer
-        time_elapsed = time.time() - start_time
+            # Completed model run: end timer
+            time_elapsed = time.time() - start_time
 
-        # Store output
-        massbal.output.add_vars()
-        massbal.output.add_basic_attrs(args,time_elapsed,climate)
-        massbal.output.add_attrs(store_attrs)
+            # Store output
+            massbal.output.add_vars()
+            massbal.output.add_basic_attrs(args,time_elapsed,climate)
+            massbal.output.add_attrs(store_attrs)
+        except Exception as e:
+            print(f'Simulation failed for {inputs[0].out}: {e}')
+            continue
     return
 
 # Run model in parallel
 if __name__ == '__main__':
     packed_vars = pack_vars()
-    with Pool(n_processes) as processes_pool:
-        processes_pool.map(run_model_parallel,packed_vars)
+    with Pool(n_processes) as pool:
+        pool.map(run_model_parallel,packed_vars)
