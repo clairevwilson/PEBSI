@@ -72,7 +72,8 @@ class Climate():
 
         # find elevation of temperature data
         if 'temp' in prms.bias_vars:
-            self.temp_elev = prms.station_elevation[self.args.glac_name]
+            self.temp_elev = prms.station_elevation['lemon_creek']
+            print('USING LEMONC REEK TEMP TOO') # self.args.glac_name]
 
         # check if storing the cds
         self.store_cds = prms.store_climate 
@@ -612,11 +613,12 @@ class Climate():
         """
         # get quantile mapping .csv filename
         bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
-        bias_fn = bias_fn.replace('GLACIER', self.args.glac_name)
+        bias_fn = bias_fn.replace('GLACIER', 'lemon_creek') # self.args.glac_name)
+        print('USING LEMON BIAS CORRECTION')
 
         # need to use file generated without a lapse rate for temperature
         if var == 'temp':
-            bias_fn = bias_fn.replace('.csv','_0.0.csv')
+            bias_fn = bias_fn.replace('.csv','_0.csv')
 
         assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
         bias_df = pd.read_csv(bias_fn)
