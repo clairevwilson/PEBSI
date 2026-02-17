@@ -17,8 +17,7 @@ from mapping_fxns import *
 
 # ========= WEATHER STATION INFO =========
 # Station location
-glacier = 'kahiltna'
-for glacier in ['kahiltna','gulkana','wolverine']:
+for glacier in ['lemon_creek']:
     if glacier == 'kahiltna':
         # KAHILTNA
         glacier = 'kahiltna'               # Glacier name consistent with glacier_metadata file in PEBSI/data
@@ -36,7 +35,8 @@ for glacier in ['kahiltna','gulkana','wolverine']:
     else:
         # BENCHMARK
         benchmark_dict = {'gulkana':{'lat':63.285514, 'lon':-145.410, 'elev':1725, 'time_col':'UTC_time', 'timezone':0},
-                        'wolverine':{'lat':60.381923, 'lon':-148.939662 , 'elev':990, 'time_col':'local_time', 'timezone':-8}}
+                        'wolverine':{'lat':60.381923, 'lon':-148.939662 , 'elev':990, 'time_col':'local_time', 'timezone':-8},
+                        'lemon_creek':{'lat':58.38,'lon':-134.349,'elev':1280,'time_col':'local_time', 'timezone':-8}}
         lat = benchmark_dict[glacier]['lat']                    # Station latitude [decimal degrees]     WOLV: 60.381923     GULKANA:63.285514
         lon = benchmark_dict[glacier]['lon']                     # Station ongitude [decimal degrees]     WOLV: -148.939662   GULKANA: -145.410
         elev_AWS = benchmark_dict[glacier]['elev']                    # Station elevation [m a.s.l.]            WOLV: 990, 1420     GULKANA: 1725
@@ -47,21 +47,23 @@ for glacier in ['kahiltna','gulkana','wolverine']:
         fp_AWS = '../climate_data/AWS/'       # Filepath to processed AWS data
         if glacier == 'gulkana':
             fn_AWS = fp_AWS + f'Raw/Benchmark/{glacier}/{elev_AWS}/LVL2/{glacier}{elev_AWS}_hourly_LVL2_ALL.csv'          # Filename of AWS data to use in mapping
+        elif glacier == 'lemon_creek':
+            fn_AWS = fp_AWS + f'Raw/Benchmark/lemonCreek/LVL2/lemoncreek{elev_AWS}_hourly_LVL2.csv'
         else:
             fn_AWS = fp_AWS + f'Raw/Benchmark/{glacier}/LVL2/{glacier}{elev_AWS}_hourly_LVL2.csv'
 
     # ========= MERRA-2 INFO =========
     start_MERRA2_data = pd.to_datetime('1980-01-01 00:30')  # First timestamp in MERRA-2 data
     end_MERRA2_data = pd.to_datetime('2025-06-30 00:30')    # Last timestamp in MERRA-2 data
-    MERRA2_filetag = glacier+'_alltime.nc'                  # False to use lat/lon indexed files, otherwise string to follow 'MERRA2_VAR_'
+    MERRA2_filetag = False                  # False to use lat/lon indexed files, otherwise string to follow 'MERRA2_VAR_'
 
     # ========= VARIABLE =========
     # Define name of variable
-    var = 'temp'                          # Name of var as referenced in PEBSI (see var_dict keys below if unsure)
+    var = 'rh'                          # Name of var as referenced in PEBSI (see var_dict keys below if unsure)
     if glacier == 'kahiltna':
         var_AWS = 'AirTemp_C_Avg'                  # Name of var in the AWS data
     else:
-        var_AWS = 'site_temp_USGS'
+        var_AWS = 'RelHum'
 
     # Define unit conversion for units of MERRA-2 and AWS data
     def MERRA2_unit_conversion(data):
@@ -91,23 +93,23 @@ for glacier in ['kahiltna','gulkana','wolverine']:
     assert os.path.exists(fn_AWS), f'AWS dataset not found at {fn_AWS}'
     # MERRA-2
     fp_MERRA = fp_base + '../climate_data/MERRA2/'             # Filepath to MERRA-2 data
-    fn_MERRA = fp_MERRA + 'VAR/MERRA2_VAR_LAT_LON.nc'       # Formattable file name for MERRA-2 variable data
+    fn_MERRA = fp_MERRA + 'LAT_LON/VAR_LAT_LON.nc'       # Formattable file name for MERRA-2 variable data
     # OUTPUT
     fn_store_quantiles = fp_base + f'data/bias_adjustment/quantile_mapping_{glacier}_VAR.csv'     # Filename to store quantiles
     fn_store_fig = fp_base + f'../Output/{glacier}_{var}_quantile_mapping.png'                                          # Filename to store figures
 
     # Get MERRA-2 elevation (gepotential)
-    ds_elev = xr.open_dataarray(fp_MERRA + 'MERRA2constants.nc4')
-    elev_MERRA2 = ds_elev.sel(lat=lat,lon=lon,method='nearest').values[0] / 9.81
+    ds_elev = xr.open_dataarray(fp_MERRA + 'MERRA2constants.nc4').sel(lat=lat,lon=lon,method='nearest')
+    elev_MERRA2 = ds_elev.values[0] / 9.81
     print(f'MERRA2 cell lies at {elev_MERRA2} m a.s.l.')
 
     # Update MERRA-2 filepath
-    flat = str(int(np.floor(lat/10)*10))        # Latitude rounded to 10 degrees to find the right file
-    flon = str(int(np.floor(lon/10)*10))        # Longitude rounded to 10 degrees to find the right file
+    flat = str(ds_elev.coords['lat'].values)     # Latitude rounded to 10 degrees to find the right file
+    flon = str(ds_elev.coords['lon'].values)[:6]        # Longitude rounded to 10 degrees to find the right file
     if not MERRA2_filetag:
         fn_MERRA = fn_MERRA.replace('LAT', str(flat)).replace('LON', str(flon))
     else:
-        fn_MERRA = fn_MERRA.replace('LAT_LON.nc', MERRA2_filetag)
+        fn_MERRA = fn_MERRA.replace('LAT_LON', MERRA2_filetag)
 
     # ======== LOAD DATA ========
     # Dictionary for each variable that may be mapped to data
@@ -141,7 +143,7 @@ for glacier in ['kahiltna','gulkana','wolverine']:
 
     # Clip MERRA-2 dataset to the right lat/lon
     if not MERRA2_filetag:
-        data_MERRA2 = data_MERRA2.sel(lat=lat,lon=lon, method='nearest')
+        data_MERRA2 = data_MERRA2 # .sel(lat=lat,lon=lon, method='nearest')
     else:
         data_MERRA2 = data_MERRA2
 
