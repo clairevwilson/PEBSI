@@ -448,11 +448,16 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
     n_rows = len(plot_vars)+1
     height_ratios = [1]*n_rows
     height_ratios[-1] = 0.1
-    fig, axes = plt.subplots(n_rows,3,figsize=(8,n_rows*1.5),
-                             gridspec_kw={'wspace':0.28, 'hspace':0.4}, 
-                             height_ratios=height_ratios)
+    fig, axes = plt.subplots(n_rows,4,figsize=(8.2,n_rows*1.5),
+                             gridspec_kw={'wspace':0.36, 'hspace':0.4}, 
+                             height_ratios=height_ratios,
+                             width_ratios=[1,0.02,1,1])
     cmaps = [mpl.colormaps.get_cmap('viridis_r'),mpl.colormaps.get_cmap('magma_r')]
     both_vars = [params['c5'],params['kp'][::2]]
+
+    # empty plots
+    for ax in axes[:, 1]:
+        ax.axis('off')
 
     # Top row is for colorbar; left column is empty
     axes[n_rows-1,0].axis('off')
@@ -474,7 +479,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             tick_locations = param_arr[::2] - 0.125
         tick_labels = [str(t) for t in labeled_ticks]
         cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-                    cax=axes[n_rows-1,j+1],
+                    cax=axes[n_rows-1,j+2],
                     orientation='horizontal',
                     boundaries=boundaries,ticks=boundaries,
                     spacing='proportional')
@@ -513,7 +518,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             axes[row_2024,0].fill_between(df_mb_daily.index,lower,upper,alpha=0.2,color='black')
 
         for j in range(2):
-            ax = axes[row_2024,j+1]
+            ax = axes[row_2024,j+2]
             param_list = both_vars[j]
             min,max = (np.min(np.array(param_list,dtype=float)),np.max(np.array(param_list,dtype=float)))
             cmap = cmaps[j]
@@ -539,7 +544,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             ds = gsproc.get_any(c5,kp,site_2024,result_dict,'2024')
             time,model,data = cumulative_mass_balance(ds,out='data')
             axes[row_2024,0].plot(time, model, color='red',label= 'Best 2024 parameters')
-            axes[row_2024,1].axhline(0,color='k',linewidth=0.5)
+            axes[row_2024,2].axhline(0,color='k',linewidth=0.5)
 
         for ax in axes[row_2024,:]:
             ax.set_xticks(pd.date_range('2024-04-20','2024-08-20',freq='MS'))
@@ -558,7 +563,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             for ax in axes[row_winter]:
                 ax.set_xlim(2001,2024)
                 ax.set_xticks([2005,2015])
-            for ax in axes[row_winter,1:]:
+            for ax in axes[row_winter,2:]:
                 ax.axhline(0,color='k',linewidth=0.5)
         if 'summer' in plot_vars:
             row_summer = plot_vars.index('summer')
@@ -568,7 +573,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             for ax in axes[row_summer]:
                 ax.set_xlim(2001,2024)
                 ax.set_xticks([2005,2015])
-            for ax in axes[row_summer,1:]:
+            for ax in axes[row_summer,2:]:
                 ax.axhline(0,color='k',linewidth=0.5)
         if 'annual' in plot_vars:
             row_annual = plot_vars.index('annual')
@@ -578,7 +583,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             for ax in axes[row_annual]:
                 ax.set_xlim(2001,2024)
                 ax.set_xticks([2005,2015])
-            for ax in axes[row_annual,1:]:
+            for ax in axes[row_annual,2:]:
                 ax.axhline(0,color='k',linewidth=0.5)
 
         for j in range(2):
@@ -594,16 +599,23 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
                     kp = value
                 if 'winter' in plot_vars:
                     diff = result_dict[c5][kp][site_long]['winter_mod'] - winter_data
-                    axes[row_winter,j+1].plot(years,diff,color=cmap(norm(i)))
-                    axes[row_winter,j+1].set_ylim(-1.5,1.5)
+                    axes[row_winter,j+2].plot(years,diff,color=cmap(norm(i)))
+                    axes[row_winter,j+2].set_ylim(-1.5,1.5)
+                    axes[row_winter,2].set_ylabel(r'$b_{w, mod} - b_{w, meas}$')
+                    axes[row_winter, 2].yaxis.label.set_position((-0.2, 0.5))
                 if 'summer' in plot_vars:
                     diff = result_dict[c5][kp][site_long]['summer_mod'] - summer_data
-                    axes[row_summer,j+1].plot(years,diff,color=cmap(norm(i)))
-                    axes[row_summer,j+1].set_ylim(-2.5,2.5)
+                    axes[row_summer,j+2].plot(years,diff,color=cmap(norm(i)))
+                    axes[row_summer,j+2].set_ylim(-2.5,2.5)
+                    axes[row_summer,2].set_ylabel(r'$b_{s, mod} - b_{s, meas}$')
+                    axes[row_summer, 2].yaxis.label.set_position((-0.2, 0.5))
                 if 'annual' in plot_vars:
                     diff = result_dict[c5][kp][site_long]['annual_mod'] - annual_data
-                    axes[row_annual,j+1].plot(years,diff,color=cmap(norm(i)))
-                    axes[row_annual,j+1].set_ylim(-1.5,1.5)
+                    axes[row_annual,j+2].plot(years,diff,color=cmap(norm(i)))
+                    axes[row_annual,j+2].set_ylim(-1.5,1.5)
+                    axes[row_annual,2].set_ylabel(r'$b_{a, mod} - b_{a, meas}$')
+                    axes[row_annual, 2].yaxis.label.set_position((-0.2, 0.5))
+                    
 
         # Best annual run
         if include_best:
@@ -631,7 +643,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             for ax in axes[row_density]:
                 ax.set_xlim(2001,2024)
                 ax.set_xticks([2005,2015])
-            for ax in axes[row_density,1:]:
+            for ax in axes[row_density,2:]:
                 ax.axhline(0,color='k',linewidth=0.5)
         if 'snowdepth' in plot_vars:
             row_depth = plot_vars.index('snowdepth')
@@ -640,7 +652,7 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
             for ax in axes[row_depth]:
                 ax.set_xlim(2001,2024)
                 ax.set_xticks([2005,2015])
-            for ax in axes[row_depth,1:]:
+            for ax in axes[row_depth,2:]:
                 ax.axhline(0,color='k',linewidth=0.5)
         for j in range(2):
             param_list = both_vars[j]
@@ -657,14 +669,18 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
                     depth_mod = result_dict[c5][kp][site_long]['snowdepth_mod']
                     depth_mod = np.array([np.mean(d) for d in depth_mod])
                     diff = depth_mod - np.array(depth_meas)
-                    axes[row_depth,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
-                    axes[row_depth,j+1].set_ylim(-2.75,2.75)
+                    axes[row_depth,j+2].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
+                    axes[row_depth,j+2].set_ylim(-2.75,2.75)
+                    axes[row_depth,2].set_ylabel(r'$h_{mod} - h_{meas}$')
+                    axes[row_depth, 2].yaxis.label.set_position((-0.2, 0.5))
                 if 'snowdensity' in plot_vars:
                     density_mod = result_dict[c5][kp][site_long]['snowdensity_mod']
                     density_mod = np.array([np.mean(d) for d in density_mod])
                     diff = density_mod - np.array(density_meas)
-                    axes[row_density,j+1].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
-                    axes[row_density,j+1].set_ylim(-275,275)
+                    axes[row_density,j+2].plot(years[idx_data],diff[idx_data],color=cmap(norm(i)),label='Modeled')
+                    axes[row_density,j+2].set_ylim(-275,275)
+                    axes[row_density,2].set_ylabel(r'$\rho_{mod} - \rho_{meas}$')
+                    axes[row_density, 2].yaxis.label.set_position((-0.2, 0.5))
 
         # Best snow density and depth
         if include_best:
@@ -679,7 +695,12 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
                 axes[row_density,0].plot(years, density_mod,color='gray')
     
     letters = [chr(i) for i in range(ord('a'),ord('z')+1)]
-    for a,ax in enumerate(axes.flatten()[:-3]):
+    axes_label = [axes[0,0], axes[0,2], axes[0, 3], 
+                  axes[1,0], axes[1,2], axes[1,3],
+                  axes[2,0], axes[2,2], axes[2,3],
+                  axes[3,0], axes[3,2], axes[3,3]]
+    # axes_label = np.concatenate([axes[:-1, 0], axes[:-1, 2], axes[:-1, 3]])
+    for a,ax in enumerate(axes_label):
         x = 0.05
         y = 0.1
         box_width = 0.1
@@ -694,17 +715,17 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
         rect = plt.Rectangle((xlim[0], ylim[0]), xlim[1]-xlim[0], ylim[1]-ylim[0],
                      linewidth=1.5, edgecolor='k', facecolor='none', zorder=7)
         ax.add_patch(rect)
+        ax.tick_params(length=5)
 
     axes[-1, 0].plot(np.nan, np.nan, color='k', linestyle='--',label='Measured')
     axes[-1, 0].plot(np.nan, np.nan, color='gray',label='Modeled')
     axes[-1, 0].legend(ncols=2, loc='center', bbox_to_anchor=(0.4,0.5), handlelength=1.5)
         
-    axes[0,1].text(0.95,0.95, f'$c_5$ varies; $k_p={best[1]}$',transform=axes[0,1].transAxes,va='top',ha='right')
-    axes[0,2].text(0.95,0.95, f'$k_p$ varies; $c_5={best[0]}$',transform=axes[0,2].transAxes,va='top',ha='right')
-    for ax in axes.flatten():
-        ax.tick_params(length=5)
-    axes[0,0].set_title('Data',fontsize=12,y=1.01)
-    fig.text(0.65,0.9,'Modeled $-$ Measured by parameter',ha='center',va='center',fontsize=12)
+    axes[0,2].text(0.95,0.95, f'$c_5$ varies; $k_p={best[1]}$',transform=axes[0,2].transAxes,va='top',ha='right')
+    axes[0,3].text(0.95,0.95, f'$k_p$ varies; $c_5={best[0]}$',transform=axes[0,3].transAxes,va='top',ha='right')
+
+    # axes[0,0].set_title('Data',fontsize=12,y=1.01)
+    # fig.text(0.65,0.9,'Modeled $-$ Measured by parameter',ha='center',va='center',fontsize=12)
     if savefig:
         plt.savefig(base_fp+f'all_tradeoffs_{plot_vars[0]}.png',dpi=350,bbox_inches='tight')
     plt.show()
