@@ -25,15 +25,13 @@ import pebsi.input as prms
 import pebsi.massbalance as mb
 from objectives import *
 
-# OPTIONS
-repeat_run = True   # True if restarting an already begun run
-# Define sets of parameters
-params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024],               # Gulkana-only grid search for paper 1
-          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
-# params = {# 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024], # 
-        #   'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3,3.25,3.5],
-        #   'lapse_rate':[-3.5,-4,-4.5,-5,-5.5,-6,-6.5,-7,-7.5,-8,-8.5]} # 
-param_1, param_2 = list(params.keys())
+# =================== INPUTS ===================
+# Define parameters for grid search
+params = {
+        # 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024],
+          'kp':[1,1.5,2,2.5,3],
+          'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
+}
 
 # Read command line args
 parser = sim.get_args(parse=False)
@@ -41,11 +39,13 @@ parser.add_argument('-run_type', default='long', type=str)
 args = parser.parse_args()
 n_processes = args.n_simultaneous_processes
 
+# =============== PARALLELIZATION ===============
 # Determine number of runs for each process
 n_runs = 1
 for param in list(params.keys()):
     n_runs *= len(params[param])
 print(f'Beginning {n_runs} model runs on {n_processes} CPUs')
+assert 1==0
 
 # Check if we need multiple (serial) runs per (parallel) set
 if n_runs <= n_processes:
@@ -55,14 +55,17 @@ else:
     n_runs_per_process = n_runs // n_processes  # Base number of runs per CPU
     n_process_with_extra = n_runs % n_processes    # Number of CPUs with one extra run
 
-# Create output directory
-if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+# Parse list for inputs to Pool function
+packed_vars = [[] for _ in range(n_processes)]
+run_no = 0  # Counter for runs added to each set
+set_no = 0  # Index for the parallel process
+
+# =================== MODEL ARGS ===================
 # Store all variables
 args.store_data = True
 prms.store_vars = ['MB','layers','temp','EB']
 
-# Force some args
+# Get timing for 2024 or long run
 if args.run_type == '2024': # Short AWS run
     args.use_AWS = True
     prms.AWS_fn = '../climate_data/AWS/Processed/gulkana2024.csv'
@@ -73,45 +76,66 @@ else: # Long MERRA-2 run
     args.use_AWS = False
     prms.store_vars = ['MB','layers','temp','EB']
     args.startdate = pd.to_datetime('2000-04-15 00:00:00')
-    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
+    args.enddate = pd.to_datetime('2025-08-20 00:00:00')
 
-if repeat_run:
-    date = '12_09' # if args.run_type == 'long' else '08_02'
-    print('Forcing run date to be', date)
-    n_today = '0'
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    if not os.path.exists(prms.output_fp + out_fp):
-        os.mkdir(prms.output_fp + out_fp)
-else:
-    date = str(pd.Timestamp.today()).replace('-','_')[5:10]
-    n_today = 0
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    while os.path.exists(prms.output_fp + out_fp):
-        n_today += 1
-        out_fp = f'{date}_{args.site}_{n_today}/'
-    os.mkdir(prms.output_fp + out_fp)
+# =================== QUANTILE MAPPING ===================
+# Find the coordinates of all the available weather stations
+all_available = ['gulkana','lemon_creek','wolverine']
+coords_available = {}
+vars_available = {}
+for glac in all_available:
+    glac_df = pd.read_csv(f'data/by_glacier/{glac}/site_constants.csv',index_col='site')
+    lat = glac_df.loc['center','lat']
+    lon = glac_df.loc['center','lon']
+    coords_available[glac] = (lat, lon)
+    vars_available[glac] = []
+    for fn in os.listdir('data/bias_adjustment/'):
+        if glac in fn:
+            var = fn.split(glac)[-1].split('_')[1].split('.')[0]
+            if var not in vars_available[glac]:
+                vars_available[glac].append(var)
 
+# Find the coordinates of the site about to be run
+meta_df = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
+run_glacier = meta_df.loc[args.glac_no]['name']
+site_df = pd.read_csv(f'data/by_glacier/{run_glacier}/site_constants.csv',index_col='site')
+run_lat, run_lon = (site_df.loc[args.site, 'lat'], site_df.loc[args.site, 'lon'])
+
+# Find the nearest available point to the run lat/lon
+pts = np.array(list(coords_available.values()))
+distances = np.hypot(pts[:, 0] - run_lat, pts[:,1] - run_lon)
+nearest_qm_glac = all_available[np.argmin(distances)]
+
+# Store in args
+args.qm_glac_name = nearest_qm_glac 
+prms.bias_vars = vars_available[nearest_qm_glac]
+
+# =================== OUTPUT ===================
+# Create output directory
+if 'trace' in prms.machine:
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+
+# Create the folder to store the data
+date = str(pd.Timestamp.today()).replace('-','_')[5:10]
+n_today = 0
+out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
+while os.path.exists(prms.output_fp + out_fp):
+    n_today += 1
+    out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
+os.mkdir(prms.output_fp + out_fp)
+
+# ============== INITIALIZE LOOP ==============
 # Transform params to strings for comparison
+param_1, param_2 = list(params.keys())
 for key in params:
     for v,value in enumerate(params[key]):
         params[key][v] = str(value)
-
-# Parse list for inputs to Pool function
-packed_vars = [[] for _ in range(n_processes)]
-run_no = 0  # Counter for runs added to each set
-set_no = 0  # Index for the parallel process
 
 # Storage for failed runs
 all_runs = []
 missing_fn = prms.output_fp + out_fp + 'missing.txt'
 
-# Dates depend on the site
-if args.run_type == 'long':
-    if args.site == 'A':
-        args.enddate = pd.to_datetime('2015-05-20 00:00:00')
-    elif args.site == 'AU':
-        args.startdate = pd.to_datetime('2012-04-20 00:00:00')
-
+# =================== CORE ===================
 # Loop through parameters
 for p1 in params[param_1]:
     for p2 in params[param_2]:
@@ -119,9 +143,9 @@ for p1 in params[param_1]:
         args_run = copy.deepcopy(args)
 
         # Set parameters MANUALLY
-        args_run.lapse_rate = -6.5
-        args_run.kp = p2
-        args_run.Boone_c5 = p1
+        args_run.lapse_rate = p2
+        args_run.kp = p1
+        args_run.Boone_c5 = '0.016'
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
@@ -131,7 +155,8 @@ for p1 in params[param_1]:
         climate_run, args_run = sim.initialize_model(args_run)
 
         # Specify attributes for output file
-        store_attrs = {'lapse_rate':-6.5, 'c5':p1,'kp':p2}
+        store_attrs = {'lapse_rate':args_run.lapse_rate, 
+                       'c5':args_run.Boone_c5,'kp':args_run.kp}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -183,11 +208,12 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,'lr =',args.lapse_rate,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(prms.output_fp + args.out + '0.nc')
     return
 
+# =================== EXECUTE ===================
 # Run model in parallel
 with Pool(n_processes) as processes_pool:
     processes_pool.map(run_model_parallel,packed_vars)
