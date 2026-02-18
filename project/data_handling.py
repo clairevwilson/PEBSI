@@ -269,32 +269,45 @@ class SnowMelt():
         df_snow = df_snow.reindex(pd.date_range(df_snow.index[0], df_snow.index[-1])).ffill()
         df_melt = df_melt.reindex(pd.date_range(df_melt.index[0], df_melt.index[-1])).ffill()
 
-        self.sar_snow = self.elevation > df_snow['snowline_elev_m']  # True when snowline is above the site
-        self.sar_melt = self.elevation > df_melt['melt_extent_elev_m']  # True when the melt extent is above the site
+        self.sar_snow = {
+            'min':self.elevation >= df_snow['snowline_elev_min_m'],  # True when the snowline is above the site
+            'max':self.elevation >= df_snow['snowline_elev_max_m'],  # (True = snow)
+            'med':self.elevation >= df_snow['snowline_elev_m'],
+        }
+
+        self.sar_melt = {
+            'min':self.elevation <= df_melt['melt_extent_elev_min_m'],  # True when the melt extent is above the site
+            'max':self.elevation <= df_melt['melt_extent_elev_max_m'],  # (True = melting)
+            'med':self.elevation <= df_melt['melt_extent_elev_m'],
+        }
         return
     
     def get_model_snow(self, ds):
         daily_snow_depth = ds['layerheight'].where(ds['layertype'] < 2).sum(dim='layer').resample(time='1d').min()
         self.mod_snow = daily_snow_depth > 0.05
 
-        daily_melt = ds['melt'].resample(time='1d').sum()
-        self.mod_melt = daily_melt > 0.01
+        # daily_melt = ds['melt'].resample(time='1d').sum()
+        # daily_surface_type = ds['layertype'].sel(layer=0).resample(time='1d').max()
+        # self.mod_melt = (daily_melt >= 0.01) & (daily_surface_type < 2)
+        daily_layer_water = ds['layerwater'].sum(dim='layer').resample(time='1d').min()
+        self.mod_melt = daily_layer_water > 0.05
 
-        mod_start = daily_melt.time.values[0]
-        mod_end = daily_melt.time.values[-1]
-        sar_start = self.sar_snow.index[0]
-        sar_end = self.sar_snow.index[-1]
+        mod_start = daily_snow_depth.time.values[0]
+        mod_end = daily_snow_depth.time.values[-1]
+        sar_start = self.sar_snow['med'].index[0]
+        sar_end = self.sar_snow['med'].index[-1]
         start = max(mod_start, sar_start)
         end = min(mod_end, sar_end)
 
-        self.sar_melt = self.sar_melt.loc[slice(start, end)].values
-        self.sar_snow = self.sar_snow.loc[slice(start, end)].values
+        for level in ['min','med','max']:
+            self.sar_melt[level] = self.sar_melt[level].loc[slice(start, end)].values
+            self.sar_snow[level] = self.sar_snow[level].loc[slice(start, end)].values
         self.mod_melt = self.mod_melt.sel(time=slice(start, end)).values
         self.mod_snow = self.mod_snow.sel(time=slice(start, end)).values
         self.time = pd.date_range(start, end, freq='1d')
 
-        assert len(self.sar_melt) == len(self.mod_melt)
-        assert len(self.sar_snow) == len(self.mod_snow)
+        assert len(self.sar_melt['med']) == len(self.mod_melt)
+        assert len(self.sar_snow['med']) == len(self.mod_snow)
         return 
     
     def transition_indices(self, arr, transition_type='any'):
@@ -358,3 +371,67 @@ class SnowMelt():
         error = timing_component + penalty_false_positive * false_positive_percent + \
                                    penalty_missed * missed_events_percent
         return error
+    
+    def plot_snow_bool(self):
+        fig, (ax, lax) = plt.subplots(2, height_ratios=(4, 1), figsize=(6, 4))
+
+        data = np.vstack([self.mod_snow, self.sar_snow['min'],
+                          self.sar_snow['med'], self.sar_snow['max']]) # 
+        time_edges = np.concatenate([self.time, self.time[-1:] + (self.time[1] - self.time[0])])
+        y_edges = np.array([0,1,1.333,1.6667,2])
+                          
+        mesh = ax.pcolormesh(
+            time_edges,
+            y_edges,
+            data,
+            cmap="gray",
+            vmin=0,
+            vmax=1,
+            shading="flat",
+        )
+
+        ax.set_yticks([0.5, 1.16667, 1.5, 1.833333])
+        ax.set_yticklabels(['Model','SAR min', 'SAR med','SAR max'])
+        ax.xaxis.set_major_formatter(mpl.dates.DateFormatter('%Y'))
+        for y in y_edges:
+            ax.axhline(y, color='k', linewidth=0.3)
+
+        lax.bar(np.nan, np.nan, color='k', label='Ice / Firn')
+        lax.bar(np.nan, np.nan, color='white', edgecolor='k', linewidth=1, label='Snow')
+        lax.legend(loc='center', bbox_to_anchor= (0.5,0.5))
+        lax.axis('off')
+
+        # ax.set_xticks([])
+        plt.show()
+
+    def plot_melt_bool(self):
+        fig, (ax, lax) = plt.subplots(2, height_ratios=(4, 1), figsize=(6, 4))
+
+        data = ~np.vstack([self.mod_melt, self.sar_melt['min'],
+                          self.sar_melt['med'], self.sar_melt['max']]) # 
+        time_edges = np.concatenate([self.time, self.time[-1:] + (self.time[1] - self.time[0])])
+        y_edges = np.array([0,1,1.333,1.6667,2])
+                          
+        mesh = ax.pcolormesh(
+            time_edges,
+            y_edges,
+            data,
+            cmap="gray",
+            vmin=0,
+            vmax=1,
+            shading="flat",
+        )
+        
+        ax.set_yticks([0.5, 1.16667, 1.5, 1.833333])
+        ax.set_yticklabels(['Model','SAR min', 'SAR med','SAR max'])
+        ax.xaxis.set_major_formatter(mpl.dates.DateFormatter('%Y'))
+        for y in y_edges:
+            ax.axhline(y, color='k', linewidth=0.3)
+
+        lax.bar(np.nan, np.nan, color='k', label='Wet snow / firn')
+        lax.bar(np.nan, np.nan, color='white', edgecolor='k', linewidth=1, label='Dry')
+        lax.legend(loc='center', bbox_to_anchor= (0.5,0.5))
+        lax.axis('off')
+
+        # ax.set_xticks([])
+        plt.show()
