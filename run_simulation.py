@@ -135,13 +135,17 @@ def get_site_table(site_df, args):
     args.aspect = site_df.loc[site]['aspect']
     args.sky_view = site_df.loc[site]['sky_view']
 
-    # snow and firn depth may be specified in the site_constants table
+    # deal with site-specific constants from site table
+    # SNOW DEPTH
     if 'snowdepth' in site_df.columns:
         if not np.isnan(site_df.loc[site,'snowdepth']):
             args.initial_snow_depth = site_df.loc[site,'snowdepth']
+
+    # FIRN DEPTH
     if 'firndepth' in site_df.columns:
         if not np.isnan(site_df.loc[site,'firndepth']):
             args.initial_firn_depth = site_df.loc[site,'firndepth']
+    # firn depth is not in the table: estimate if the site should have firn
     elif args.elev > site_df.loc['center','elevation']:
         # above median glacier elevation: initialize with firn
         args.initial_firn_depth = prms.initial_firn_depth
@@ -149,7 +153,12 @@ def get_site_table(site_df, args):
         # below median glacier elevation: no firn
         args.initial_firn_depth = 0
 
-    # Override site lat/lon/elevation with the AWS site
+    # ICE ALBEDO
+    if 'a_ice' in site_df.columns:
+        if not np.isnan(site_df.loc[site,'a_ice']):
+            args.a_ice = site_df.loc[site,'a_ice']
+
+    # if specified, override site lat/lon/elevation with the AWS site
     if args.use_AWS and prms.use_AWS_site:
         metadata_df = pd.read_csv(prms.AWS_metadata_fn, sep='\t', index_col='glacier')
         args.lat = metadata_df.loc[args.glac_name, 'latitude']
@@ -158,7 +167,7 @@ def get_site_table(site_df, args):
         if args.debug:
             print(f'~ Using AWS site: ({args.lat}, {args.lon}) at {args.elev} m a.s.l.')
 
-    # Check if initial data exists
+    # get fns for the initialization data
     initial_fns = {'temp':args.initial_temp_fn,
                    'density':args.initial_density_fn,
                    'grains':args.initial_grains_fn,
@@ -173,7 +182,7 @@ def get_site_table(site_df, args):
     args.initial_grains_fn = initial_fns['grains']
     args.initial_LAP_fn = initial_fns['LAP']
 
-    # *****Special HARD-CODED handling for Gulkana*****
+    # *****special HARD-CODED handling for Gulkana*****
     if args.glac_name == 'gulkana' and args.site != 'center':
         # set scaling albedo
         albedo_B = 0.337 # 485 in 2024, 337 in 2025
@@ -184,12 +193,12 @@ def get_site_table(site_df, args):
         args.a_ice = min(albedo_B,args.a_ice)
 
         # HARD CODING:
-        if args.site == 'AB':
-            args.a_ice = 0.2777
-        elif args.site == 'AU':
-            args.a_ice = 0.3134
-        elif args.site == 'B':
-            args.a_ice = 0.3471
+        # if args.site == 'AB':
+        #     args.a_ice = 0.2777
+        # elif args.site == 'AU':
+        #     args.a_ice = 0.3134
+        # elif args.site == 'B':
+        #     args.a_ice = 0.3471
 
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
