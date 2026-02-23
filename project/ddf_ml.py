@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib as mpl
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import statsmodels.api as sm
 import sklearn as sk
 from sklearn.model_selection import train_test_split
@@ -117,19 +118,47 @@ for glaciersite in groups:
 
     print(f'Best model for {glaciersite} uses {n_features_best}: {vars_joined}')
     
-    plt.figure()
-    plt.scatter(y_train, y_pred_train, alpha=0.8, color='#63c4c7', label='Train')
-    plt.scatter(y_test, y_pred_test, alpha=0.8, color='#BF1F6A', label='Test')
-    plt.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
-    plt.xlim(-5, 75)
-    plt.ylim(-5, 75)
-    plt.xlabel('Modeled degree-day factor')
-    plt.ylabel('Predicted degree-day factor')
-    plt.text(0.98, 0.05, f'Using {n_features_best} features\nR$^2$ (train)$=$ {r2_train:.3f}\nR$^2$ (test)$=$ {r2_test:.3f}',
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax.scatter(y_train, y_pred_train, alpha=0.8, color='#63c4c7', label='Train')
+    ax.scatter(y_test, y_pred_test, alpha=0.8, color='#BF1F6A', label='Test')
+    ax.plot([-10, 100], [-10, 100], color='k', linestyle='--', label='1:1')
+    ax.set_xlim(-5, 75)
+    ax.set_ylim(-5, 75)
+    ax.set_xlabel('Modeled degree-day factor')
+    ax.set_ylabel('Predicted degree-day factor')
+    ax.text(0.98, 0.05, f'Using {n_features_best} features\nR$^2$ (train)$=$ {r2_train:.3f}\nR$^2$ (test)$=$ {r2_test:.3f}',
              transform=plt.gca().transAxes,ha='right',va='bottom')
-    plt.title(f'Best model for {glaciersite}\n{vars_joined}')
-    plt.legend()
-    plt.savefig(base_fp + f'{glaciersite}_predictions.png', dpi=300)
+    ax.set_title(f'Best model for {glaciersite}\n{vars_joined}', y=1.1)
+    ax.legend()
+
+    bins = np.arange(0, 70, 2)
+    ax_top = inset_axes(ax, width="100%", height="10%", loc='upper center',
+                    borderpad=-2.75)
+    ax_top.sharex(ax)
+    ax_top.hist(y_train, bins=bins, color='#63c4c7',  density=True,
+                histtype='step', label='y_train')
+    ax_top.hist(y_pred_train, bins=bins, color='#BF1F6A',  density=True,
+                histtype='step', label='y_pred_train')
+    ax_top.tick_params(axis='x', labelbottom=False)
+    ax_top.set_yticks([])
+    for side in ['top','right','left']:
+        ax_top.spines[side].set_visible(False)
+
+    # --- Right histogram (y_pred_train and y_pred_test) ---
+    ax_right = inset_axes(ax, width="10%", height="100%", loc='center right',
+                        borderpad=-2.75)
+    ax_right.sharey(ax)
+    ax_right.hist(y_pred_train, bins=bins, orientation='horizontal', density=True,
+                color='#63c4c7', alpha=0.6, histtype='step')
+    ax_right.hist(y_pred_test, bins=bins, orientation='horizontal',  density=True,
+                color='#BF1F6A', histtype='step')
+    ax_right.tick_params(axis='y', labelleft=False)
+    ax_right.tick_params(axis='x', labelbottom=False)
+
+    for side in ['top','right','bottom']:
+        ax_right.spines[side].set_visible(False)
+
+    plt.savefig(base_fp + f'{glaciersite}_predictions.png', dpi=300, bbox_inches='tight')
     plt.close()
 
     if glaciersite in groups:

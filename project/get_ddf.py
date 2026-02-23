@@ -41,41 +41,45 @@ glaciers = ['gulkana','wolverine','taku','kennicott']
 include_OC = False
 
 def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
-               n_rolling_bc = 7, n_running_acc = 3):
+               n_rolling_bc = 7, n_rolling_acc = 3, n_rolling_pdds = 3):
 
     # Resample to daily
     time_res = '1d'
     daily_snow_depth = ds_in['layerheight'].where(ds_in['layertype'] < 2).sum(dim='layer').resample(time=time_res).min()
     daily_snow_temp = ds_in['layertemp'].where(ds_in['layertype'] < 2).isel(layer=slice(0,5)).min(dim='layer').resample(time=time_res).min()
-    resampled_melt = ds_in['melt'].resample({'time': time_res}).sum() * 1000
-    resampled_pdds = ds_in['airtemp'].clip(min=0).resample({'time': time_res}).mean()
-    resampled_acc = ds_in['accum'].resample({'time': time_res}).sum() * 1000
+    daily_melt = ds_in['melt'].resample({'time': time_res}).sum() * 1000
+    daily_pdds = ds_in['airtemp'].resample({'time': time_res}).mean().where(lambda x: x > 0)
+    daily_acc = ds_in['accum'].resample({'time': time_res}).sum() * 1000
+    daily_albedo = ds_in['albedo'].resample({'time': time_res}).min()
+    snow_BC = ds_in['layerBC'].where(ds_in['layertype'] < 1).isel(layer=range(5)).max(dim='layer').resample(time=time_res).max()
 
     # Days since accumulation
-    last = np.maximum.accumulate(np.where(resampled_acc > 1e-3, np.arange(len(resampled_acc)), -1))
-    days_since_acc = np.arange(len(resampled_acc)) - last
-    days_since_acc = xr.DataArray(days_since_acc, dims=['time'], coords={'time': resampled_acc.time})
+    last = np.maximum.accumulate(np.where(daily_acc > 1e-3, np.arange(len(daily_acc)), -1))
+    days_since_acc = np.arange(len(daily_acc)) - last
+    days_since_acc = xr.DataArray(days_since_acc, dims=['time'], coords={'time': daily_acc.time})
 
     # calculate rolling DDF
-    melt_rolling = resampled_melt.rolling(time=5).sum()
-    pdd_rolling = resampled_pdds.rolling(time=5).sum()
+    melt_rolling = daily_melt.rolling(time=5).sum()
+    pdd_rolling = daily_pdds.rolling(time=5).sum()
     ddf = melt_rolling / pdd_rolling
 
     # clip to reasonable bounds
     ddf = ddf.where(pdd_rolling > np.nanquantile(pdd_rolling.values, 0.2)) # avoids small PDDs in early summer
     ddf = ddf.where(np.isfinite(ddf))  # avoids nans and infinity
-    ddf = ddf.where(resampled_melt > 1) # avoids small melt days
+    ddf = ddf.where(daily_melt > 1) # avoids small melt days
     ddf = ddf.where(daily_snow_depth > 1e-8) # avoids days with ice surface
     # ddf = ddf.where(daily_snow_temp > -1) # avoids days where snow is not ripe
     
     # start to build the dataset
     ds = xr.Dataset({
-        'melt':resampled_melt,
-        'pdds':resampled_pdds,
+        'melt':daily_melt,
+        'pdds':daily_pdds,
         'ddf':ddf,
-        'accum':resampled_acc,
+        'accum':daily_acc,
         'days_since_accum':days_since_acc,
+        'snow_BC':snow_BC
         # 'snow_depth':daily_snow_depth
+        # 'albedo':daily_albedo
         })
 
     # add deposition to dataset
@@ -99,7 +103,10 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
     ds[f'bc_{n_rolling_bc}d_rolling'] = ds['bc_dep'].rolling(time=n_rolling_bc).sum()
     if include_OC:
         ds[f'oc_{n_rolling_bc}d_rolling'] = ds['oc_dep'].rolling(time=n_rolling_bc).sum()
-    ds[f'accum_{n_running_acc}d_rolling'] = ds['accum'].rolling(time=n_running_acc).sum()
+    rolling_accum = f'accum_{n_rolling_acc}d_rolling'
+    rolling_pdds = f'pdds_{n_rolling_pdds}d_rolling'
+    ds[rolling_accum] = ds['accum'].rolling(time=n_rolling_acc).sum()
+    ds[rolling_pdds] = ds['pdds'].rolling(time=n_rolling_pdds).sum()
 
     # clip to where PDDs have built up
     ds = ds.where(ds['pdds_cumsum'] > 50)
@@ -110,7 +117,7 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
 
     # rename and reorder columns
     df = df.rename(columns={'daily_snow_depth':'snow_depth'})
-    first = ['ddf','days_since_accum','accum_cumsum','accum_3d_rolling','pdds_cumsum'] # 'ddf_wBCOC', 'ddf_noBCOC', 
+    first = ['ddf','days_since_accum','accum_cumsum',rolling_accum,'pdds_cumsum',rolling_pdds] # 'ddf_wBCOC', 'ddf_noBCOC', 
     df = df[first + [c for c in df.columns if c not in first]]
 
     # crop to usable days

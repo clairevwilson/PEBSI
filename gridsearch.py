@@ -45,7 +45,6 @@ n_runs = 1
 for param in list(params.keys()):
     n_runs *= len(params[param])
 print(f'Beginning {n_runs} model runs on {n_processes} CPUs')
-assert 1==0
 
 # Check if we need multiple (serial) runs per (parallel) set
 if n_runs <= n_processes:

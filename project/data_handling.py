@@ -6,6 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
+from pyproj import Transformer
 import socket
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
@@ -331,8 +332,7 @@ class SnowMelt():
         """
         Returns a single scalar error metric combining:
         - timing error for matched events
-        - penalty for unmatched model events (false positives)
-        - penalty for missed observed events
+
         """
         # 1. Extract transitions
         mod_idx = self.transition_indices(model_bool, transition_type)
@@ -434,4 +434,122 @@ class SnowMelt():
         lax.axis('off')
 
         # ax.set_xticks([])
+        plt.show()
+
+class Albedo():
+    def __init__(self, name, site):
+        """ 
+        Grabs the timeseries of data to
+        compare a model run.
+
+        Parameters
+        name : str
+            Glacier name
+        site : str
+            Site name
+        """
+        # store input attributes
+        self.name = name
+        self.site = site 
+
+        # get RGI7 glacier ID number
+        glac_no = translate_rgi[name]
+        self.glac_no = glac_no
+
+        # open dataframes
+        metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
+        glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
+        self.albedo_fp = base_fp + '../../rs/albedo/'
+
+        # find the site location lat/lon
+        site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')
+        self.lat = site_df.loc[site, 'lat']
+        self.lon = site_df.loc[site, 'lon']
+
+        # grab the data
+        self.get_point_albedo()
+        
+        # ensure everything is in array format
+        self.time = np.array(pd.to_datetime(self.time))
+        self.data = np.array(self.data)
+        return
+    
+    def get_point_albedo(self):
+        # get filename for this glac_no
+        albedo_fn = self.albedo_fp + f'data_cube_{self.glac_no[3:]}.nc'
+
+        # open the dataset and get the proper CRS
+        ds = xr.open_dataset(albedo_fn)
+        crs = ds.spatial_ref.attrs['crs_wkt']
+        epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
+
+        ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True)
+        self.ds = ds
+
+        # select the point on the glacier 
+        proj = Transformer.from_crs('EPSG:4326', f'EPSG:{epsg}', always_xy=True)
+        x, y = proj.transform(self.lon, self.lat)
+        da = ds.sel(x=x,y=y, method='nearest')
+        distance = np.sqrt(np.square(da.x.values - x) + np.square(da.y.values - y))
+        assert distance < 100, 'Point selected is more than 100 m away'
+        self.da = da
+        
+        # get the data and timeseries
+        da = da.dropna(dim='time')
+        self.time = self.da.time.values
+        self.data = self.da.values
+
+    def get_model_albedo(self, ds):
+        valid_steps = np.where((self.time >= ds.time.values[0]) & 
+                                 (self.time <= ds.time.values[-1]))[0]
+        
+        if len(valid_steps) == 0:
+            self.mod = np.nan 
+            self.meas = np.nan
+            return
+        
+        self.data = self.data[valid_steps]
+        self.time = self.time[valid_steps]
+        self.mod = ds.sel(time=self.time, method='nearest').albedo.values
+        self.meas = self.data
+        return
+
+    def mae(self):
+        return np.nanmean(np.abs(self.mod - self.meas))
+    
+    def bias(self):
+        return np.nanmean(self.mod - self.meas)
+    
+    def rmse(self):
+        return np.sqrt(np.nanmean(np.square(self.mod - self.meas)))
+
+    def plot_map(self, time='mean'):
+        # grab the dataarray
+        if time == 'mean':
+            da = self.ds.mean(dim='time')
+        else:
+            da = self.ds.sel(time=time, method='nearest')
+
+        fig, ax = plt.subplots(figsize=(6, 5))
+        da.plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
+        ax.set_aspect('equal')
+        plt.show()
+    
+    def plot_timeseries(self):
+        years = np.unique(pd.to_datetime(self.time).year)
+        cmap = mpl.cm.get_cmap('viridis')
+        norm = mpl.colors.Normalize(vmin=min(years),vmax=max(years))
+
+        fig, ax = plt.subplots()
+        ax.plot(np.nan, np.nan, linestyle='--', marker='.', color='gray', label='Observed')
+        ax.plot(np.nan, np.nan, marker='.', color='gray', label='Modeled')
+        for year in years:
+            idx = np.where(pd.to_datetime(self.time).year == year)[0]
+            doy = pd.to_datetime(self.time[idx]).day_of_year
+            ax.plot(doy, self.meas[idx], linestyle='--', marker='.', color=cmap(norm(year)))
+            ax.plot(doy, self.mod[idx], marker='.', color=cmap(norm(year)), label=str(year))
+        ax.set_ylabel('Albedo [-]')
+        ax.set_xlabel('Day of year')
+        ax.legend()
+        ax.set_title(f'{self.name} {self.site}')
         plt.show()
