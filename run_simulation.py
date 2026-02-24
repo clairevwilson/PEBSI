@@ -89,6 +89,8 @@ def get_args(parse=True):
                         help='Bare ice albedo')
     parser.add_argument('-lapse_rate',default=prms.lapserate,action='store',type=float,
                         help='Temperature lapse rate [K km-1]')
+    parser.add_argument('-ksp_BC',default=prms.ksp_BC,action='store',type=float,
+                        help='Meltwater partition coefficient for BC/OC')
     
     # FILEPATHS
     parser.add_argument('-initial_temp_fn',default=prms.initial_temp_fn,type=str,
