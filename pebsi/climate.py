@@ -81,8 +81,8 @@ class Climate():
         # find elevation of temperature data
         if 'temp' in prms.bias_vars:
             qm_print = f'Add {args.qm_glac_name} AWS elevation to station_elevation in input.py'
-            assert args.qm_glac_name in prms.station_elevation, qm_print                
-            self.temp_elev = prms.station_elevation[args.qm_glac_name]
+            assert self.mapping_glacier in prms.station_elevation, qm_print                
+            self.temp_elev = prms.station_elevation[self.mapping_glacier]
 
         # check if storing the cds
         self.store_cds = prms.store_climate 
