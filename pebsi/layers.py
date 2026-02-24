@@ -210,8 +210,7 @@ class Layers():
         elif prms.initialize_temp == 'ripe':
             ltemp = np.ones(self.nlayers)*0
         else:
-            print('Choose between ripe and interpolate in initialize_temp')
-            self.exit()
+            raise prms.ConfigError('Invalid configuration: initialize_temp')
         
         # GRAIN SIZE [um]
         lgrainsize = np.interp(self.ldepth,grainsize_data['depth'],
@@ -235,8 +234,7 @@ class Layers():
         elif prms.initialize_density == 'constant':
             ldensity = np.ones_like(snow_idx) * prms.density_snow
         else:
-            print('Choose between constant and interpolate in initialize_density')
-            self.exit()
+            raise prms.ConfigError('Invalid configuration: initialize_density')
             
         # append firn and ice layer densities
         for (type,depth) in zip(self.ltype,self.ldepth):
@@ -253,8 +251,7 @@ class Layers():
             porosity = 1 - ldensity / prms.density_ice
             lwater = porosity * prms.Sr * self.lheight * prms.density_water
         else:
-            print('Choose between dry and saturated in initialize_water')
-            self.exit()
+            raise prms.ConfigError('Invalid configuration: initialize_water')
 
         return ltemp,ldensity,lwater,lgrainsize
     
@@ -302,8 +299,7 @@ class Layers():
             lOC = cOC * lheight
             ldust = cdust * lheight
         else:
-            print('Choose between clean and interpolate in initialize_LAPs')
-            self.exit()
+            raise prms.ConfigError('Invalid configuration: initialize_LAPs')
         lBC[self.ice_idx] = 0
         lOC[self.ice_idx] = 0
         ldust[self.ice_idx] = 0
@@ -394,8 +390,7 @@ class Layers():
             Index of the layer to split
         """
         if (self.nlayers+1) > prms.max_nlayers and 'layers' in prms.store_vars:
-            print(f'Need bigger max_nlayers: currently have {self.nlayers+1} layers')
-            self.exit()
+            raise prms.ConfigError('Too many layers: increase max_nlayers')
         l = layer_to_split
         self.nlayers += 1
         self.ltemp = np.insert(self.ltemp,l,self.ltemp[l])
@@ -691,10 +686,3 @@ class Layers():
         year_duration = (end_of_year - start_of_year).total_seconds()
         fractional_seconds = year_fraction * year_duration
         return start_of_year + pd.to_timedelta(fractional_seconds, unit='s')
-    
-    def exit(self):
-        if self.args.debug:
-            print('Failed in layers')
-            print('Layer temperature:',self.ltemp)
-            print('Layer density:',self.ldensity)
-        sys.exit()

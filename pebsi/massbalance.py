@@ -199,7 +199,10 @@ class massBalance():
                 self.current_state_prints()
 
             # check if we still have a glacier before next timestep
-            self.check_glacier_exists()
+            no_glacier = self.check_glacier_exists()
+            if no_glacier:
+                # end simulation cleanly
+                return
 
         # ===== COMPLETED SIMULATION: STORE DATA =====
         self.store_simulation()
@@ -1508,8 +1511,8 @@ class massBalance():
         the run and saves the output.
         """
         # load layer height
-        layerheight = np.sum(self.layers.lheight)
-        if layerheight < prms.min_glacier_depth:
+        total_height = np.sum(self.layers.lheight)
+        if total_height < prms.min_glacier_depth:
             # new end date
             start = self.time_list[0]
             end = self.time
@@ -1527,11 +1530,14 @@ class massBalance():
             # save the data
             if self.args.store_data:
                 self.output.store_data()
-            print('Glacier fully melted in',self.args.out)
+            print(f'Glacier fully melted on {self.time} in {self.args.out}')
+
+            # delete temporary files
+            self.delete_temp_files()
             
-            # end the run
-            self.exit(failed=False)
-        return
+            return True # no glacier remaining
+        else:
+            return False # still glacier
     
     def store_simulation(self):
         """
@@ -1567,25 +1573,6 @@ class massBalance():
         if os.path.exists(self.surface.ice_spectrum_fn):
             os.remove(self.surface.ice_spectrum_fn)
         return
-
-    def exit(self,failed=True):
-        """
-        Exit function. Default usage sends an error 
-        message if debug is on. Otherwise, exits the run.
-
-        Parameters
-        ==========
-        failed : Bool
-            If True, prints some layer properties for
-            debugging. Else, ends the run with no prints.
-        """
-        self.delete_temp_files()
-        if self.args.debug and failed:
-            print('Failed in mass balance')
-            print('Current layers',self.ltype)
-            print('Layer temp:',self.ltemp)
-            print('Layer density:',self.ldensity)
-        sys.exit()    
 
 class Output():
     """
@@ -1871,8 +1858,7 @@ class Output():
 
                 else:
                     n = len(layertemp_output.columns)
-                    print(f'Need to increase max_nlayers: currently have {n} layers')
-                    self.exit()
+                    assert 1==0, f'Need to increase max_nlayers: currently have {n} layers'
 
                 ds['layertemp'].values = layertemp_output
                 ds['layerheight'].values = layerheight_output

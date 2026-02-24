@@ -228,3 +228,9 @@ start_end_summer = 228      # Julian day of year to start checking for end of su
 new_snow_threshold = 0.02   # Threshold for new snow to consider the start of winter [m w.e.]
 new_snow_days = 10          # Number of days to sum snow over and compare against threshold [d]
 firn_age = 60               # Number of days old a snow layer has to be to turn it into firn [d]
+
+# ========== EXCEPTIONS ==========
+class ConfigError(Exception):
+    """Raised when an expected crash ends
+    the simulation."""
+    pass

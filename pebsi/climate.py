@@ -356,8 +356,8 @@ class Climate():
 
         # print any missing data
         if len(failed) > 0:
-            print('Missing data from',failed)
-            self.exit()
+            failed_str = ', '.join(failed)
+            raise prms.ConfigError(f'Climate missing data from {failed_str}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
@@ -451,7 +451,7 @@ class Climate():
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
                 print('Make a manual change in check_units (climate.py)')
-                self.exit()
+                raise prms.ConfigError('Unit mismatch')
         return ds
 
     def store(self):
@@ -857,6 +857,3 @@ class Climate():
             self.var_dict['ocdry']['fn'] = f'./../../MERRA2/{tag}/OCDP002_{tag}.nc'
             self.var_dict['dustwet']['fn'] = f'./../../MERRA2/{tag}/DUWT003_{tag}.nc'
             self.var_dict['dustdry']['fn'] = f'./../../MERRA2/{tag}/DUDP003_{tag}.nc'
-
-    def exit(self):
-        sys.exit()
