@@ -115,7 +115,7 @@ band_indices = {}           # dictionary for storing spectral albedo
 for i in np.arange(0,480):
     band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
-grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA)))
+grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA))).load()
 
 # ========== PARAMETERS and CONSTANTS ==========
 # <<<<<< Climate downscaling >>>>>>

@@ -29,8 +29,9 @@ from objectives import *
 # Define parameters for grid search
 params = {
         # 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024],
-          'kp':[1,1.5,2,2.5,3],
-          'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
+            'kp':[1,1.5,2,2.5,3],
+        #   'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
+            'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1]
 }
 
 # Read command line args
@@ -142,7 +143,8 @@ for p1 in params[param_1]:
         args_run = copy.deepcopy(args)
 
         # Set parameters MANUALLY
-        args_run.lapse_rate = p2
+        args_run.lapse_rate = '-6.5' # p2
+        args_run.ksp_BC = p2
         args_run.kp = p1
         args_run.Boone_c5 = '0.016'
 
@@ -207,7 +209,7 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,'lr =',args.lapse_rate,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with ksp =',args.ksp_BC,'kp =',args.kp,'lr =',args.lapse_rate,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(prms.output_fp + args.out + '0.nc')
     return

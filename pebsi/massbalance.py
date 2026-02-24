@@ -836,10 +836,10 @@ class massBalance():
         enbal = self.enbal
 
         # CONSTANTS
-        PARTITION_COEF_BC = self.args.ksp_BC
+        PARTITION_COEF_BC = float(self.args.ksp_BC)
         if self.args.ksp_BC != prms.ksp_BC:
             # if ksp_BC was specified in args, treat OC the same way
-            PARTITION_COEF_OC = self.args.ksp_BC
+            PARTITION_COEF_OC = float(self.args.ksp_BC)
         else:
             # otherwise use default ksp_OC
             PARTITION_COEF_OC = prms.ksp_OC
