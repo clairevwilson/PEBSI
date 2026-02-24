@@ -144,9 +144,8 @@ def get_site_table(site_df, args):
             args.initial_snow_depth = site_df.loc[site,'snowdepth']
 
     # FIRN DEPTH
-    if 'firndepth' in site_df.columns:
-        if not np.isnan(site_df.loc[site,'firndepth']):
-            args.initial_firn_depth = site_df.loc[site,'firndepth']
+    if 'firndepth' in site_df.columns and ~np.isnan(site_df.loc[site,'firndepth']):
+        args.initial_firn_depth = site_df.loc[site,'firndepth']
     # firn depth is not in the table: estimate if the site should have firn
     elif args.elev > site_df.loc['center','elevation']:
         # above median glacier elevation: initialize with firn

@@ -1711,7 +1711,7 @@ class Output():
         self.layerrefreeze_output = dict()  # layer refreeze [kg m-2]
         self.layerage_output = dict()       # layer age [datetime]
         self.layertype_output = dict()      # layer type [-]
-        self.last_height = prms.initial_ice_depth+prms.initial_firn_depth+prms.initial_snow_depth
+        self.last_height = prms.initial_ice_depth+args.initial_firn_depth+args.initial_snow_depth
         return
     
     def store_timestep(self,massbal,enbal,surface,layers,step):
