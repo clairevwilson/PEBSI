@@ -10,6 +10,7 @@ in an hourly time loop.
 # Built-in libraries
 import os, sys
 import time
+from tqdm import tqdm
 # External libraries
 import numpy as np
 import pandas as pd
@@ -82,7 +83,7 @@ class massBalance():
         DENSITY_WATER = prms.density_water
 
         # ===== ENTER TIME LOOP =====
-        for time in self.time_list:
+        for time in self.iterable(self.time_list, desc='Main loop'):
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
             self.timer.update()
@@ -495,13 +496,10 @@ class massBalance():
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # cap runaway wet metamorphosis
-            drwet[drwet > 200] = 200
+            # drwet[drwet > 200] = 200
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
-            # if self.time > pd.to_datetime('2024-0'6-01'):
-            #     print(self.time, 'YES aged',aged_grainsize[:3]', 'wet',drwet[:3], 'rfz',f_rfz[:3])
-            # assert self.time < pd.to_datetime('2024-06-20')
                       
             # sum contributions of snow and refreeze
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
@@ -1573,6 +1571,9 @@ class massBalance():
         if os.path.exists(self.surface.ice_spectrum_fn):
             os.remove(self.surface.ice_spectrum_fn)
         return
+
+    def iterable(self, iterable, **kwargs):
+        return tqdm(iterable, **kwargs) if self.args.progress_bar else iterable
 
 class Output():
     """

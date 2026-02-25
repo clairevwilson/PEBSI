@@ -67,8 +67,10 @@ def get_args(parse=True):
                         default=prms.store_data, help='store the model output?')
     parser.add_argument('-debug', action='store_true',
                         default=prms.debug, help='print debug statements?')
+    parser.add_argument('-pb','--progress_bar', action='store_true',
+                        help='show progress bar for main loop?')
     parser.add_argument('-out',action='store',type=str,default='',
-                        help='output file name excluding extension (.nc)')
+                        help='output file name excluding extension')
     parser.add_argument('-qm_glac_name',action='store',type=str,default='',
                         help='glacier for quantile mapping climate data')
     
