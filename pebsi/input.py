@@ -60,7 +60,7 @@ station_elevation = {                       # Elevation of the station used in t
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['wind']     # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
+bias_vars = ['temp']                              # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
@@ -95,7 +95,7 @@ option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
-constant_freshgrainsize = 54.5          # False or grain size [um] (Kuipers Munneke (2011): 54.5)
+constant_freshgrainsize = False          # False or grain size [um] (Kuipers Munneke (2011): 54.5)
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
 
 # ALBEDO SWITCHES
@@ -122,10 +122,11 @@ grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA))).load()
 sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
-precgrads = {'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
+precgrads = {} # 'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
 precgrad = 0                # Precipitation gradient with elevation [% m-1] 
 lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
+albedo_firn = 0.4           # Albedo of firn [-]
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
 wind_ref_height = 10 if reanalysis in ['ERA5-hourly'] else 2  # Reference height for wind speed [m]
@@ -158,11 +159,11 @@ Lv_evap = 2514000           # latent heat of evaporation [J kg-1]
 Lv_sub = 2849000            # latent heat of sublimation [J kg-1]
 Lh_rf = 333550              # Latent heat of fusion of ice [J kg-1]
 viscosity_snow = 3.7e7      # Viscosity of snow [Pa-s]
-firn_grainsize = 2000       # Grain size of firn [um]
+firn_grainsize = 5000       # Grain size of firn [um]
 rfz_grainsize = 1500        # Grain size of refrozen snow [um]
 ice_grainsize = 5000        # Grain size of ice [um] (placeholder; unused)
 frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow [-] 
-frac_absrad_ice = 1       # Fraction of shortwave absorbed radiation for ice/firn [-] 
+frac_absrad_ice = 1         # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]
 extinct_coef_ice = 2.5      # Extinction coefficient for ice/firn [-]
 # <<<<<< Universal constants >>>>>>
@@ -192,8 +193,8 @@ roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
 wet_snow_C = 4.22e-13       # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.033                  # Fraction of irreducible water content for percolation [-]
-Sr_dense = 0.033             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
-Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
+Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
+Sr_light = 0.12            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
 albedo_ground = 0.2         # Albedo of ground [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
@@ -204,7 +205,6 @@ grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koc
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
 average_grainsize = 300     # Grainsize to treat as constant if switch_melt is 0 [um]
 albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
-albedo_firn = 0.5           # Albedo of firn [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
 ksp_BC = 1                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
