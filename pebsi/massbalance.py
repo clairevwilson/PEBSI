@@ -713,7 +713,7 @@ class massBalance():
         # CONSTANTS
         DENSITY_WATER = prms.density_water
         DENSITY_ICE = prms.density_ice
-        FRAC_IRREDUC = prms.Sr
+        FRAC_IRREDUC = float(self.args.Sr)
 
         # get index of percolating (snow/firn) layers
         snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
@@ -768,10 +768,10 @@ class massBalance():
                 q_in = q_out
 
                 # irreducible water content depends on density
-                if layers.ldensity[layer] > 500:
-                    FRAC_IRREDUC = prms.Sr_dense
-                else:
-                    FRAC_IRREDUC = prms.Sr_light
+                # if layers.ldensity[layer] > 500:
+                #     FRAC_IRREDUC = prms.Sr_dense
+                # else:
+                #     FRAC_IRREDUC = prms.Sr_light
                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
 
                 # calculate flow out of layer i
