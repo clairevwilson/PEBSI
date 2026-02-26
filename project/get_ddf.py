@@ -77,9 +77,9 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
         'ddf':ddf,
         'accum':daily_acc,
         'days_since_accum':days_since_acc,
-        'snow_BC':snow_BC
+        'snow_BC':snow_BC,
         # 'snow_depth':daily_snow_depth
-        # 'albedo':daily_albedo
+        'albedo':daily_albedo
         })
 
     # add deposition to dataset
@@ -88,7 +88,7 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
         ds['oc_dep'] = ds_oc.resample(time=time_res).sum()
 
     # define variables to drop and to take cumsum
-    drop_vars = ['lat','lon','melt']
+    drop_vars = ['lat','lon'] # ,'melt'
     cum_vars = ['bc_dep','accum','pdds']
     if include_OC:
         cum_vars += ['oc_dep']

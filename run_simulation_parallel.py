@@ -22,14 +22,14 @@ n_runs_ahead = 0    # Step if you're going to run this script more than once
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2000-04-20 00:00'
+args.startdate = '2010-04-20 00:00'
 args.enddate = '2025-08-20 00:00'
 args.use_AWS = False
 
-args.kp = 2
+args.kp = 1
 
 # sites to run in parallel
-glac_nos = ['01.01104','01.01390'] # '01.22193', '01.15645','01.09162',
+glac_nos = ['01.01104','01.01390','01.22193', '01.15645','01.09162', '01.00570'] # '01.22193', '01.15645','01.09162',
 site_dict = {
     '01.22193':['K17b','K14k','K53'], # KAHILTNA     'KPS',
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT
@@ -44,8 +44,7 @@ site_dict = {
 }
  
 # Probably do not edit
-args.store_data = True
-# print('! not storing')              # Ensures output is stored
+args.store_data = True             # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
@@ -63,6 +62,11 @@ def pack_vars():
         args_glac.glac_no = glac_no
         sites = site_dict[args_glac.glac_no]
 
+        if glac_no == '01.01390':
+            args_glac.qm_glac_name = 'lemon_creek'
+        elif glac_no == '01.15645':
+            args_glac.qm_glac_name = 'gulkana'
+
         for site in sites:
             # Get current site args
             args_run = copy.deepcopy(args_glac)
@@ -71,7 +75,7 @@ def pack_vars():
             # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_base_qmlemonwindkp{args_run.kp}_' # run_date
+            args_run.out = f'{glac}{site}_{run_date}_base_' # run_date
 
             # Store model parameters
             store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),

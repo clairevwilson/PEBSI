@@ -75,8 +75,8 @@ class MassBalance():
                                  (self.period_ends <= ds.time.values[-1]))[0]
         
         if len(valid_periods) == 0:
-            self.mod = np.nan 
-            self.meas = np.nan
+            self.mod = [np.nan ]
+            self.meas = [np.nan]
             return
         
         self.period_starts = self.period_starts[valid_periods]
@@ -85,19 +85,38 @@ class MassBalance():
 
         mod = []
         for start, end in zip(self.period_starts, self.period_ends):
+            if 'MB' not in ds.variables:
+                MB = ds['accum'] + ds['refreeze'] - ds['melt']
+                ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
             mb_mod = ds.sel(time=slice(start, end)).MB.sum()
             mod.append(mb_mod)
         mod = np.array(mod)
 
+        if self.dataset == 'seasonal':
+            switch_idx = np.where(np.diff(self.period_starts) < pd.Timedelta(days=0))[0][0] + 1
+            self.idx_summer = range(switch_idx)
+            self.idx_winter = range(switch_idx, len(self.period_starts))
+
         self.mod = mod 
         self.meas = meas
+        assert len(mod) == len(meas)
         return
 
-    def mae(self):
-        return np.mean(np.abs(self.mod - self.meas))
+    def mae(self, seasonal=False):
+        if not seasonal:
+            return np.mean(np.abs(self.mod - self.meas))
+        else:
+            summer = np.mean(np.abs(self.mod[self.idx_summer] - self.meas[self.idx_summer]))
+            winter = np.mean(np.abs(self.mod[self.idx_winter] - self.meas[self.idx_winter]))
+            return summer, winter
     
-    def rmse(self):
-        return np.sqrt(np.mean(np.square(self.mod - self.meas)))
+    def rmse(self, seasonal=False):
+        if not seasonal:
+            return np.sqrt(np.mean(np.square(self.mod - self.meas)))
+        else:
+            summer = np.sqrt(np.mean(np.square(self.mod[self.idx_summer] - self.meas[self.idx_summer])))
+            winter = np.sqrt(np.mean(np.square(self.mod[self.idx_winter] - self.meas[self.idx_winter])))
+            return summer, winter
     
     def get_wgms_data(self, wgms_df):
         # WGMS glacier
@@ -112,7 +131,7 @@ class MassBalance():
         self.elevation = self.df['elevation'].mean()
         return
 
-    def get_benchmark_data(self, benchmark_fp, min_n_winter = 5):
+    def get_benchmark_data(self, benchmark_fp, min_n_winter = 3):
         # BENCHMARK glacier
         name_parts = [f.capitalize() for f in self.name.split('_')]
         name_fmtd = ''
@@ -173,9 +192,23 @@ class MassBalance():
 
         else:
             # sufficient winter data to separate winter and summer periods
-            index_data = np.where((~np.isnan(df['ba'])) & (~np.isnan(df['bw'])))[0][1:]
+            index_data = np.where((~np.isnan(df['ba'])) & (~np.isnan(df['bw'])))[0]
             df_mb = df.iloc[index_data]
-            df_last = df.iloc[index_data - 1]
+            if index_data[0] == 0:
+                year_0 = df_mb.iloc[0]['Year'] - 1
+                if year_0 in df['Year']:
+                    first_last = df.loc[df['Year'] == year_0]
+                    df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
+                elif year_0 in dates:
+                    first_last = df_mb.iloc[[0]].copy()
+                    first_last.iloc[0, :] = np.nan
+                    first_last.loc[first_last.index[0], 'fall_date'] = dates[year_0][1]
+                    df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
+                else:
+                    df_last = df.iloc[index_data[1:] - 1]
+                    df_mb = df.iloc[index_data[1:]]
+            else:
+                df_last = df.iloc[index_data - 1]
 
             # pull out winter ablation/summer accumulation
             this_winter_abl = df_mb['winter_ablation'].values
@@ -193,16 +226,16 @@ class MassBalance():
                                         ~np.isnan(summer_ends)))[0]
 
             # winter periods
-            winter_starts = pd.to_datetime(df_last['fall_date'].values)
-            winter_ends = pd.to_datetime(df_mb['spring_date'].values)
+            winter_starts = pd.to_datetime(df_last['fall_date'].values, format='mixed')
+            winter_ends = pd.to_datetime(df_mb['spring_date'].values, format='mixed')
             winter_data = df_mb['bw'].values - past_summer_acc + this_winter_abl
             no_winter_nans = np.where((~np.isnan(winter_starts) &
                                         ~np.isnan(winter_ends)))[0]
 
-            self.period_starts = np.append(summer_starts[no_summer_nans],
-                                            winter_starts[no_winter_nans])
-            self.period_ends = np.append(summer_ends[no_summer_nans],
-                                            winter_ends[no_winter_nans])
+            self.period_starts = pd.to_datetime(np.append(summer_starts[no_summer_nans],
+                                            winter_starts[no_winter_nans]))
+            self.period_ends = pd.to_datetime(np.append(summer_ends[no_summer_nans],
+                                            winter_ends[no_winter_nans]))
             self.data = np.append(summer_data[no_summer_nans],
                                     winter_data[no_winter_nans])
             self.n_summer = len(summer_starts[no_summer_nans])
@@ -226,9 +259,8 @@ class MassBalance():
         meas = self.meas
 
         if self.dataset == 'seasonal':
-            switch_idx = np.where(np.diff(starts) < pd.Timedelta(days=0))[0][0] + 1
-            idx_summer = range(switch_idx)
-            idx_winter = range(switch_idx, len(starts))
+            idx_summer = self.idx_summer 
+            idx_winter = self.idx_winter
 
             ax.plot(ends[idx_summer], mod[idx_summer], color=colors[4])
             ax.plot(ends[idx_summer], meas[idx_summer], color='k', linestyle='--')
@@ -240,6 +272,7 @@ class MassBalance():
 
         ax.plot(np.nan, np.nan, color=colors[0], label='Modeled')
         ax.plot(np.nan, np.nan, color='k', linestyle='--', label='Measured')
+        ax.set_title(f'{self.name} {self.site} {self.dataset} mass balance')
         ax.legend()
         return fig, ax
 
@@ -462,9 +495,9 @@ class Albedo():
         self.albedo_fp = base_fp + '../../rs/albedo/'
 
         # find the site location lat/lon
-        site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')
-        self.lat = site_df.loc[site, 'lat']
-        self.lon = site_df.loc[site, 'lon']
+        self.site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')
+        self.lat = self.site_df.loc[site, 'lat']
+        self.lon = self.site_df.loc[site, 'lon']
 
         # grab the data
         self.get_point_albedo()
@@ -481,13 +514,13 @@ class Albedo():
         # open the dataset and get the proper CRS
         ds = xr.open_dataset(albedo_fn)
         crs = ds.spatial_ref.attrs['crs_wkt']
-        epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
+        self.epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
 
         ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True)
         self.ds = ds
 
         # select the point on the glacier 
-        proj = Transformer.from_crs('EPSG:4326', f'EPSG:{epsg}', always_xy=True)
+        proj = Transformer.from_crs('EPSG:4326', f'EPSG:{self.epsg}', always_xy=True)
         x, y = proj.transform(self.lon, self.lat)
         da = ds.sel(x=x,y=y, method='nearest')
         distance = np.sqrt(np.square(da.x.values - x) + np.square(da.y.values - y))
@@ -498,6 +531,7 @@ class Albedo():
         da = da.dropna(dim='time')
         self.time = self.da.time.values
         self.data = self.da.values
+        return
 
     def get_model_albedo(self, ds):
         valid_steps = np.where((self.time >= ds.time.values[0]) & 
@@ -523,16 +557,68 @@ class Albedo():
     def rmse(self):
         return np.sqrt(np.nanmean(np.square(self.mod - self.meas)))
 
-    def plot_map(self, time='mean'):
+    def plot_map(self, time='mean', full=False, savefig=False,
+                plot_sites = []):
+        ds = self.ds
+        ds = ds.squeeze('band')
+
         # grab the dataarray
         if time == 'mean':
-            da = self.ds.mean(dim='time')
+            da = ds.mean(dim='time')
         else:
-            da = self.ds.sel(time=time, method='nearest')
+            if full:
+                valid_count = ds.notnull().sum(dim=('x','y'))
+                max_count = valid_count.max().values
+                threshold = 0.9
+
+                # identify time steps that meet the requirement
+                good_times = valid_count / max_count >= threshold
+
+                # extract the subset of times that pass the filter
+                filtered_times = ds.time.where(good_times, drop=True)
+
+                # now select nearest *among the filtered times*
+                da = ds.sel(time=filtered_times.sel(time=time, method="nearest"))
+
+            else:
+                da = self.ds.sel(time=time, method='nearest')
 
         fig, ax = plt.subplots(figsize=(6, 5))
+        rect = mpl.patches.Rectangle(
+            (0, 0), 1, 1,
+            transform=ax.transAxes,
+            facecolor='none',
+            edgecolor='darkgray',
+            hatch='///',
+            linewidth=0
+        )
+        ax.add_patch(rect)
+        
         da.plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
+
+        for site in plot_sites:
+            lat = self.site_df.loc[site, 'lat']
+            lon = self.site_df.loc[site, 'lon']
+            proj = Transformer.from_crs('EPSG:4326', f'EPSG:{self.epsg}', always_xy=True)
+            x, y = proj.transform(lon, lat)
+            xrange = ax.get_xlim()[1] - ax.get_xlim()[0]
+            yrange = ax.get_ylim()[1] - ax.get_ylim()[0]
+            ax.scatter(x, y, color='r', s=50, marker='+') # , facecolor=None)
+            ax.text(x + xrange*0.02, y + yrange*0.02, site, c='r',
+                            bbox=dict(facecolor='white', edgecolor='none',
+                                      pad=1, alpha=0.8))
+        
         ax.set_aspect('equal')
+        if time == 'mean':
+            time_fmtd = 'time mean'
+        else:
+            time_fmtd = pd.to_datetime(da.time.values).strftime('%d %b %Y')
+        ax.set_title(f'{self.name.capitalize()} Glacier ({time_fmtd})')
+
+        if savefig:
+            time_fmtd = time_fmtd.replace(' ','-')
+            plt.savefig(base_fp + f'{self.name}_{time_fmtd}.png', dpi=300, bbox_inches='tight')
+
         plt.show()
     
     def plot_timeseries(self):
