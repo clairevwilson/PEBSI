@@ -60,7 +60,7 @@ station_elevation = {                       # Elevation of the station used in t
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['temp']                              # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
+bias_vars = ['temp']                 # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
@@ -194,7 +194,7 @@ roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0
 wet_snow_C = 4.22e-13       # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.033                  # Fraction of irreducible water content for percolation [-]
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
-Sr_light = 0.12            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
+Sr_light = 0.12             # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
 albedo_ground = 0.2         # Albedo of ground [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 

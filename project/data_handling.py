@@ -117,6 +117,14 @@ class MassBalance():
             summer = np.sqrt(np.mean(np.square(self.mod[self.idx_summer] - self.meas[self.idx_summer])))
             winter = np.sqrt(np.mean(np.square(self.mod[self.idx_winter] - self.meas[self.idx_winter])))
             return summer, winter
+        
+    def bias(self, seasonal=False):
+        if not seasonal:
+            return np.nanmean(np.square(self.mod - self.meas))
+        else:
+            summer = np.nanmean(self.mod[self.idx_summer] - self.meas[self.idx_summer])
+            winter = np.nanmean(self.mod[self.idx_winter] - self.meas[self.idx_winter])
+            return summer, winter
     
     def get_wgms_data(self, wgms_df):
         # WGMS glacier
