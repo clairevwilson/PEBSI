@@ -29,9 +29,10 @@ from objectives import *
 # Define parameters for grid search
 params = {
         # 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024],
-            'kp':[1,1.5,2,2.5,3],
+            # 'kp':[1,1.5,2,2.5,3],
         #   'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
-            'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1]
+            'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1],
+            'Sr':[0.03,0.05,0.08,0.1,0.15],
 }
 
 # Read command line args
@@ -108,7 +109,14 @@ nearest_qm_glac = all_available[np.argmin(distances)]
 
 # Store in args
 args.qm_glac_name = nearest_qm_glac 
-prms.bias_vars = vars_available[nearest_qm_glac]
+# prms.bias_vars = vars_available[nearest_qm_glac]
+prms.bias_vars = ['temp']
+
+# =================== PRECIPITATION FACTOR ===================
+# Pre-determined precipitation factor
+kp = site_df.loc[args.site, 'kp']
+if np.isnan(kp):
+    kp = 1
 
 # =================== OUTPUT ===================
 # Create output directory
@@ -116,7 +124,8 @@ if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
 
 # Create the folder to store the data
-date = str(pd.Timestamp.today()).replace('-','_')[5:10]
+# date = str(pd.Timestamp.today()).replace('-','_')[5:10]
+date = '02_26'
 n_today = 0
 out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
 while os.path.exists(prms.output_fp + out_fp):
@@ -143,10 +152,11 @@ for p1 in params[param_1]:
         args_run = copy.deepcopy(args)
 
         # Set parameters MANUALLY
-        args_run.lapse_rate = '-6.5' # p2
-        args_run.ksp_BC = p2
-        args_run.kp = p1
+        args_run.lapse_rate = '-6.5'
+        args_run.ksp_BC = p1
+        args_run.Sr = p2
         args_run.Boone_c5 = '0.016'
+        args_run.kp = str(kp)
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
@@ -156,8 +166,9 @@ for p1 in params[param_1]:
         climate_run, args_run = sim.initialize_model(args_run)
 
         # Specify attributes for output file
-        store_attrs = {'lapse_rate':args_run.lapse_rate, 
-                       'c5':args_run.Boone_c5,'kp':args_run.kp}
+        store_attrs = {'lapse_rate':args_run.lapse_rate, 'Sr':args_run.Sr,
+                       'c5':args_run.Boone_c5,'kp':args_run.kp,
+                       'ksp_BC':args_run.ksp_BC}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -209,7 +220,7 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with ksp =',args.ksp_BC,'kp =',args.kp,'lr =',args.lapse_rate,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with',store_attrs,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(prms.output_fp + args.out + '0.nc')
     return
