@@ -8,6 +8,7 @@ This script executes parallel runs for multiple sites.
 import os
 import time
 import copy
+import pickle
 from multiprocessing import Pool
 # External libraries
 import pandas as pd
@@ -22,16 +23,17 @@ n_runs_ahead = 0    # Step if you're going to run this script more than once
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2010-04-20 00:00'
+args.startdate = '2018-04-20 00:00'
 args.enddate = '2025-08-20 00:00'
-args.use_AWS = False
+args.use_AWS = True
+args.dates_from_data = True
 
-args.kp = 1
+with open('project/best_datasets.pkl','rb') as f:
+    params = pickle.load(f)
 
 # sites to run in parallel
-glac_nos = ['01.01104','01.01390','01.22193', '01.15645','01.09162', '01.00570'] # '01.22193', '01.15645','01.09162',
 site_dict = {
-    '01.22193':['K17b','K14k','K53'], # KAHILTNA     'KPS',
+    '01.22193':['K17b','K53'], # KAHILTNA     'KPS',
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT
     '01.00570':['AU','B','D'], # GULKANA
     '01.09162':['N','B','EC'], # WOLVERINE
@@ -42,6 +44,7 @@ site_dict = {
     #  '02.17023':[], # SPERRY
     #  '02.18778':[], # SOUTH CASCADE
 }
+glac_nos = list(site_dict.keys())
  
 # Probably do not edit
 args.store_data = True             # Ensures output is stored
@@ -72,14 +75,19 @@ def pack_vars():
             args_run = copy.deepcopy(args_glac)
             args_run.site = site
 
-            # Output name
+                        # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_base_' # run_date
+            args_run.out = f'{glac}{site}_{run_date}_base_'
 
-            # Store model parameters
-            store_attrs = {'kp':str(args_run.kp), 'c5':str(args_run.Boone_c5),
-                        'lr':str(args_run.lapse_rate)}
+            # AWS fn for albedo timeseries
+            args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
+
+            # Set parameters from calibration
+            if site not in params[glac]:
+                continue
+            args_run.ksp_BC = params[glac][site]['ksp_BC']
+            args_run.Sr = params[glac][site]['Sr']
 
             # Set task ID for SNICAR input file
             args_run.task_id = run_no + n_runs_ahead*n_processes
@@ -90,6 +98,11 @@ def pack_vars():
             # climate.cds['ocdry'] *= 0
             # climate.cds['bcwet'] *= 0
             # climate.cds['bcdry'] *= 0
+
+            # Store model parameters
+            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': args_run.Sr,
+                           'kp':args_run.kp}
+
             packed_vars[run_no].append((args_run,climate,store_attrs))
 
             # Advance counter
