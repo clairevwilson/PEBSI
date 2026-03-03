@@ -181,8 +181,9 @@ class Climate():
         # can have duplicates for a glacier
         if '__iter__' in dir(self.AWS_elev):
             station = fp.split(self.args.glac_name)[-1].split('.csv')[0]
-            assert station in metadata_df['station'].values, f'specify station name as {station} in aws_metadata.txt'
             glac_df = metadata_df.loc[self.args.glac_name]
+            if station not in glac_df['station'].values:
+                station = glac_df['station'].values[0]
             self.AWS_elev = glac_df.loc[glac_df['station'] == station, 'elevation'].values[0]
 
         # get the available variables
