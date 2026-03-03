@@ -105,6 +105,8 @@ def get_args(parse=True):
                         action='store',help='Filepath for initializing grain size')
     parser.add_argument('-initial_LAP_fn',default=prms.initial_LAP_fn,type=str,
                         action='store',help='Filepath for initializing LAPs')
+    parser.add_argument('-AWS_fn',action='store',default='',
+                        help='filepath to AWS data')
     
     # PARALLELIZATION
     parser.add_argument('-n','--n_simultaneous_processes',default=1,type=int,
@@ -162,6 +164,11 @@ def get_site_table(site_df, args):
     if 'a_ice' in site_df.columns:
         if not np.isnan(site_df.loc[site,'a_ice']):
             args.a_ice = site_df.loc[site,'a_ice']
+
+    # ICE ALBEDO
+    if 'kp' in site_df.columns:
+        if not np.isnan(site_df.loc[site,'kp']):
+            args.kp = site_df.loc[site,'kp']
 
     # if specified, override site lat/lon/elevation with the AWS site
     if args.use_AWS and prms.use_AWS_site:
@@ -307,7 +314,7 @@ def check_inputs(args):
         if args.debug:
             print('Test glacier: using sample AWS data')
     else:
-        if args.use_AWS:
+        if args.use_AWS and len(args.AWS_fn) < 1:
             args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
 
     # specify filepaths to args
