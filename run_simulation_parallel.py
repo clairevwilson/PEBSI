@@ -17,16 +17,16 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 0    # Step if you're going to run this script more than once
+n_runs_ahead = 30    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2018-04-20 00:00'
+args.startdate = '2013-04-20 00:00'
 args.enddate = '2025-08-20 00:00'
-args.use_AWS = True
-args.dates_from_data = True
+args.use_AWS = False
+args.dates_from_data = False
 
 with open('project/best_datasets.pkl','rb') as f:
     params = pickle.load(f)
@@ -78,7 +78,7 @@ def pack_vars():
                         # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_base_'
+            args_run.out = f'{glac}{site}_{run_date}_noBCOC_'
 
             # AWS fn for albedo timeseries
             args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
@@ -94,14 +94,14 @@ def pack_vars():
 
             # Store model inputs
             climate, args_run = sim.initialize_model(args_run)
-            # climate.cds['ocwet'] *= 0
-            # climate.cds['ocdry'] *= 0
-            # climate.cds['bcwet'] *= 0
-            # climate.cds['bcdry'] *= 0
+            climate.cds['ocwet'] *= 0
+            climate.cds['ocdry'] *= 0
+            climate.cds['bcwet'] *= 0
+            climate.cds['bcdry'] *= 0
 
             # Store model parameters
-            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': args_run.Sr,
-                           'kp':args_run.kp}
+            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': 'specified in model', # args_run.Sr,
+                           'kp':args_run.kp, 'wet_C':prms.wet_snow_C}
 
             packed_vars[run_no].append((args_run,climate,store_attrs))
 

@@ -50,6 +50,7 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
     daily_melt = ds_in['melt'].resample({'time': time_res}).sum() * 1000
     daily_pdds = ds_in['airtemp'].resample({'time': time_res}).mean().where(lambda x: x > 0)
     daily_acc = ds_in['accum'].resample({'time': time_res}).sum() * 1000
+    daily_rain = ds_in['rainfall'].resample({'time': time_res}).sum() * 1000
     daily_albedo = ds_in['albedo'].resample({'time': time_res}).min()
     snow_BC = ds_in['layerBC'].where(ds_in['layertype'] < 1).isel(layer=range(5)).max(dim='layer').resample(time=time_res).max()
 
@@ -79,6 +80,7 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
         'days_since_accum':days_since_acc,
         'snow_BC':snow_BC,
         # 'snow_depth':daily_snow_depth
+        'rain':daily_rain,
         'albedo':daily_albedo
         })
 
