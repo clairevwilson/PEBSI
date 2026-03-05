@@ -1162,7 +1162,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layertemp']:
             bounds = [-10,0]
         elif var in ['layergrainsize']:
-            bounds = [100,1000] # [50, 800]
+            bounds = [100,1500] # [50, 800]
         elif var in ['layerrefreeze']:
             bounds = [-1,20]
         elif var in ['layerheight']:

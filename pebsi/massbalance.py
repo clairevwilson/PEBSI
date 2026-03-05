@@ -493,7 +493,7 @@ class massBalance():
 
             # wet metamorphism
             grainsize_m = grainsize / 1e6   # in m
-            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
+            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)*(1-grainsize / 1500)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # cap runaway wet metamorphosis
             # drwet[drwet > 200] = 200
@@ -768,10 +768,10 @@ class massBalance():
                 q_in = q_out
 
                 # irreducible water content depends on density
-                # if layers.ldensity[layer] > 500:
-                #     FRAC_IRREDUC = prms.Sr_dense
-                # else:
-                #     FRAC_IRREDUC = prms.Sr_light
+                if layers.ldensity[layer] > 500:
+                    FRAC_IRREDUC = prms.Sr_dense
+                else:
+                    FRAC_IRREDUC = prms.Sr_light
                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
 
                 # calculate flow out of layer i
