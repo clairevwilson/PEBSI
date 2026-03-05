@@ -31,8 +31,10 @@ params = {
         # 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024],
             # 'kp':[1,1.5,2,2.5,3],
         #   'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
-            'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1],
-            'Sr':[0.03,0.05,0.08,0.1,0.15],
+            # 'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1],
+            # 'Sr':[0.03,0.05,0.08,0.1,0.15],
+            'fBC':[0, 0.1, 0.5, 1, 2, 5],
+            'Sr':[0.05, 0.1]
 }
 
 # Read command line args
@@ -76,7 +78,7 @@ if args.run_type == '2024': # Short AWS run
 else: # Long MERRA-2 run
     args.use_AWS = False
     prms.store_vars = ['MB','layers','temp','EB']
-    args.startdate = pd.to_datetime('2000-04-15 00:00:00')
+    args.startdate = pd.to_datetime('2013-04-15 00:00:00')
     args.enddate = pd.to_datetime('2025-08-20 00:00:00')
 
 # =================== QUANTILE MAPPING ===================
@@ -116,7 +118,7 @@ prms.bias_vars = ['temp']
 # Pre-determined precipitation factor
 kp = site_df.loc[args.site, 'kp']
 if np.isnan(kp):
-    kp = 1
+    kp = 2.5 # 1
 
 # =================== OUTPUT ===================
 # Create output directory
@@ -153,7 +155,7 @@ for p1 in params[param_1]:
 
         # Set parameters MANUALLY
         args_run.lapse_rate = '-6.5'
-        args_run.ksp_BC = p1
+        args_run.ksp_BC = '1' # p1
         args_run.Sr = p2
         args_run.Boone_c5 = '0.016'
         args_run.kp = str(kp)
@@ -165,10 +167,16 @@ for p1 in params[param_1]:
         # Get the climate
         climate_run, args_run = sim.initialize_model(args_run)
 
+        # Handle BC fraction
+        climate_run.cds['ocwet'] *= float(p1)
+        climate_run.cds['bcwet'] *= float(p1)
+        climate_run.cds['ocdry'] *= float(p1)
+        climate_run.cds['bcdry'] *= float(p1)
+
         # Specify attributes for output file
         store_attrs = {'lapse_rate':args_run.lapse_rate, 'Sr':args_run.Sr,
                        'c5':args_run.Boone_c5,'kp':args_run.kp,
-                       'ksp_BC':args_run.ksp_BC}
+                       'ksp_BC':args_run.ksp_BC,'frac_BC':p1}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
