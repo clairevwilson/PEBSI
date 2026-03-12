@@ -497,6 +497,8 @@ class Albedo():
         # get RGI7 glacier ID number
         glac_no = translate_rgi[name]
         self.glac_no = glac_no
+        if name == 'kahiltna' and site == 'K14k':
+            self.glac_no = '01.06469'
 
         # open dataframes
         metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
