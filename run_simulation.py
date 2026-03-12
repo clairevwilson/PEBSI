@@ -93,8 +93,8 @@ def get_args(parse=True):
                         help='Temperature lapse rate [K km-1]')
     parser.add_argument('-ksp_BC',default=prms.ksp_BC,action='store',type=float,
                         help='Meltwater partition coefficient for BC/OC')
-    parser.add_argument('-Sr','--frac_irreducible',default=prms.Sr,action='store',type=float,
-                        help='Irreducible water content as fraction of pore space')
+    parser.add_argument('-C1','--wet_grain_C',default=prms.wet_grain_C,action='store',type=float,
+                        help='Constant for wet grain metamorphosis')
     
     # FILEPATHS
     parser.add_argument('-initial_temp_fn',default=prms.initial_temp_fn,type=str,

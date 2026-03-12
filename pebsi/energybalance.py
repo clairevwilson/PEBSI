@@ -469,6 +469,13 @@ class energyBalance():
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
+            # if Qs > 100: # self.timestamp > pd.to_datetime('2015-08-15') and self.timestamp < pd.to_datetime('2015-08-20'):
+            # if True:
+            #     print('Qs!', Qs, self.timestamp, self.args.site, 'density air', density_air, 'surface pressure', self.sp)
+            #     print('psi', psi, 'csT', csT, 'roughness', z0,'wind 2m', wind_2m)
+            #     print('Temp difference', self.tempC - surftemp,' surftemp', surftemp)
+            #     print()
+            #     if Qs > 100 and self.timestamp.hour < 3: assert 1==0
         else:
             assert 1==0, 'Choose turbulent method from MO-similarity or BulkRichardson'
         

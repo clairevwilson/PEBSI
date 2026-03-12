@@ -399,7 +399,7 @@ class massBalance():
         surface = self.surface
 
         # CONSTANTS
-        WET_C = prms.wet_snow_C
+        WET_C = float(self.args.wet_grain_C)
         PI = np.pi
         RFZ_GRAINSIZE = prms.rfz_grainsize
         FIRN_GRAINSIZE = prms.firn_grainsize
@@ -493,8 +493,12 @@ class massBalance():
 
             # wet metamorphism
             grainsize_m = grainsize / 1e6   # in m
-            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)*(1-grainsize / 1500)
+            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
+            # apply a factor to increase grain growth at high density (f_liq is low)
+            F = np.exp(0.01*(layers.ldensity.copy()[idx] - 150)) # np.maximum(0, 1 - f_liq / 0.05) * np.maximum(0, 1 - grainsize / RFZ_GRAINSIZE)
+            # print(self.time, grainsize[-3:], F[-3:])
+            drwet = drwet * F
             # cap runaway wet metamorphosis
             # drwet[drwet > 200] = 200
 
@@ -505,7 +509,7 @@ class massBalance():
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
 
             # enforce maximum grainsize
-            grainsize[grainsize > FIRN_GRAINSIZE] = FIRN_GRAINSIZE
+            grainsize[grainsize > RFZ_GRAINSIZE] = RFZ_GRAINSIZE
 
             # update grainsize in layers
             layers.lgrainsize[idx] = grainsize
@@ -713,7 +717,7 @@ class massBalance():
         # CONSTANTS
         DENSITY_WATER = prms.density_water
         DENSITY_ICE = prms.density_ice
-        FRAC_IRREDUC = float(self.args.Sr)
+        FRAC_IRREDUC = prms.Sr
 
         # get index of percolating (snow/firn) layers
         snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
@@ -768,10 +772,10 @@ class massBalance():
                 q_in = q_out
 
                 # irreducible water content depends on density
-                if layers.ldensity[layer] > 500:
-                    FRAC_IRREDUC = prms.Sr_dense
-                else:
-                    FRAC_IRREDUC = prms.Sr_light
+                # if layers.ldensity[layer] > 500:
+                #     FRAC_IRREDUC = prms.Sr_dense
+                # else:
+                #     FRAC_IRREDUC = prms.Sr_light
                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
 
                 # calculate flow out of layer i
@@ -1077,10 +1081,11 @@ class massBalance():
         squeezed_out = 0
         for layer in snowfirn_idx:
             # irreducible water content depends on density
-            if lp[layer] > 500:
-                FRAC_IRREDUC = prms.Sr_dense
-            else:
-                FRAC_IRREDUC = prms.Sr_light
+            # if lp[layer] > 500:
+            #     FRAC_IRREDUC = prms.Sr_dense
+            # else:
+            #     FRAC_IRREDUC = prms.Sr_light
+            FRAC_IRREDUC = prms.Sr
             porosity = 1 - lp[layer] / DENSITY_ICE
             lh = lm[layer] / lp[layer]
             water_irreduc = porosity * lh * DENSITY_WATER * FRAC_IRREDUC

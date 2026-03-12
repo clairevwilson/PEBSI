@@ -9,6 +9,7 @@ import os
 import time
 import copy
 import pickle
+import traceback
 from multiprocessing import Pool
 # External libraries
 import pandas as pd
@@ -17,23 +18,23 @@ import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
 
-n_runs_ahead = 30    # Step if you're going to run this script more than once
+n_runs_ahead = 4    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2013-04-20 00:00'
+args.startdate = '2013-04-15 00:00'
 args.enddate = '2025-08-20 00:00'
 args.use_AWS = False
 args.dates_from_data = False
 
-with open('project/best_datasets.pkl','rb') as f:
+with open('project/best_datasets_grains.pkl','rb') as f:
     params = pickle.load(f)
 
 # sites to run in parallel
 site_dict = {
-    '01.22193':['K17b','K53'], # KAHILTNA     'KPS',
+    '01.22193':['K17b','K53','K14k'], # KAHILTNA     'KPS',
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT
     '01.00570':['AU','B','D'], # GULKANA
     '01.09162':['N','B','EC'], # WOLVERINE
@@ -78,30 +79,30 @@ def pack_vars():
                         # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_noBCOC_'
+            args_run.out = f'{glac}{site}_{run_date}_hiBC_loC1_' # BC_hiC1_'
 
             # AWS fn for albedo timeseries
-            args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
+            # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
 
             # Set parameters from calibration
             if site not in params[glac]:
                 continue
-            args_run.ksp_BC = params[glac][site]['ksp_BC']
-            args_run.Sr = params[glac][site]['Sr']
+            args_run.ksp_BC = 1 # params[glac][site]['ksp_BC']
+            args_run.wet_grain_C = 1e-14 #  params[glac][site]['C1']
 
             # Set task ID for SNICAR input file
             args_run.task_id = run_no + n_runs_ahead*n_processes
 
             # Store model inputs
             climate, args_run = sim.initialize_model(args_run)
-            climate.cds['ocwet'] *= 0
-            climate.cds['ocdry'] *= 0
-            climate.cds['bcwet'] *= 0
-            climate.cds['bcdry'] *= 0
+            # climate.cds['ocwet'] *= 0
+            # climate.cds['ocdry'] *= 0
+            # climate.cds['bcwet'] *= 0
+            # climate.cds['bcdry'] *= 0
 
             # Store model parameters
             store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': 'specified in model', # args_run.Sr,
-                           'kp':args_run.kp, 'wet_C':prms.wet_snow_C}
+                           'kp':args_run.kp, 'wet_C':args_run.wet_grain_C}
 
             packed_vars[run_no].append((args_run,climate,store_attrs))
 
@@ -138,6 +139,7 @@ def run_model_parallel(list_inputs):
             massbal.output.add_attrs(store_attrs)
         except Exception as e:
             print(f'Simulation failed for {inputs[0].out}: {e}')
+            traceback.print_exc()
             continue
     return
 

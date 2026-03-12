@@ -149,6 +149,7 @@ density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]
 density_firn = 700          # Density threshold for firn [kg m-3]
 density_snow = 500          # Average density of snow if held constant [kg m-3]
+density_fresh_snow = 100    # Density of fresh snow for grain growth factor [kg m-3]
 k_air = 0.023               # Thermal conductivity of air [W K-1 m-1] (Mellor, 1997)
 k_ice = 2.25                # Thermal conductivity of ice [W K-1 m-1]
 k_water = 0.56              # Thermal conductivity of water [W K-1 m-1]
@@ -191,7 +192,7 @@ roughness_aged_snow = 10    # Surface roughness length for aged snow [mm]
 roughness_firn = 4          # Surface roughness length for firn [mm] (Moelg et al. 2012, TC)
 roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
-wet_snow_C = 1e-10          # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
+wet_grain_C = 1e-10         # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
 Sr = 0.05                   # Fraction of irreducible water content for percolation [-]
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
 Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
@@ -203,7 +204,7 @@ include_LWC_SNICAR = False  # Include liquid water in SNICAR? (slush)
 grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koch snowflake, 4: hexagonal prisms
 # <<<<<< Constants for switch runs >>>>>
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
-average_grainsize = 300     # Grainsize to treat as constant if switch_melt is 0 [um]
+average_grainsize = 500     # Grainsize to treat as constant if switch_melt is 0 [um]
 albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
