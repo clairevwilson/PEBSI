@@ -280,7 +280,7 @@ def plot_pareto_heatmap(pareto_fronts, result_dict, error_names, bootstrap=True,
     else:
         n_cols = n_rows = 1
     if figaxes is None:
-        fig,axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*3,n_rows*2),
+        fig,axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*3.5,n_rows*2),
                              sharex=True, gridspec_kw={'hspace':0.1, 'wspace':0.7}) #, constrained_layout=True)
         if n_cols > 1 or n_rows > 1:
             axes = axes.flatten()
@@ -431,7 +431,7 @@ def plot_pareto_heatmap(pareto_fronts, result_dict, error_names, bootstrap=True,
         cax.set_title('Pareto fronts')
 
     if savefig:
-        plt.savefig(base_fp+f'pareto_params_heatmap_{metric}_site{site}_{error_names[-1]}.png',dpi=180,bbox_inches='tight')
+        plt.savefig(savefig,dpi=300,bbox_inches='tight')
     if not figaxes: 
         plt.show()
     else:
@@ -448,10 +448,10 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
     n_rows = len(plot_vars)+1
     height_ratios = [1]*n_rows
     height_ratios[-1] = 0.1
-    fig, axes = plt.subplots(n_rows,4,figsize=(8.2,n_rows*1.5),
-                             gridspec_kw={'wspace':0.36, 'hspace':0.4}, 
+    fig, axes = plt.subplots(n_rows,4,figsize=(7,n_rows*1.5),
+                             gridspec_kw={'wspace':0.4, 'hspace':0.4}, 
                              height_ratios=height_ratios,
-                             width_ratios=[1,0.02,1,1])
+                             width_ratios=[1,0.01,1,1])
     cmaps = [mpl.colormaps.get_cmap('viridis_r'),mpl.colormaps.get_cmap('magma_r')]
     both_vars = [params['c5'],params['kp'][::2]]
 
@@ -721,13 +721,13 @@ def plot_difference_by_param(best, result_dict, site='B', plot_vars=['2024','ann
     axes[-1, 0].plot(np.nan, np.nan, color='gray',label='Modeled')
     axes[-1, 0].legend(ncols=2, loc='center', bbox_to_anchor=(0.4,0.5), handlelength=1.5)
         
-    axes[0,2].text(0.95,0.95, f'$c_5$ varies; $k_p={best[1]}$',transform=axes[0,2].transAxes,va='top',ha='right')
-    axes[0,3].text(0.95,0.95, f'$k_p$ varies; $c_5={best[0]}$',transform=axes[0,3].transAxes,va='top',ha='right')
+    axes[0,2].text(0.5,0.95, f'$c_5$ varies; $k_p={best[1]}$',transform=axes[0,2].transAxes,va='top',ha='center') #  fontsize=8)
+    axes[0,3].text(0.5,0.95, f'$k_p$ varies; $c_5={best[0]}$',transform=axes[0,3].transAxes,va='top',ha='center')
 
     # axes[0,0].set_title('Data',fontsize=12,y=1.01)
     # fig.text(0.65,0.9,'Modeled $-$ Measured by parameter',ha='center',va='center',fontsize=12)
     if savefig:
-        plt.savefig(base_fp+f'all_tradeoffs_{plot_vars[0]}.png',dpi=350,bbox_inches='tight')
+        plt.savefig(savefig,dpi=300,bbox_inches='tight')
     plt.show()
 
 def plot_tradeoffs_2024(result_dict, best, site='B', savefig=False):
@@ -1111,7 +1111,7 @@ def plot_pareto_2024(all_pareto, result_dict, frequency_dict, best, savefig=Fals
 
     # fig.suptitle('Validation of Pareto fronts on the 2024 melt season',fontsize=12,y=1)
     if savefig:
-        plt.savefig(base_fp+'2024_pareto_comparison.png',bbox_inches='tight',dpi=300)
+        plt.savefig(savefig,bbox_inches='tight',dpi=300)
     plt.show()
 
 def plot_best_seasonal(best, result_dict, savefig=False, include_B=False):
@@ -1845,7 +1845,7 @@ def plot_sensitivity(sens_dict,savefig=False):
 
 def plot_bias_correction(mb_dict, savefig=False):
     mb_df = pd.read_csv(USGS_fp, index_col=0)
-    fig, ax = plt.subplots(figsize=(4,3))
+    fig, ax = plt.subplots(figsize=(3.3,3))
     colors = all_colors
     all = [[],[],[]]
     for s,site in enumerate(mb_dict):
@@ -1869,13 +1869,13 @@ def plot_bias_correction(mb_dict, savefig=False):
     ax.set_xlabel('Site name',fontsize=12)
     print('og',np.mean(np.abs(all[0])),'bc', np.mean(np.abs(all[1])),'aws', np.mean(np.abs(all[2])))
 
-    ax.bar(np.nan, np.nan, np.nan, color='lightgray', label='Original MERRA-2')
-    ax.bar(np.nan, np.nan, np.nan, color='lightgray', label='Bias-corrected MERRA-2',hatch='///')
+    ax.bar(np.nan, np.nan, np.nan, color='lightgray', label='Original\nMERRA-2')
+    ax.bar(np.nan, np.nan, np.nan, color='lightgray', label='Bias-corrected\nMERRA-2',hatch='///')
     ax.bar(np.nan, np.nan, np.nan, color='lightgray', label='Weather station',hatch='....',)
 
     ax.legend()
     if savefig:
-        plt.savefig(base_fp + 'bias_correction_comparison.png',dpi=200,bbox_inches='tight')
+        plt.savefig(savefig,dpi=300,bbox_inches='tight')
     plt.show()
 
 def plot_fluxes(savefig=False):
