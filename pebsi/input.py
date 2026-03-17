@@ -194,7 +194,7 @@ roughness_aged_snow = 10    # Surface roughness length for aged snow [mm]
 roughness_firn = 4          # Surface roughness length for firn [mm] (Moelg et al. 2012, TC)
 roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
 roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
-wet_grain_C = 1e-10         # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
+wet_grain_C = 4.22e-13      # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
 Sr = 0.05                   # Fraction of irreducible water content for percolation [-]
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
 Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)

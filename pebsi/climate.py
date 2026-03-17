@@ -268,6 +268,7 @@ class Climate():
         if var == 'rh' and not os.path.exists(fn):
             assert prms.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
+        dep_var = True if 'dry' in var or 'wet' in var else False
 
         # open and check units of climate data
         ds = xr.open_dataset(fn)
@@ -277,13 +278,13 @@ class Climate():
         lat_vn,lon_vn = [self.lat_vn,self.lon_vn]
 
         # light-absorbing particles need special treatment
-        if 'bc' in var or 'oc' in var or 'dust' in var:
+        if dep_var:
             if prms.reanalysis == 'ERA5-hourly':
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
-            if prms.deposition_data == 'UKESM':
-                # tell lat/lon to use UKESM lat/lon names
+            if prms.deposition_data == 'UKESM' and 'du' not in var:
+                # tell lat/lon to use UKESM lat/lon names for BC/OC
                 lat_vn,lon_vn = ['latitude','longitude']
                 
                 # turn daily into hourly
@@ -304,7 +305,6 @@ class Climate():
 
         # for time-varying variables, select/interpolate to the model time
         if var != 'elev':
-            dep_var = 'bc' in var or 'dust' in var or 'oc' in var
             assert dates[0] >= pd.to_datetime(ds.time.values[0])
             assert dates[-1] <= pd.to_datetime(ds.time.values[-1])
             if not dep_var and prms.reanalysis == 'ERA5-hourly':
@@ -460,6 +460,9 @@ class Climate():
                 ds = ds * SPH
             elif var == 'elev' and units_in in ['m+2 s-2','m2 s-2']:
                 ds = ds / GRAVITY
+            elif 'dry' in var or 'wet' in var:
+                if units_in == 'm-2.kg.s-1':
+                    pass
             else:
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
@@ -875,7 +878,7 @@ class Climate():
         # functionality for independent deposition datasets
         if prms.deposition_data:
             if prms.deposition_data == 'UKESM':
-                sp_oc = 'particular_organic_matter'
+                sp_oc = 'particulate_organic_matter'
                 sp_bc = 'elemental_carbon'
                 vn = 'tendency_of_atmosphere_mass_content_of_SPECIES_dry_aerosol_particles_due_to_DEPTYPE_deposition'
                 self.var_dict['bcwet']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'wet')
