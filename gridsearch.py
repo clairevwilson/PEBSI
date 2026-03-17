@@ -24,6 +24,8 @@ import run_simulation as sim
 import pebsi.input as prms
 import pebsi.massbalance as mb
 from objectives import *
+if 'trace' in prms.machine:
+    prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
 # =================== INPUTS ===================
 # Define parameters for grid search

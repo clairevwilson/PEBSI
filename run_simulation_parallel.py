@@ -17,15 +17,19 @@ import pandas as pd
 import run_simulation as sim
 import pebsi.massbalance as mb
 import pebsi.input as prms
+if 'trace' in prms.machine:
+    prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
-n_runs_ahead = 4    # Step if you're going to run this script more than once
+n_runs_ahead = 18    # Step if you're going to run this script more than once
+
+prms.deposition_data = 'UKESM'
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2013-04-15 00:00'
-args.enddate = '2025-08-20 00:00'
+args.startdate = '2000-04-20 00:00'
+args.enddate = '2015-08-20 00:00'
 args.use_AWS = False
 args.dates_from_data = False
 
@@ -79,16 +83,16 @@ def pack_vars():
                         # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_hiBC_loC1_' # BC_hiC1_'
+            args_run.out = f'{glac}{site}_{run_date}_baseparams_ukesm_'
 
             # AWS fn for albedo timeseries
             # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
 
             # Set parameters from calibration
-            if site not in params[glac]:
-                continue
-            args_run.ksp_BC = 1 # params[glac][site]['ksp_BC']
-            args_run.wet_grain_C = 1e-14 #  params[glac][site]['C1']
+            # if site not in params[glac]:
+            #     continue
+            args_run.ksp_BC = 0.1 # params[glac][site]['ksp_BC']
+            args_run.wet_grain_C = 4.22e-13 #  params[glac][site]['C1']
 
             # Set task ID for SNICAR input file
             args_run.task_id = run_no + n_runs_ahead*n_processes
@@ -101,7 +105,7 @@ def pack_vars():
             # climate.cds['bcdry'] *= 0
 
             # Store model parameters
-            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': 'specified in model', # args_run.Sr,
+            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': prms.Sr,
                            'kp':args_run.kp, 'wet_C':args_run.wet_grain_C}
 
             packed_vars[run_no].append((args_run,climate,store_attrs))

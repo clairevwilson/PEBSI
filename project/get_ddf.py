@@ -69,7 +69,7 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
     ddf = ddf.where(np.isfinite(ddf))  # avoids nans and infinity
     ddf = ddf.where(daily_melt > 1) # avoids small melt days
     ddf = ddf.where(daily_snow_depth > 1e-8) # avoids days with ice surface
-    # ddf = ddf.where(daily_snow_temp > -1) # avoids days where snow is not ripe
+    ddf = ddf.where(daily_snow_temp > -1) # avoids days where snow is not ripe
     
     # start to build the dataset
     ds = xr.Dataset({
