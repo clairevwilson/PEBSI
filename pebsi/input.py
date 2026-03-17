@@ -19,8 +19,6 @@ machine = socket.gethostname()
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
 RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
-AWS_fp = '../climate_data/AWS/Processed/'                   # Weather station data filepath
-AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # SNICAR
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
 # snicar_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'      # SNICAR input filepath
@@ -35,10 +33,13 @@ initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP conten
 dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-climate_fp = '../climate_data/'                             # Climate data filepath
-merra2_eg_fn = '../climate_data/MERRA2/MERRA2constants.nc4' # Global file of MERRA-2 geopotential
+climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
+# climate_fp = '../climate_data/'                             # Climate data filepath
+merra2_eg_fn = 'MERRA2/MERRA2constants.nc4'                 # Global file of MERRA-2 geopotential relative to climate_fp
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
+AWS_fp = 'AWS/Processed/'                                   # Weather station data filepath relative to climate_fp
+AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # OUTPUT
 output_fp = '../Output/'                                    # Output filepath
 albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
@@ -59,8 +60,9 @@ station_elevation = {                       # Elevation of the station used in t
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
-MERRA2_filetag = False                      # False or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['temp']                 # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
+deposition_data = None                      # None or 'UKESM'
+MERRA2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
+bias_vars = ['temp']                        # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION
@@ -95,7 +97,7 @@ option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
-constant_freshgrainsize = False          # False or grain size [um] (Kuipers Munneke (2011): 54.5)
+constant_freshgrainsize = False         # False or grain size [um] (Kuipers Munneke (2011): 54.5)
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
 
 # ALBEDO SWITCHES
@@ -232,6 +234,6 @@ firn_age = 60               # Number of days old a snow layer has to be to turn 
 
 # ========== EXCEPTIONS ==========
 class ConfigError(Exception):
-    """Raised when an expected crash ends
-    the simulation."""
+    """Raised when an expected crash
+    ends the simulation."""
     pass

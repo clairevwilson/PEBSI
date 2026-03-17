@@ -315,7 +315,7 @@ def check_inputs(args):
             print('Test glacier: using sample AWS data')
     else:
         if args.use_AWS and len(args.AWS_fn) < 1:
-            args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
+            args.AWS_fn = prms.climate_fp + prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
 
     # specify filepaths to args
     args.shading_fn = prms.shading_fn.replace('GLACIER',args.glac_name).replace('SITE',args.site)

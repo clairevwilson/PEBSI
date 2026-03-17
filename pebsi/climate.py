@@ -276,10 +276,22 @@ class Climate():
         vn = self.var_dict[var]['vn'] 
         lat_vn,lon_vn = [self.lat_vn,self.lon_vn]
 
-        # light-absorbing particles always come from MERRA-2 and need special treatment
+        # light-absorbing particles need special treatment
         if 'bc' in var or 'oc' in var or 'dust' in var:
             if prms.reanalysis == 'ERA5-hourly':
+                # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
+            
+            if prms.deposition_data == 'UKESM':
+                # tell lat/lon to use UKESM lat/lon names
+                lat_vn,lon_vn = ['latitude','longitude']
+                
+                # turn daily into hourly
+                ds = ds.resample(time='h').ffill()
+
+                # convert longitude from 0-360 to -180-180 and re-sort
+                ds = ds.assign_coords({lon_vn: ((ds[lon_vn] + 180) % 360) - 180})
+                ds = ds.sortby(lon_vn)
 
         # index by lat and lon and select variable
         if ds.coords[lat_vn].values.size > 1:
@@ -293,9 +305,9 @@ class Climate():
         # for time-varying variables, select/interpolate to the model time
         if var != 'elev':
             dep_var = 'bc' in var or 'dust' in var or 'oc' in var
+            assert dates[0] >= pd.to_datetime(ds.time.values[0])
+            assert dates[-1] <= pd.to_datetime(ds.time.values[-1])
             if not dep_var and prms.reanalysis == 'ERA5-hourly':
-                assert dates[0] >= pd.to_datetime(ds.time.values[0])
-                assert dates[-1] <= pd.to_datetime(ds.time.values[-1])
                 ds = ds.interp(time=dates)
             elif self.interpolate:
                 ds = ds.interp(time=dates)
@@ -757,8 +769,9 @@ class Climate():
         file and variable names.
         """
         # determine filetag for MERRA2 lat/lon file
-        assert os.path.exists(prms.merra2_eg_fn), f'Store global geopotential file to {prms.merra2_eg_fn}'
-        ds_global = xr.open_dataset(prms.merra2_eg_fn)
+        eg_fn = prms.climate_fp + prms.merra2_eg_fn
+        assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
+        ds_global = xr.open_dataset(eg_fn)
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
         flat = str(ds_closest.lat.values)
         flon = str(ds_closest.lon.values)
@@ -858,3 +871,20 @@ class Climate():
             self.var_dict['ocdry']['fn'] = f'./../../MERRA2/{tag}/OCDP002_{tag}.nc'
             self.var_dict['dustwet']['fn'] = f'./../../MERRA2/{tag}/DUWT003_{tag}.nc'
             self.var_dict['dustdry']['fn'] = f'./../../MERRA2/{tag}/DUDP003_{tag}.nc'
+
+        # functionality for independent deposition datasets
+        if prms.deposition_data:
+            if prms.deposition_data == 'UKESM':
+                sp_oc = 'particular_organic_matter'
+                sp_bc = 'elemental_carbon'
+                vn = 'tendency_of_atmosphere_mass_content_of_SPECIES_dry_aerosol_particles_due_to_DEPTYPE_deposition'
+                self.var_dict['bcwet']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'wet')
+                self.var_dict['bcdry']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'dry')
+                self.var_dict['ocwet']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'wet')
+                self.var_dict['ocdry']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'dry')
+
+                dep_fp = '../UKESM/dr401_GFED/'
+                self.var_dict['bcwet']['fn'] = dep_fp + 'sum_bc_wetdeposition_kgm-2s-1.nc'
+                self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
+                self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'
+                self.var_dict['ocdry']['fn'] = dep_fp + 'sum_oc_drydeposition_kgm-2s-1.nc'
