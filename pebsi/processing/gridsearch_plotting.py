@@ -1673,7 +1673,7 @@ def plot_heatmap_by_site_weighted(error_names, result_dict, metric='MAE', savefi
     n_plots = len(error_names)
     n_rows = n_plots // 2
     n_rows = n_rows + 1 if n_plots % 2 != 0 else n_rows
-    fig = plt.figure(figsize=(8,n_rows*1.3)) # , gridspec_kw={'hspace':0.5, 'wspace':0.5}
+    fig = plt.figure(figsize=(7,n_rows*1.2)) # , gridspec_kw={'hspace':0.5, 'wspace':0.5}
     gs = mpl.gridspec.GridSpec(4,3, figure=fig, wspace=0.6)  # Increase wspace here
     ax1 = fig.add_subplot(gs[0:2, 0])  # top-left
     ax2 = fig.add_subplot(gs[0:2, 1])  # top-right
@@ -1752,7 +1752,7 @@ def plot_heatmap_by_site_weighted(error_names, result_dict, metric='MAE', savefi
     # fig.suptitle(f'{methodlabels[metric]} for each error metric calibrating on one site')
     plt.subplots_adjust(hspace=0.6, wspace=0.2)
     if savefig:
-        plt.savefig(base_fp+f'calibration_by_site_heatmap_{metric}.png',dpi=180,bbox_inches='tight')
+        plt.savefig(savefig,dpi=300,bbox_inches='tight')
     plt.show()
 
 def compare_calib_valid(error_list, all_calib, all_valid, savefig=False):
