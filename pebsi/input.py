@@ -226,6 +226,8 @@ ratio_DU_bin2 = 0.20535     # " SNICAR Bin 2 (0.5-1.25um)
 ratio_DU_bin3 = 0.481675    # " SNICAR Bin 3 (1.25-2.5um)
 ratio_DU_bin4 = 0.203775    # " SNICAR Bin 4 (2.5-5um)
 ratio_DU_bin5 = 0.034       # " SNICAR Bin 5 (5-50um)
+merra_lat_res = 0.5         # Resolution of MERRA-2 latitudinally [deg]
+merra_lon_res = 0.625       # Resolution of MERRA-2 longitudinally [deg]
 # <<<<<< End-of-summer >>>>>
 start_end_summer = 228      # Julian day of year to start checking for end of summer (snow -> firn)
 new_snow_threshold = 0.02   # Threshold for new snow to consider the start of winter [m w.e.]

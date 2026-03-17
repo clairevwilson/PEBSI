@@ -268,14 +268,16 @@ class Climate():
         if var == 'rh' and not os.path.exists(fn):
             assert prms.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
-        dep_var = True if 'dry' in var or 'wet' in var else False
+        dep_var = 'dry' in var or 'wet' in var
+        carbon_var = dep_var and 'du' not in var
 
         # open and check units of climate data
-        ds = xr.open_dataset(fn)
+        ds = xr.open_dataset(fn, decode_timedelta=False)
 
-        # get variable names
+        # get variable names and lat/lon resolution
         vn = self.var_dict[var]['vn'] 
-        lat_vn,lon_vn = [self.lat_vn,self.lon_vn]
+        lat_vn, lon_vn = [self.lat_vn,self.lon_vn]
+        lat_res, lon_res = [prms.merra_lat_res, prms.merra_lon_res]
 
         # light-absorbing particles need special treatment
         if dep_var:
@@ -283,12 +285,11 @@ class Climate():
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
-            if prms.deposition_data == 'UKESM' and 'du' not in var:
+            if prms.deposition_data == 'UKESM' and carbon_var:
                 # tell lat/lon to use UKESM lat/lon names for BC/OC
                 lat_vn,lon_vn = ['latitude','longitude']
-                
-                # turn daily into hourly
-                ds = ds.resample(time='h').ffill()
+                lat_res = np.diff(ds.isel({lat_vn:range(2)})[lat_vn].values)[0]
+                lon_res = np.diff(ds.isel({lon_vn:range(2)})[lon_vn].values)[0]
 
                 # convert longitude from 0-360 to -180-180 and re-sort
                 ds = ds.assign_coords({lon_vn: ((ds[lon_vn] + 180) % 360) - 180})
@@ -299,6 +300,10 @@ class Climate():
             ds = ds.sel({lat_vn:self.lat,lon_vn:self.lon}, method='nearest')[vn]
         else:
             ds = ds[vn]
+
+        if carbon_var and prms.deposition_data:
+            # turn daily into hourly
+            ds = ds.resample(time='h').ffill()
 
         # check the units
         ds = self.check_units(var,ds)
@@ -315,8 +320,8 @@ class Climate():
                 ds = ds.sel(time=dates)
         
         # make sure the correct grid cell was accessed
-        assert np.abs(ds.coords[lat_vn].values - float(self.lat)) <= 0.5, 'Wrong grid cell was accessed'
-        assert np.abs(ds.coords[lon_vn].values - float(self.lon)) <= 0.625, 'Wrong grid cell was accessed'
+        assert np.abs(ds.coords[lat_vn].values - float(self.lat)) <= lat_res, 'Wrong grid cell was accessed'
+        assert np.abs(ds.coords[lon_vn].values - float(self.lon)) <= lon_res, 'Wrong grid cell was accessed'
 
         # store result
         result_dict[var] = ds.values.ravel()
