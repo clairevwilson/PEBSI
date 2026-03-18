@@ -663,11 +663,14 @@ class Albedo():
         for year in years:
             idx = np.where(pd.to_datetime(self.time).year == year)[0]
             doy = pd.to_datetime(self.time[idx]).day_of_year
-            markers = ['*' if d == 'L8' else '.' for d in self.dtype[idx]]
 
-            for m in set(markers):
-                mask = [mm == m for mm in markers]
-                ax.scatter(np.array(doy)[mask],np.array(self.meas[idx])[mask],marker=m,color=cmap(norm(year)))
+            if self.use == 'both':
+                idx_landsat = np.where(self.dtype[idx] == 'L8')[0]
+                idx_sentinel = np.where(self.dtype[idx] == 'S2')[0]
+                ax.plot(np.array(doy)[idx_landsat],np.array(self.meas[idx])[idx_landsat],color=cmap(norm(year)), marker='+', linestyle='--')
+                ax.plot(np.array(doy)[idx_sentinel],np.array(self.meas[idx])[idx_sentinel],color=cmap(norm(year)), marker='^', linestyle='--')
+            else:
+                ax.plot(np.array(doy),np.array(self.meas[idx]),color=cmap(norm(year)), marker='*', linestyle='--')
 
             ax.plot(doy, self.mod[idx], marker='.', color=cmap(norm(year)), label=str(year))
         ax.set_ylabel('Albedo [-]')
@@ -676,3 +679,38 @@ class Albedo():
         ax.set_title(f'{self.name} {self.site}')
         plt.show()
         return fig, ax
+    
+    def plot_1to1(self):
+        years = np.unique(pd.to_datetime(self.time).year)
+        cmap = mpl.cm.get_cmap('viridis')
+        norm = mpl.colors.Normalize(vmin=min(years),vmax=max(years))
+
+        fig, ax = plt.subplots(figsize=(3.5, 3.5))
+
+        if self.use == 'both':
+            ax.scatter(np.nan, np.nan, marker='+', color='gray', label='Landsat')
+            ax.scatter(np.nan, np.nan, marker='.', color='gray', label='Sentinel')
+
+        for year in [2019,2022]: # years:
+            idx = np.where(pd.to_datetime(self.time).year == year)[0]
+            doy = pd.to_datetime(self.time[idx]).day_of_year
+            mod = np.array(self.mod[idx]).ravel()
+
+            if self.use == 'both':
+                idx_landsat = np.where(self.dtype[idx] == 'L8')[0]
+                idx_sentinel = np.where(self.dtype[idx] == 'S2')[0]
+                ax.scatter(np.array(self.meas[idx])[idx_landsat],mod[idx_landsat],color=cmap(norm(year)), marker='+')
+                ax.scatter(np.array(self.meas[idx])[idx_sentinel],mod[idx_sentinel],color=cmap(norm(year)), marker='.', label=str(year))
+            else:
+                ax.scatter(self.meas[idx],mod,color=cmap(norm(year)), marker='.', label=str(year))
+
+        ax.plot([0, 1],[0,1],'k--')
+        ax.set_xlim(0.2, 0.9)
+        ax.set_ylim(0.2, 0.9)
+        ax.set_ylabel('Modeled albedo [-]')
+        ax.set_xlabel('Measured (RS) albedo [-]')
+        ax.tick_params(length=5)
+        ax.legend(bbox_to_anchor=(1.2, 0.5), loc='center')
+        ax.set_title(f'{self.name} {self.site}')
+        plt.show()
+        # return fig, ax

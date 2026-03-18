@@ -20,16 +20,16 @@ import pebsi.input as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
-n_runs_ahead = 18    # Step if you're going to run this script more than once
+n_runs_ahead = 0    # Step if you're going to run this script more than once
 
-prms.deposition_data = 'UKESM'
+# prms.deposition_data = 'UKESM'
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
-args.startdate = '2000-04-20 00:00'
-args.enddate = '2015-08-20 00:00'
+args.startdate = '1980-04-20 00:00'
+args.enddate = '2025-08-20 00:00'
 args.use_AWS = False
 args.dates_from_data = False
 
@@ -80,10 +80,10 @@ def pack_vars():
             args_run = copy.deepcopy(args_glac)
             args_run.site = site
 
-                        # Output name
+            # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_baseparams_ukesm_'
+            args_run.out = f'{glac}{site}_{run_date}_long_'
 
             # AWS fn for albedo timeseries
             # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
