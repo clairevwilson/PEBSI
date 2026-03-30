@@ -40,7 +40,7 @@ date_dict = {'wolverine':'02_06',
 glaciers = ['gulkana','wolverine','taku','kennicott']
 include_OC = False
 
-def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
+def get_daily_df(ds_in, ds_bc, ds_sw, output_fn=None, plot_corr=False, savefig=False,
                n_rolling_bc = 7, n_rolling_acc = 3, n_rolling_pdds = 3):
 
     # Resample to daily
@@ -88,6 +88,9 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
     ds['bc_dep'] = ds_bc.resample(time=time_res).sum() * 3600 # kg m-2
     if include_OC:
         ds['oc_dep'] = ds_oc.resample(time=time_res).sum()
+
+    # add shortwave to dataset
+    ds['SWin'] = ds_sw['SWGDN'].resample(time=time_res).sum() * 3600 # J m-2
 
     # define variables to drop and to take cumsum
     drop_vars = ['lat','lon'] # ,'melt'
@@ -144,6 +147,77 @@ def get_ddf_df(ds_in, ds_bc, output_fn=None, plot_corr=False, savefig=False,
         plt.close()
     return df
 
+def get_hourly_df(ds_in, ds_bc, ds_SW, output_fn=None,
+               n_rolling_bc = 7, n_rolling_acc = 3, n_rolling_pdds = 3):
+    # Resample to daily
+    snow_depth = ds_in['layerheight'].where(ds_in['layertype'] < 2).sum(dim='layer')
+    snow_temp = ds_in['layertemp'].where(ds_in['layertype'] < 2).isel(layer=slice(0,5)).min(dim='layer')
+    melt = ds_in['melt'] * 1000
+    positive_air_temp = ds_in['airtemp'].where(lambda x: x > 0)
+    acc = ds_in['accum'] * 1000
+    rain = ds_in['rainfall'] * 1000
+    albedo = ds_in['albedo']
+    snow_BC = ds_in['layerBC'].where(ds_in['layertype'] < 1).isel(layer=range(5)).max(dim='layer')
+
+    # start to build the dataset
+    ds = xr.Dataset({
+        'melt':melt,
+        'positive_temp':positive_air_temp,
+        'accum':acc,
+        'snow_BC':snow_BC,
+        'snow_depth':snow_depth,
+        'rain':rain,
+        'albedo':albedo,
+        })
+    
+    # add deposition to dataset
+    ds['bc_dep'] = ds_bc.interp(time=ds.time.values) * 3600 # kg m-2
+    if include_OC:
+        ds['oc_dep'] = ds_oc.interp(time=ds.time.values) * 3600
+    
+    # add shortwave radiation
+    ds['SWin'] = ds_SW['SWGDN'].interp(time=ds.time.values)
+
+    # define variables to drop and to take cumsum
+    drop_vars = ['lat','lon']
+    cum_vars = ['bc_dep','accum','positive_temp']
+    if include_OC:
+        cum_vars += ['oc_dep']
+    
+    # add cumulative variables
+    water_year = xr.where(ds['time.month'] >= 10, ds['time.year'] + 1, ds['time.year'])
+    for var in cum_vars: 
+        ds[f'{var}_cumsum'] = (ds[var].groupby(water_year).cumsum())
+    # drop_vars += cum_vars
+
+    # add weekly rolling deposition (n timesteps prior to each timestep)
+    ds[f'bc_{n_rolling_bc}d_rolling'] = ds['bc_dep'].rolling(time=n_rolling_bc*24).sum()
+    if include_OC:
+        ds[f'oc_{n_rolling_bc}d_rolling'] = ds['oc_dep'].rolling(time=n_rolling_bc*24).sum()
+    rolling_accum = f'accum_{n_rolling_acc}d_rolling'
+    rolling_pdds = f'positive_temp_{n_rolling_pdds}d_rolling'
+    ds[rolling_accum] = ds['accum'].rolling(time=n_rolling_acc*24).sum()
+    ds[rolling_pdds] = ds['positive_temp'].rolling(time=n_rolling_pdds*24).sum()
+
+    # clip to reasonable bounds
+    ds = ds.where(np.isfinite(ds))  # avoids nans and infinity
+    ds = ds.where(melt > 0.05) # avoids small melt hours
+    ds = ds.where(snow_depth > 1e-3) # avoids hours with ice surface
+    ds = ds.where(snow_temp > -1)  # avoids hours where snow is not ripe
+
+    # create dataframe and drop variables
+    df = ds.to_dataframe().drop(columns=drop_vars)
+
+    # rename and reorder columns
+    first = ['melt','accum_cumsum',rolling_accum,'positive_temp_cumsum',rolling_pdds]
+    df = df[first + [c for c in df.columns if c not in first]]
+    df = df.dropna()
+
+    # save to csv
+    if output_fn is not None:
+        df.to_csv(output_fn)
+        print('Saved',ds_in.attrs['glacier'], ds_in.attrs['site'])
+    return df
 
 if '__main__' in __name__:
     for glacier in glaciers:
@@ -163,4 +237,4 @@ if '__main__' in __name__:
         for site in sites:
             df_fn = base_fp+f'{glacier}{site}_df.csv'
             ds_in = xr.open_dataset(base_fp + f'{glacier}{site}_2026_{date}_base_long_0.nc') 
-            df = get_ddf_df(ds_in, df_fn)
+            df = get_daily_df(ds_in, df_fn)
