@@ -202,21 +202,31 @@ class MassBalance():
             # sufficient winter data to separate winter and summer periods
             index_data = np.where((~np.isnan(df['ba'])) & (~np.isnan(df['bw'])))[0]
             df_mb = df.iloc[index_data]
+
+            # if data starts at the beginning of the dataframe, need to sort out the previous year
             if index_data[0] == 0:
+                # define year_0 which is the year before first data year (needed for bw)
                 year_0 = df_mb.iloc[0]['Year'] - 1
                 if year_0 in df['Year']:
+                    # if that year is in the dataframe, select it
                     first_last = df.loc[df['Year'] == year_0]
                     df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
                 elif year_0 in dates:
+                    # if that year is in the dictionary built previously
                     first_last = df_mb.iloc[[0]].copy()
                     first_last.iloc[0, :] = np.nan
                     first_last.loc[first_last.index[0], 'fall_date'] = dates[year_0][1]
                     df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
                 else:
+                    # otherwise, need to guess
                     df_last = df.iloc[index_data[1:] - 1]
                     df_mb = df.iloc[index_data[1:]]
             else:
                 df_last = df.iloc[index_data - 1]
+                if df_last.iloc[0]['Year'] < df_mb.iloc[0]['Year'] - 1:
+                    # need to clip the dataframe
+                    df_last = df_last.iloc[1:]
+                    df_mb = df_mb.iloc[1:]
 
             # pull out winter ablation/summer accumulation
             this_winter_abl = df_mb['winter_ablation'].values
@@ -255,7 +265,7 @@ class MassBalance():
             self.elevation = df['elevation'].mean()
         return
     
-    def plot_mb(self):
+    def plot_mb(self, mod_label='Modeled'):
         self.colors = colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
               '#F77808','#298282','#999999','#FF89B0','#427801']
         
@@ -278,8 +288,8 @@ class MassBalance():
             ax.plot(ends, mod, color=colors[0])
             ax.plot(ends, meas, color='k', linestyle='--')
 
-        ax.plot(np.nan, np.nan, color=colors[0], label='Modeled')
         ax.plot(np.nan, np.nan, color='k', linestyle='--', label='Measured')
+        ax.plot(np.nan, np.nan, color=colors[0], label=mod_label)
         ax.set_title(f'{self.name} {self.site} {self.dataset} mass balance')
         ax.legend()
         return fig, ax
@@ -478,7 +488,7 @@ class SnowMelt():
         plt.show()
 
 class Albedo():
-    def __init__(self, name, site, use='S2'):
+    def __init__(self, name, site, use='s2'):
         """ 
         Grabs the timeseries of data to
         compare a model run.
@@ -493,6 +503,10 @@ class Albedo():
         self.name = name
         self.site = site 
         self.use = use
+
+        # define dictionary for labeling datasets
+        self.dataset_dict = {'l8':'Landsat 8', 'l9':'Landsat 9', 's2':'Sentinel-2',
+                             'mean':'mean of Landsat/Sentinel scenes'}
 
         # get RGI7 glacier ID number
         glac_no = translate_rgi[name]
@@ -519,34 +533,41 @@ class Albedo():
         return
     
     def get_point_albedo(self):
-        # get filename for this glac_no
-        if self.use == 'S2':
-            albedo_fns = [self.albedo_fp + f'data_cube_s2_{self.glac_no[3:]}.nc']
-            dtypes = [self.use]
-        elif self.use == 'L8':
-            albedo_fns = [self.albedo_fp + f'data_cube_l8_{self.glac_no[3:]}.nc']
-            dtypes = [self.use]
-        elif self.use == 'both':
-            albedo_fns = [self.albedo_fp + f'data_cube_s2_{self.glac_no[3:]}.nc',
-                          self.albedo_fp + f'data_cube_l8_{self.glac_no[3:]}.nc']
-            dtypes = ['S2','L8']
+        num = str(self.glac_no[3:])
 
+        if self.use == 'all':
+            use_list = ['s2','l8','l9']
+        else:
+            if type(self.use) != list:
+                use_list = [self.use]
+            else:
+                use_list = self.use
+
+        # get filename for this glac_no
+        albedo_fns = [self.albedo_fp + f'{num}/{num}_{data}.nc' for data in use_list]
+
+        # build dataset
         self.data = []
         self.time = []
         self.dtype = []
-        for albedo_fn, dtype in zip(albedo_fns, dtypes):
+        self.ds = None
+        for albedo_fn, dtype in zip(albedo_fns, use_list):
             # open the dataset and get the proper CRS
             ds = xr.open_dataset(albedo_fn)
             crs = ds.spatial_ref.attrs['crs_wkt']
             self.epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
 
-            ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True)
-            self.ds = ds
+            ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True).to_dataset()
+            ds['dtype'] = ('time', np.array([dtype]*len(ds.time.values)).flatten())    
+            if self.ds is None:
+                self.ds = ds 
+            else:
+                self.ds = xr.concat([self.ds, ds], dim='time')
 
             # select the point on the glacier 
             proj = Transformer.from_crs('EPSG:4326', f'EPSG:{self.epsg}', always_xy=True)
             x, y = proj.transform(self.lon, self.lat)
-            da = ds.sel(x=x,y=y, method='nearest')
+            da = ds['albedo'].sel(x=x,y=y, method='nearest')
             distance = np.sqrt(np.square(da.x.values - x) + np.square(da.y.values - y))
             assert distance < 100, 'Point selected is more than 100 m away'
             self.da = da
@@ -560,11 +581,27 @@ class Albedo():
         self.data = np.array(self.data)
         self.time = np.array(self.time)
         self.dtype = np.array(self.dtype)
+
+        self.ds = self.ds.squeeze('band')
+
+        # get rid of duplicates
+        ds_mean = self.ds.groupby("time").mean()
+        s = self.ds["dtype"].to_series()
+        dupes = s.index.duplicated(keep=False)
+        s.loc[dupes] = "mean"
+        dtype_da = xr.DataArray(
+            s.groupby(level="time").first().values,
+            dims=["time"],
+            coords={"time": s.groupby(level="time").first().index},
+        )
+        ds_mean["dtype"] = dtype_da
+        self.ds = ds_mean.sortby('time')
         return
 
     def get_model_albedo(self, ds):
         valid_steps = np.where((self.time >= ds.time.values[0]) & 
-                                 (self.time <= ds.time.values[-1]))[0]
+                                 (self.time <= ds.time.values[-1]) &
+                                 ~(pd.to_datetime(self.time).month.isin([3, 10])))[0]
         
         if len(valid_steps) == 0:
             self.mod = np.nan 
@@ -588,30 +625,34 @@ class Albedo():
         return np.sqrt(np.nanmean(np.square(self.mod - self.meas)))
 
     def plot_map(self, time='mean', full=False, savefig=False,
-                plot_sites = []):
+                plot_sites = [], full_threshold=0.9):
         ds = self.ds
-        ds = ds.squeeze('band')
 
         # grab the dataarray
         if time == 'mean':
-            da = ds.mean(dim='time')
+            ds = ds.mean(dim='time')
+            if self.use == 'all':
+                dataset = self.dataset_dict['mean']
+            else:
+                dataset = self.dataset_dict[self.use]
         else:
+            time = pd.to_datetime(time)
             if full:
-                valid_count = ds.notnull().sum(dim=('x','y'))
+                valid_count = ds['albedo'].notnull().sum(dim=('x','y'))
                 max_count = valid_count.max().values
-                threshold = 0.9
 
                 # identify time steps that meet the requirement
-                good_times = valid_count / max_count >= threshold
+                good_times = valid_count / max_count >= full_threshold
 
                 # extract the subset of times that pass the filter
                 filtered_times = ds.time.where(good_times, drop=True)
 
                 # select nearest image among the filtered times
-                da = ds.sel(time=filtered_times.sel(time=time, method="nearest"))
-
+                ds = ds.sel(time=filtered_times.sel(time=time, method="nearest"))
             else:
-                da = self.ds.sel(time=time, method='nearest')
+                ds = ds.sel(time=time, method='nearest')
+
+            dataset = self.dataset_dict[ds.dtype.values.item()]
 
         fig, ax = plt.subplots(figsize=(6, 5))
         rect = mpl.patches.Rectangle(
@@ -624,7 +665,7 @@ class Albedo():
         )
         ax.add_patch(rect)
         
-        da.plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
+        ds['albedo'].plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
 
         for site in plot_sites:
             lat = self.site_df.loc[site, 'lat']
@@ -642,8 +683,8 @@ class Albedo():
         if time == 'mean':
             time_fmtd = 'time mean'
         else:
-            time_fmtd = pd.to_datetime(da.time.values).strftime('%d %b %Y')
-        ax.set_title(f'{self.name.capitalize()} Glacier ({time_fmtd})')
+            time_fmtd = pd.to_datetime(ds.time.values).strftime('%d %b %Y')
+        ax.set_title(f'{self.name.capitalize()} Glacier ({time_fmtd})\nImage from {dataset}')
 
         if savefig:
             time_fmtd = time_fmtd.replace(' ','-')
@@ -652,30 +693,44 @@ class Albedo():
         plt.show()
         return fig, ax
     
-    def plot_timeseries(self):
-        years = np.unique(pd.to_datetime(self.time).year)
+    def plot_timeseries(self, years=None):
+        if years is None:
+            years = np.unique(pd.to_datetime(self.time).year)
         cmap = mpl.cm.get_cmap('viridis')
         norm = mpl.colors.Normalize(vmin=min(years),vmax=max(years))
 
         fig, ax = plt.subplots()
-        ax.plot(np.nan, np.nan, linestyle='--', marker='.', color='gray', label='Observed')
-        ax.plot(np.nan, np.nan, marker='.', color='gray', label='Modeled')
+        ax.plot(np.nan, np.nan, marker='+', color='gray', label='Modeled')
+        if self.use == 'all':
+            ax.plot(np.nan, np.nan, marker='^', color='gray', label='Landsat-8', linestyle='--')
+            ax.plot(np.nan, np.nan, marker='>', color='gray', label='Landsat-9', linestyle='--')
+            ax.plot(np.nan, np.nan, marker='.', color='gray', label='Sentinel', linestyle='--')
+        else:
+            ax.plot(np.nan, np.nan, marker='.', color='gray', label=self.dataset_dict[self.use], linestyle='--')
+
         for year in years:
             idx = np.where(pd.to_datetime(self.time).year == year)[0]
-            doy = pd.to_datetime(self.time[idx]).day_of_year
+            if len(idx) < 3:
+                continue
+            doy = np.array(pd.to_datetime(self.time[idx]).day_of_year)
 
-            if self.use == 'both':
-                idx_landsat = np.where(self.dtype[idx] == 'L8')[0]
-                idx_sentinel = np.where(self.dtype[idx] == 'S2')[0]
-                ax.plot(np.array(doy)[idx_landsat],np.array(self.meas[idx])[idx_landsat],color=cmap(norm(year)), marker='+', linestyle='--')
-                ax.plot(np.array(doy)[idx_sentinel],np.array(self.meas[idx])[idx_sentinel],color=cmap(norm(year)), marker='^', linestyle='--')
+            if self.use == 'all':
+                idx_landsat8 = np.where(self.dtype[idx] == 'l8')[0]
+                idx_landsat9 = np.where(self.dtype[idx] == 'l9')[0]
+                idx_sentinel = np.where(self.dtype[idx] == 's2')[0]
+                ax.plot(doy[idx_landsat8],np.array(self.meas[idx])[idx_landsat8],color=cmap(norm(year)), marker='^', linestyle='--')
+                ax.plot(doy[idx_landsat9],np.array(self.meas[idx])[idx_landsat9],color=cmap(norm(year)), marker='>', linestyle='--')
+                ax.plot(doy[idx_sentinel],np.array(self.meas[idx])[idx_sentinel],color=cmap(norm(year)), marker='.', linestyle='--')
             else:
-                ax.plot(np.array(doy),np.array(self.meas[idx]),color=cmap(norm(year)), marker='*', linestyle='--')
+                ax.scatter(doy,np.array(self.meas[idx]),color=cmap(norm(year)), marker='.', linestyle='--')
 
-            ax.plot(doy, self.mod[idx], marker='.', color=cmap(norm(year)), label=str(year))
+            order = np.argsort(doy)
+            doy_sorted = doy[order]
+            mod_sorted = self.mod[idx][order]
+            ax.plot(doy_sorted, mod_sorted, marker='+', color=cmap(norm(year)), label=str(year))
         ax.set_ylabel('Albedo [-]')
         ax.set_xlabel('Day of year')
-        ax.legend()
+        ax.legend(bbox_to_anchor=(1.2, 0.5), loc='center')
         ax.set_title(f'{self.name} {self.site}')
         plt.show()
         return fig, ax
@@ -687,19 +742,21 @@ class Albedo():
 
         fig, ax = plt.subplots(figsize=(3.5, 3.5))
 
-        if self.use == 'both':
-            ax.scatter(np.nan, np.nan, marker='+', color='gray', label='Landsat')
+        if self.use == 'all':
+            ax.scatter(np.nan, np.nan, marker='^', color='gray', label='Landsat-8')
+            ax.scatter(np.nan, np.nan, marker='>', color='gray', label='Landsat-9')
             ax.scatter(np.nan, np.nan, marker='.', color='gray', label='Sentinel')
 
-        for year in [2019,2022]: # years:
+        for year in years:
             idx = np.where(pd.to_datetime(self.time).year == year)[0]
-            doy = pd.to_datetime(self.time[idx]).day_of_year
             mod = np.array(self.mod[idx]).ravel()
 
-            if self.use == 'both':
-                idx_landsat = np.where(self.dtype[idx] == 'L8')[0]
-                idx_sentinel = np.where(self.dtype[idx] == 'S2')[0]
-                ax.scatter(np.array(self.meas[idx])[idx_landsat],mod[idx_landsat],color=cmap(norm(year)), marker='+')
+            if self.use == 'all':
+                idx_landsat8 = np.where(self.dtype[idx] == 'l8')[0]
+                idx_landsat9 = np.where(self.dtype[idx] == 'l9')[0]
+                idx_sentinel = np.where(self.dtype[idx] == 's2')[0]
+                ax.scatter(np.array(self.meas[idx])[idx_landsat8],mod[idx_landsat8],color=cmap(norm(year)), marker='^')
+                ax.scatter(np.array(self.meas[idx])[idx_landsat9],mod[idx_landsat9],color=cmap(norm(year)), marker='>')
                 ax.scatter(np.array(self.meas[idx])[idx_sentinel],mod[idx_sentinel],color=cmap(norm(year)), marker='.', label=str(year))
             else:
                 ax.scatter(self.meas[idx],mod,color=cmap(norm(year)), marker='.', label=str(year))
@@ -708,9 +765,11 @@ class Albedo():
         ax.set_xlim(0.2, 0.9)
         ax.set_ylim(0.2, 0.9)
         ax.set_ylabel('Modeled albedo [-]')
-        ax.set_xlabel('Measured (RS) albedo [-]')
+        ax.set_xlabel('Observed albedo [-]')
         ax.tick_params(length=5)
         ax.legend(bbox_to_anchor=(1.2, 0.5), loc='center')
+        ax.text(0.03, 0.92, f'Bias: {self.bias():.3f}',transform=ax.transAxes)
+        ax.text(0.03, 0.85, f'MAE: {self.mae():.3f}',transform=ax.transAxes)
         ax.set_title(f'{self.name} {self.site}')
         plt.show()
         # return fig, ax
