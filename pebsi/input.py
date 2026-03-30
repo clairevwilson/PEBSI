@@ -36,6 +36,7 @@ shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized 
 climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 # climate_fp = '../climate_data/'                             # Climate data filepath
 merra2_eg_fn = 'MERRA2/MERRA2constants.nc4'                 # Global file of MERRA-2 geopotential relative to climate_fp
+ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
 AWS_fp = 'AWS/Processed/'                                   # Weather station data filepath relative to climate_fp

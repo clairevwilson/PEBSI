@@ -20,30 +20,32 @@ import pebsi.input as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
-n_runs_ahead = 0    # Step if you're going to run this script more than once
+n_runs_ahead = 36    # Step if you're going to run this script more than once
 
+out_str = 'merra2'
 # prms.deposition_data = 'UKESM'
+# prms.ukesm_fn = '../UKESM/dw068_nofires/'
 
 # Read command line args
 args = sim.get_args()
 
 # Edit these
-args.startdate = '1980-04-20 00:00'
-args.enddate = '2025-08-20 00:00'
+args.startdate = '1997-04-01 00:00'
+args.enddate = '2015-11-30 00:00'
 args.use_AWS = False
 args.dates_from_data = False
 
-with open('project/best_datasets_grains.pkl','rb') as f:
-    params = pickle.load(f)
+# with open('project/best_datasets_grains.pkl','rb') as f:
+#     params = pickle.load(f)
 
 # sites to run in parallel
 site_dict = {
-    '01.22193':['K17b','K53','K14k'], # KAHILTNA     'KPS',
-    '01.15645':['GTH','KC31','GTL'], # KENNICOTT
+    '01.22193':['K14k','K17b','K53',], # KAHILTNA     'KPS',
+    '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
     '01.00570':['AU','B','D'], # GULKANA
-    '01.09162':['N','B','EC'], # WOLVERINE
+    '01.09162':['N','B','EC'], # WOLVERINE   
     '01.01104':['B','C','D'], # LEMON CREEK
-    '01.01390':['MG1','NWB1','TKG3'], # TAKU
+    '01.01390':['MG1','NWB1','TKG3'], # TAKU       
     #  '02.06675':[], # ATHABASCA
     #  '02.05098':[], # PEYTO
     #  '02.17023':[], # SPERRY
@@ -54,6 +56,7 @@ glac_nos = list(site_dict.keys())
 # Probably do not edit
 args.store_data = True             # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
+# run_date = '2026_03_19'
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
@@ -83,7 +86,7 @@ def pack_vars():
             # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
             glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_long_'
+            args_run.out = f'{glac}{site}_{run_date}_{out_str}_'
 
             # AWS fn for albedo timeseries
             # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
@@ -93,6 +96,7 @@ def pack_vars():
             #     continue
             args_run.ksp_BC = 0.1 # params[glac][site]['ksp_BC']
             args_run.wet_grain_C = 4.22e-13 #  params[glac][site]['C1']
+            # args_run.kp = 1.5
 
             # Set task ID for SNICAR input file
             args_run.task_id = run_no + n_runs_ahead*n_processes

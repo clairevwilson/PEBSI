@@ -9,18 +9,28 @@ import xarray as xr
 climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 gfed_fp = climate_fp + 'UKESM/dr401_GFED/'
 nofires_fp = climate_fp + 'UKESM/dw068_nofires/'
-merra_fp = '~/research/climate_data/MERRA2/63.5_-145.6/'
+merra_fp = climate_fp + 'MERRA2/'
 
-# gulkana location
-point_lat = 63.259091
-point_lon = -145.428586
+# location
+glacier = 'taku'
+site_df = pd.read_csv(f'../../data/by_glacier/{glacier}/site_constants.csv', index_col=0)
+point_lat = site_df.loc['center', 'lat']
+point_lon = site_df.loc['center', 'lon']
+coord_dict = {'wolverine':'60.5_-148.7',
+                'kahiltna':'63.0_-151.2',
+                'kennicott':'61.5_-143.1',
+                'taku':'58.5_-134.3',
+                'lemon_creek':'58.5_-134.3',
+                'gulkana':'63.5_-145.6'}
+merra_coords = coord_dict[glacier]
+merra_fp += merra_coords + '/'
 
 # deposition types
 dep_list = ['wet','dry']
 species_list = ['BC','OC']
 
-plot_type = 'scatter'
-resample = '1d'
+plot_type = 'timeseries'
+resample = 'YS-APR'
 
 # create 2x2 figure
 fig, axes = plt.subplots(2, 2, figsize=(6, 6), 
@@ -62,7 +72,7 @@ for axrow, species in zip(axes, species_list):
 
         # open MERRA-2 file
         dep_str_merra = 'WT' if deptype == 'wet' else 'DP'
-        merra_fn = merra_fp + f'{species}{dep_str_merra}002_63.5_-145.6.nc'
+        merra_fn = merra_fp + f'{species}{dep_str_merra}002_{merra_coords}.nc'
         ds_merra2 = xr.open_dataarray(merra_fn)
 
         # convert units
@@ -87,7 +97,7 @@ for axrow, species in zip(axes, species_list):
         ax.tick_params(length=5)
         if plot_type == 'scatter':
             max_val = 0.00021 # max(ds_gfed.max().values, ds_nofire.max().values, ds_merra2.max().values)
-            min_val = 1e-11 # max(min(ds_gfed.min().values, ds_nofire.min().values, ds_merra2.min().values), 1e-11)
+            min_val = 1e-12 # max(min(ds_gfed.min().values, ds_nofire.min().values, ds_merra2.min().values), 1e-11)
 
             x = ds_merra2.values
             y = ds_gfed.values
@@ -109,7 +119,7 @@ for axrow, species in zip(axes, species_list):
             ax.set_ylim(min_val, max_val)
             ax.set_xscale('log')
             ax.set_yscale('log')
-            # ax.text(0.6, 0.02, f'Bias: {bias:.3f} kg m'+r'$^{-2}$',transform=ax.transAxes)
+            ax.text(0.98, 0.02, f'Bias: {bias:.3e} kg m'+r'$^{-2}$',transform=ax.transAxes, ha='right')
             # ax.text(0.6, 0.08, f'Slope: {slope:.3f}',transform=ax.transAxes)
         elif plot_type == 'timeseries':
             ax.plot(ds_gfed.time.values, ds_gfed.values, label='UK-ESM (GFED)')
@@ -121,13 +131,14 @@ for axrow, species in zip(axes, species_list):
         ax.set_title(f'{species} {deptype}')
 
 axes[0,0].legend() # bbox_to_anchor=(0.65,0.8), loc='center',fontsize=9)
+glac_name = glacier.replace('_', ' ')
 time_str = 'annual' if 'Y' in resample else 'daily'
-fig.suptitle(time_str.capitalize() + ' deposition sums (kg m$^{-2}$)')
+fig.suptitle(time_str.capitalize() + ' deposition sums (kg m$^{-2}$) for '+glac_name.capitalize()+' glacier')
 if plot_type == 'timeseries':
-    plt.savefig(f'{time_str}_deposition_timeseries.png')
+    plt.savefig(f'{glacier}_{time_str}_deposition_timeseries.png', dpi=300, bbox_inches='tight')
 elif plot_type == 'scatter':
-    fig.suptitle(time_str.capitalize() + ' deposition sums (kg m$^{-2}$)')
+    fig.suptitle(time_str.capitalize() + ' deposition sums (kg m$^{-2}$) for '+glac_name.capitalize()+' glacier')
     fig.supxlabel('MERRA-2 deposition')
-    fig.supylabel('UK-ESM deposition')
-    plt.savefig(f'{time_str}_deposition_1to1.png')
+    fig.supylabel('UK-ESM deposition', x=-0.02)
+    plt.savefig(f'{glacier}_{time_str}_deposition_1to1.png', dpi=300, bbox_inches='tight')
 plt.show()

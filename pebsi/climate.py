@@ -891,7 +891,7 @@ class Climate():
                 self.var_dict['ocwet']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'wet')
                 self.var_dict['ocdry']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'dry')
 
-                dep_fp = '../UKESM/dr401_GFED/'
+                dep_fp = prms.ukesm_fn
                 self.var_dict['bcwet']['fn'] = dep_fp + 'sum_bc_wetdeposition_kgm-2s-1.nc'
                 self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
                 self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'
