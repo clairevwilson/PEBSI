@@ -496,7 +496,7 @@ class massBalance():
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
             # apply a factor to increase grain growth at high density (f_liq is low)
-            F = np.exp(0.01*(layers.ldensity.copy()[idx] - 150)) # np.maximum(0, 1 - f_liq / 0.05) * np.maximum(0, 1 - grainsize / RFZ_GRAINSIZE)
+            F = np.exp(0.01*(layers.ldensity.copy()[idx])) # np.maximum(0, 1 - f_liq / 0.05) * np.maximum(0, 1 - grainsize / RFZ_GRAINSIZE)
             # print(self.time, grainsize[-3:], F[-3:])
             drwet = drwet * F
             # cap runaway wet metamorphosis
