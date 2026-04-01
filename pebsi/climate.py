@@ -57,6 +57,7 @@ class Climate():
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
                             'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
+        self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
         # find median elevation of the glacier from RGI for precip gradient
         RGI_region = args.glac_no.split('.')[0]
@@ -269,7 +270,6 @@ class Climate():
             assert prms.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
         dep_var = 'dry' in var or 'wet' in var
-        carbon_var = dep_var and 'du' not in var
 
         # open and check units of climate data
         ds = xr.open_dataset(fn, decode_timedelta=False)
@@ -285,7 +285,7 @@ class Climate():
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
-            if prms.deposition_data == 'UKESM' and carbon_var:
+            if prms.deposition_data == 'UKESM' and var in self.carbon_vars:
                 # tell lat/lon to use UKESM lat/lon names for BC/OC
                 lat_vn,lon_vn = ['latitude','longitude']
                 lat_res = np.diff(ds.isel({lat_vn:range(2)})[lat_vn].values)[0]
@@ -301,7 +301,7 @@ class Climate():
         else:
             ds = ds[vn]
 
-        if carbon_var and prms.deposition_data:
+        if var in self.carbon_vars and prms.deposition_data:
             # turn daily into hourly
             ds = ds.resample(time='h').ffill()
 
@@ -450,24 +450,37 @@ class Climate():
         units_in = ds.attrs['units'].replace('*','')
         units_out = model_units[var]
 
-        # check and make replacements
+        # check and make replacements for units mismatches
         if units_in != units_out:
+            # TEMPERATURE
             if var == 'temp' and units_in == 'K':
                 ds = ds - CTOK
+
+            # RELATIVE HUMIDITY
             elif var == 'rh' and units_in in ['-','0-1']:
                 ds  = ds * 100
+
+            # PRECIPITATION
             elif var == 'tp':
                 if units_in == 'kg m-2 s-1':
                     ds = ds / DENSITY_WATER * SPH
                 elif units_in == 'm':
                     ds = ds / SPH
+
+            # RADIATION
             elif var in ['SWin','LWin','NR'] and units_in == 'W m-2':
                 ds = ds * SPH
+
+            # ELEVATION
             elif var == 'elev' and units_in in ['m+2 s-2','m2 s-2']:
                 ds = ds / GRAVITY
+
+            # PARTICLE DEPOSITION 
             elif 'dry' in var or 'wet' in var:
                 if units_in == 'm-2.kg.s-1':
                     pass
+
+            # OTHER MISMATCH NOT LISTED
             else:
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
@@ -483,14 +496,23 @@ class Climate():
         else:
             self.cds_output_fn = prms.climate_fp + prms.cds_output_fn
 
-        # add measured boolean to output
+        # store the data source of each variable
         for var in self.cds.variables:
             if var in self.measured_vars:
-                self.cds[var].attrs['measured'] = 'True'
+                # variable from AWS
+                self.cds[var].attrs['source'] = 'AWS'
+            else:
+                # variable from reanalysis
+                self.cds[var].attrs['source'] = self.reanalysis 
+
+                # carbon variables could come from a different dataset
+                if prms.deposition_data and var in self.carbon_vars:
+                    self.cds[var].attrs['source'] = prms.deposition_data
         
         # store cds
         self.cds.to_netcdf(self.cds_output_fn)
         print(f'Climate dataset saved to {self.cds_output_fn}')
+        return
 
     def adjust_dep(self):
         """
@@ -697,12 +719,11 @@ class Climate():
 
         # create copy dataset and fill with RH data
         ds_rh = ds_qv.copy(deep=True)
-        ds_rh['RH2M'] = xr.DataArray(
-                                        rh,
-                                        dims=['time'],
-                                        coords={'time': ds_rh['time'].values},
-                                        attrs={'units': '%', 'long_name': '2-meter_relative_humidity'}
-                                    )
+        ds_rh['RH2M'] = xr.DataArray(rh, dims=['time'],
+                                    coords={'time': ds_rh['time'].values},
+                                    attrs={'units':'%', 
+                                           'long_name': '2-meter_relative_humidity'}
+        )
 
         # drop QV data and store the RH dataset
         ds_rh = ds_rh.drop_vars('QV2M')
@@ -883,16 +904,24 @@ class Climate():
         # functionality for independent deposition datasets
         if prms.deposition_data:
             if prms.deposition_data == 'UKESM':
+                # Define names used in UKESM data
                 sp_oc = 'particulate_organic_matter'
                 sp_bc = 'elemental_carbon'
                 vn = 'tendency_of_atmosphere_mass_content_of_SPECIES_dry_aerosol_particles_due_to_DEPTYPE_deposition'
+
+                # Variable names 
                 self.var_dict['bcwet']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'wet')
                 self.var_dict['bcdry']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'dry')
                 self.var_dict['ocwet']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'wet')
                 self.var_dict['ocdry']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'dry')
 
+                # Variable filenames
                 dep_fp = prms.ukesm_fn
                 self.var_dict['bcwet']['fn'] = dep_fp + 'sum_bc_wetdeposition_kgm-2s-1.nc'
                 self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
                 self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'
                 self.var_dict['ocdry']['fn'] = dep_fp + 'sum_oc_drydeposition_kgm-2s-1.nc'
+
+                # Remove ratio used for MERRA-2 deposition
+                prms.ratio_BC2_BCtot = 1
+                prms.ratio_OC2_OCtot = 1
