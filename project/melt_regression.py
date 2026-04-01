@@ -109,7 +109,6 @@ if args.savefig:
     plt.tight_layout()
     plt.savefig(base_fp + f'ddf/figs/{args.time_res}_correlation.png', dpi=300)
     plt.show()
-# ===============================================
 
 # ===============================================
 # ================ REGRESSION ===================
@@ -166,8 +165,8 @@ if args.albedo_predicted and 'SW_absorbed' in args.regression_vars:
     ax.tick_params(length=5)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    ax.set_xlabel('PEBSI albedo (mm w.e.)')
-    ax.set_ylabel('Predicted albedo (mm w.e.)')
+    ax.set_xlabel('PEBSI albedo')
+    ax.set_ylabel('Predicted albedo')
     ax.set_title(f'Albedo random forest predictions\n{args.group.capitalize()} glaciers with {args.time_res} data')
     if args.savefig:
         plt.savefig(base_fp + f'ddf/figs/{args.group}_{args.time_res}_albedo_regression.png', dpi=300, bbox_inches='tight')
