@@ -4,6 +4,7 @@ from scipy.stats import gaussian_kde
 import pandas as pd
 import numpy as np
 import xarray as xr
+colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A']
 
 # define filepaths
 climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
@@ -12,7 +13,7 @@ nofires_fp = climate_fp + 'UKESM/dw068_nofires/'
 merra_fp = climate_fp + 'MERRA2/'
 
 # location
-glacier = 'taku'
+glacier = 'gulkana'
 site_df = pd.read_csv(f'../../data/by_glacier/{glacier}/site_constants.csv', index_col=0)
 point_lat = site_df.loc['center', 'lat']
 point_lon = site_df.loc['center', 'lon']
@@ -29,6 +30,7 @@ merra_fp += merra_coords + '/'
 dep_list = ['wet','dry']
 species_list = ['BC','OC']
 
+# plotting options
 plot_type = 'timeseries'
 resample = 'YS-APR'
 
@@ -78,6 +80,11 @@ for axrow, species in zip(axes, species_list):
         # convert units
         ds_merra2 = ds_merra2 * 3600 # convert from kg m-2 s-1 to kg m-2 (HOURLY data)
 
+        # apply ratio from hydrophilic --> both
+        ratio = 2.08 if species == 'BC' else 1.54
+        if deptype == 'dry':
+            ds_merra2 *= ratio
+
         # find timestamps in common
         start = max(ds_gfed.time.min().values,ds_merra2.time.min().values)
         end = min(ds_gfed.time.max().values,ds_merra2.time.max().values)
@@ -122,9 +129,9 @@ for axrow, species in zip(axes, species_list):
             ax.text(0.98, 0.02, f'Bias: {bias:.3e} kg m'+r'$^{-2}$',transform=ax.transAxes, ha='right')
             # ax.text(0.6, 0.08, f'Slope: {slope:.3f}',transform=ax.transAxes)
         elif plot_type == 'timeseries':
-            ax.plot(ds_gfed.time.values, ds_gfed.values, label='UK-ESM (GFED)')
-            ax.plot(ds_nofire.time.values, ds_nofire.values, label='UK-ESM (no fires)')
-            ax.plot(ds_merra2.time.values, ds_merra2.values, label='MERRA-2')
+            ax.plot(ds_gfed.time.values, ds_gfed.values, label='UK-ESM (GFED)', c=colors[0])
+            ax.plot(ds_nofire.time.values, ds_nofire.values, label='UK-ESM (no fires)', c=colors[0], linestyle='--')
+            ax.plot(ds_merra2.time.values, ds_merra2.values, label='MERRA-2', c=colors[1])
 
             ax.xaxis.set_major_formatter(mpl.dates.DateFormatter('%Y'))
             ax.xaxis.set_major_locator(mpl.dates.YearLocator(4))
