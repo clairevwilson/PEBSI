@@ -23,7 +23,7 @@ from data_handling import MassBalance
 group = 'all'
 time_res = 'daily'
 regression_vars = ['positive_temp','SW_absorbed']
-albedo_regression_vars = ['positive_temp','bc_dep_cumsum']
+albedo_regression_vars = ['positive_temp','accum','bc_dep_cumsum']
 
 # ===============================================
 # ==================== INPUTS ===================
@@ -81,6 +81,10 @@ all_groups = {
           'accumulation_area':list_accumulation,
           'ablation_area':list_ablation
           }
+for site in site_dict:
+    all_groups[site] = [site]
+glacier_based_groups = list(site_dict.keys()) + ['all','coastal','continental']
+site_based_groups = ['accumulation_area','ablation_area']
 
 # list strings to use for each regression variable in written equation
 var_dict = {'positive_temp':{'const':r'f_T', 'var':r'T_+'},
@@ -92,9 +96,9 @@ var_dict = {'positive_temp':{'const':r'f_T', 'var':r'T_+'},
 
 # open dataframe processed in `get_ddf.py` containing hourly data for all sites
 all_df = pd.read_csv(base_fp+f'ddf/all_{args.time_res}_df.csv')
-if args.group in ['all','coastal','continental']:
+if args.group in glacier_based_groups:
     glac_df = all_df.loc[all_df['glacier'].isin(all_groups[args.group])].copy()
-else:
+elif args.group in site_based_groups:
     glac_df = all_df.loc[all_df['glaciersite'].isin(all_groups[args.group])].copy()
 glac_df['SW_absorbed'] = glac_df['SWin'] * (1-glac_df['albedo'])
 if 'positive_temp' not in glac_df.columns:
@@ -266,3 +270,35 @@ if args.savefig:
         vars_str += '_predalbedo'
     plt.savefig(base_fp + f'ddf/figs/{args.group}_{args.time_res}_regression_{vars_str}.png', dpi=300, bbox_inches='tight')
 plt.show()
+
+# plot histograms
+fig, (ax1, ax2) = plt.subplots(2, figsize=(5, 4), gridspec_kw={'hspace':0.4})
+bins_diff = np.arange(-20.5, 20, 1)
+ax1.hist(melt_actual - melt_predicted, bins=bins_diff, histtype='step', edgecolor=colors[0])
+ax1.axvline(0, c='k', linewidth=0.5)
+ax1.set_xlabel('Melt residuals (mm w.e.) (predicted $-$ PEBSI)')
+bins = np.arange(0, 80, 2)
+ax2.hist(melt_actual, histtype='step', label='PEBSI', bins=bins, edgecolor=colors[1])
+ax2.hist(melt_predicted, histtype='step', label='Predicted', bins=bins, edgecolor=colors[4])
+ax2.set_xlabel('Melt (mm w.e.)')
+ax2.legend()
+plt.savefig(base_fp + 'ddf/figs/histogram.png',dpi=300)
+plt.show()
+
+if args.albedo_predicted and 'SW_absorbed' in args.regression_vars:
+    fig, (ax1, ax2) = plt.subplots(2, figsize=(5, 4), gridspec_kw={'hspace':0.4})
+    bins_diff = np.arange(-0.21, 0.2, 0.02)
+    ax1.hist(glac_df['albedo_ml'] - glac_df['albedo'], bins=bins_diff, histtype='step', edgecolor=colors[0])
+    ax1.set_xlabel('Albedo residuals (predicted $-$ PEBSI)')
+    ax1.axvline(0, c='k', linewidth=0.5)
+    bins = np.arange(0.1, 0.9, 0.02)
+    ax2.hist(glac_df['albedo'], histtype='step', label='PEBSI', bins=bins, edgecolor=colors[1])
+    ax2.hist(glac_df['albedo_ml'], histtype='step', label='Predicted', bins=bins, edgecolor=colors[4])
+    ax2.set_xlim(0.1, 0.9)
+    ax2.set_xlabel('Albedo')
+    ax2.legend()
+    fig.supylabel('Count')
+    n = len(glac_df.index)
+    ax1.text(0.02, 0.9, f'$n={n}$', transform=ax1.transAxes)
+    plt.savefig(base_fp + 'ddf/figs/albedo_histogram.png', dpi=300)
+    plt.show()

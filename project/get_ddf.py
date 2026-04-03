@@ -69,7 +69,7 @@ def get_daily_df(ds_in, ds_bc, ds_sw, output_fn=None, plot_corr=False, savefig=F
     ddf = ddf.where(np.isfinite(ddf))  # avoids nans and infinity
     ddf = ddf.where(daily_melt > 1) # avoids small melt days
     ddf = ddf.where(daily_snow_depth > 1e-8) # avoids days with ice surface
-    ddf = ddf.where(daily_snow_temp > -1) # avoids days where snow is not ripe
+    # ddf = ddf.where(daily_snow_temp > -1) # avoids days where snow is not ripe
     
     # start to build the dataset
     ds = xr.Dataset({
@@ -94,7 +94,7 @@ def get_daily_df(ds_in, ds_bc, ds_sw, output_fn=None, plot_corr=False, savefig=F
 
     # define variables to drop and to take cumsum
     drop_vars = ['lat','lon'] # ,'melt'
-    cum_vars = ['bc_dep','accum','pdds']
+    cum_vars = ['bc_dep','pdds']
     if include_OC:
         cum_vars += ['oc_dep']
 
@@ -114,15 +114,15 @@ def get_daily_df(ds_in, ds_bc, ds_sw, output_fn=None, plot_corr=False, savefig=F
     ds[rolling_pdds] = ds['pdds'].rolling(time=n_rolling_pdds).sum()
 
     # clip to where PDDs have built up
-    ds = ds.where(ds['pdds_cumsum'] > 50)
-    ds = ds.where(ds['ddf'] < 100)
+    # ds = ds.where(ds['pdds_cumsum'] > 50)
+    # ds = ds.where(ds['ddf'] < 100)
 
     # create dataframe and drop variables
     df = ds.to_dataframe().drop(columns=drop_vars)
 
     # rename and reorder columns
     df = df.rename(columns={'daily_snow_depth':'snow_depth'})
-    first = ['ddf','days_since_accum','accum_cumsum',rolling_accum,'pdds_cumsum',rolling_pdds] # 'ddf_wBCOC', 'ddf_noBCOC', 
+    first = ['ddf','days_since_accum',rolling_accum,'pdds_cumsum',rolling_pdds] # 'ddf_wBCOC', 'ddf_noBCOC', 
     df = df[first + [c for c in df.columns if c not in first]]
 
     # crop to usable days
