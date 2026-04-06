@@ -361,6 +361,10 @@ class Climate():
             if prms.reanalysis == 'MERRA2' and prms.adjust_deposition:
                 self.adjust_dep()
 
+            # apply coefficient to deposition
+            if not prms.deposition_data: 
+                self.apply_dep_ratio()
+
         # check all variables are there
         failed = []
         for var in self.all_vars:
@@ -539,6 +543,24 @@ class Climate():
         #     self.cds['bcwet'][{'time':idx}] = self.cds['bcwet'][{'time':idx}] * f
         self.cds['bcdry'].values *= f
         self.cds['bcwet'].values *= f
+        return
+    
+    def apply_dep_ratio(self):
+        reg = self.args.glac_no[:2]
+        fn_bc = prms.merra2_laps_fn.replace('SPECIES','BC').replace('##', reg)
+        fn_oc = prms.merra2_laps_fn.replace('SPECIES','OC').replace('##', reg)
+
+        # open ratio dataset
+        ds_bc = xr.open_dataset(prms.climate_fp + fn_bc)
+        ds_oc = xr.open_dataset(prms.climate_fp + fn_oc)
+
+        # select ratio at the correct lat/lon
+        ratio_bc = ds_bc['ratio'].sel(lat=self.flat, lon=self.flon, method='nearest').values
+        ratio_oc = ds_oc['ratio'].sel(lat=self.flat, lon=self.flon, method='nearest').values
+
+        # apply to dry deposition
+        self.cds['bcdry'] *= ratio_bc 
+        self.cds['ocdry'] *= ratio_oc
         return
 
     def temp_to_elevation(self):
@@ -802,9 +824,9 @@ class Climate():
         assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
         ds_global = xr.open_dataset(eg_fn)
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
-        flat = str(ds_closest.lat.values)
-        flon = str(ds_closest.lon.values)
-        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon[:6]}'
+        self.flat = str(ds_closest.lat.values)
+        self.flon = str(ds_closest.lon.values)
+        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{self.flat}_{self.flon[:6]}'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp
@@ -921,7 +943,3 @@ class Climate():
                 self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
                 self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'
                 self.var_dict['ocdry']['fn'] = dep_fp + 'sum_oc_drydeposition_kgm-2s-1.nc'
-
-                # Remove ratio used for MERRA-2 deposition
-                prms.ratio_BC2_BCtot = 1
-                prms.ratio_OC2_OCtot = 1

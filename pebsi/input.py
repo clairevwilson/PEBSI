@@ -36,6 +36,7 @@ shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized 
 climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 # climate_fp = '../climate_data/'                             # Climate data filepath
 merra2_eg_fn = 'MERRA2/MERRA2constants.nc4'                 # Global file of MERRA-2 geopotential relative to climate_fp
+merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios
 ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
@@ -219,8 +220,6 @@ OC_freshsnow = 0            # Concentration of OC in fresh snow for initializati
 dust_freshsnow = 0          # Concentration of dust in fresh snow for initilization [kg m-3]
 adjust_deposition = False   # Adjust deposition according to preprocessed factor
 # <<<<<< MERRA-2: LAP binning >>>>>
-ratio_BC2_BCtot = 2.08      # Ratio to transform BC bin 2 deposition to total BC
-ratio_OC2_OCtot = 1.54      # Ratio to transform OC bin 2 deposition to total OC
 ratio_DU3_DUtot = 3         # Ratio to transform dust bin 3 deposition to total dust
 ratio_DU_bin1 = 0.0751      # Ratio to transform total dust to SNICAR Bin 1 (0.05-0.5um)
 ratio_DU_bin2 = 0.20535     # " SNICAR Bin 2 (0.5-1.25um)

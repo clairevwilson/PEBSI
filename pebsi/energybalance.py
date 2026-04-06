@@ -492,8 +492,6 @@ class energyBalance():
             Class object from pebsi.layers
         """
         # CONSTANTS
-        BC_RATIO = prms.ratio_BC2_BCtot
-        OC_RATIO = prms.ratio_OC2_OCtot
         DUST_RATIO = prms.ratio_DU3_DUtot
         
         # switch runs have no LAPs
@@ -504,8 +502,8 @@ class energyBalance():
 
         # ice layers are not affected by LAPs
         if layers.ltype[0] != 'ice':
-            layers.lBC[0] += self.bcdry * self.dt * BC_RATIO
-            layers.lOC[0] += self.ocdry * self.dt * OC_RATIO
+            layers.lBC[0] += self.bcdry * self.dt
+            layers.lOC[0] += self.ocdry * self.dt
             layers.ldust[0] += self.dustdry * self.dt * DUST_RATIO
         return
     
