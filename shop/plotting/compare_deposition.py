@@ -6,6 +6,10 @@ import numpy as np
 import xarray as xr
 colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A']
 
+# plotting options
+plot_type = 'timeseries'
+resample = 'YS-APR'
+
 # define filepaths
 climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 gfed_fp = climate_fp + 'UKESM/dr401_GFED/'
@@ -13,7 +17,7 @@ nofires_fp = climate_fp + 'UKESM/dw068_nofires/'
 merra_fp = climate_fp + 'MERRA2/'
 
 # location
-glacier = 'gulkana'
+glacier = 'kahiltna'
 site_df = pd.read_csv(f'../../data/by_glacier/{glacier}/site_constants.csv', index_col=0)
 point_lat = site_df.loc['center', 'lat']
 point_lon = site_df.loc['center', 'lon']
@@ -30,9 +34,12 @@ merra_fp += merra_coords + '/'
 dep_list = ['wet','dry']
 species_list = ['BC','OC']
 
-# plotting options
-plot_type = 'timeseries'
-resample = 'YS-APR'
+# get deposition ratio maps
+ratios_bc = xr.open_dataset(climate_fp + 'MERRA2/reg01_BC_regression_map.nc')
+ratios_oc = xr.open_dataset(climate_fp + 'MERRA2/reg01_OC_regression_map.nc')
+ratio_bc = ratios_bc['ratio'].sel(lat=point_lat, lon=point_lon, method='nearest').values
+ratio_oc = ratios_oc['ratio'].sel(lat=point_lat, lon=point_lon, method='nearest').values
+print('Ratios: BC', ratio_bc, 'OC', ratio_oc)
 
 # create 2x2 figure
 fig, axes = plt.subplots(2, 2, figsize=(6, 6), 
@@ -81,7 +88,7 @@ for axrow, species in zip(axes, species_list):
         ds_merra2 = ds_merra2 * 3600 # convert from kg m-2 s-1 to kg m-2 (HOURLY data)
 
         # apply ratio from hydrophilic --> both
-        ratio = 2.08 if species == 'BC' else 1.54
+        ratio = ratio_bc if species == 'BC' else ratio_oc
         if deptype == 'dry':
             ds_merra2 *= ratio
 
