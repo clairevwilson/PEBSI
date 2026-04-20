@@ -87,7 +87,8 @@ store_bands = False         # Store spectral albedo .csv
 store_climate = False       # Store climate dataset .nc
 
 # METHODS
-method_turbulent = 'MO-similarity'      # 'MO-similarity' or 'BulkRichardson' 
+method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
+method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
 method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'

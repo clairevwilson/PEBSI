@@ -464,25 +464,28 @@ class energyBalance():
             csT = KARMAN**2/(np.log(z/z0) * np.log(z/z0t))
             csQ = KARMAN**2/(np.log(z/z0) * np.log(z/z0q))
 
-            # if RICHARDSON <= 0.01:
-            #     psi = 1
-            # elif 0.01 < RICHARDSON <= 0.2:
-            #     psi = np.square(1-5*RICHARDSON)
-            # else:
-            #     psi = 0
-
-            # Beljaars and Holtslag
-            if RICHARDSON <= 0:
-                psi = (1.0 - 15.0 * RICHARDSON)**0.5 # unstable
+            if prms.method_stability in ['cutoff']:
+                if RICHARDSON <= 0.01:
+                    psi = 1
+                elif 0.01 < RICHARDSON <= 0.2:
+                    psi = np.square(1-5*RICHARDSON)
+                else:
+                    psi = 0
+            elif prms.method_stability in ['BeljaarsHoltslag']:
+                # Beljaars and Holtslag
+                if RICHARDSON <= 0:
+                    psi = (1.0 - 15.0 * RICHARDSON)**0.5 # unstable
+                else:
+                    psi = np.exp(-5.0 * RICHARDSON) # stable
             else:
-                psi = np.exp(-5.0 * RICHARDSON) # stable
+                prms.ConfigError('Choose stability correction from  from [BeljaarsHoltslag, cutoff]')
             
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
 
         else:
-            assert 1==0, 'Choose turbulent method from MO-similarity or BulkRichardson'
+            prms.ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
         
         return Qs, Ql
     
