@@ -182,7 +182,7 @@ class energyBalance():
         elif mode in ['list']:
             return [self.SWin, self.SWout, LWin, LWout, Qs, Ql, Qp, Qg]
         else:
-            assert 1==0, 'argument \'mode\' in function surfaceEB should be sum or optim'
+            prms.ConfigError('argument \'mode\' in function surfaceEB should be sum or optim')
     
     def get_SW(self,surface):
         """
@@ -208,7 +208,8 @@ class energyBalance():
         # albedo inputs
         albedo = surface.albedo
         spectral_weights = surface.spectral_weights
-        assert np.abs(1-np.sum(spectral_weights)) < 1e-5, 'Solar weights dont sum to 1'
+        if np.abs(1-np.sum(spectral_weights)) > 1e-5:
+            prms.ConfigError('surface.spectral_weights dont sum to 1: SNICAR issue')
 
         # get solar position
         time_UTC = self.timestamp - self.args.timezone
@@ -476,7 +477,7 @@ class energyBalance():
                 else:
                     psi = np.exp(-5.0 * RICHARDSON) # stable
             else:
-                prms.ConfigError('Choose stability correction from  from [BeljaarsHoltslag, cutoff]')
+                prms.ConfigError('Choose stability correction from [BeljaarsHoltslag, cutoff]')
             
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
