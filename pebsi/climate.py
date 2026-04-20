@@ -123,6 +123,7 @@ class Climate():
         self.get_vardict()
         if not self.args.use_AWS:
             self.measured_vars = []
+            self.need_vars = self.all_vars.copy()
 
         # create empty dataset
         nans = np.ones(self.n_time)*np.nan
