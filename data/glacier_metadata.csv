@@ -1,4 +1,4 @@
-﻿RGI_ID,name,timezone,AWS_fn,AWS_elev,start,end
+RGI_ID,name,timezone,AWS_fn,AWS_elev,start,end
 00.00000,test,0,data/sample_aws.csv,1500,,
 01.00570,gulkana,-8,gulkana2024.csv,1682,,
 01.01104,lemoncreek,-8,LemonCreek1285_hourly.csv,,5/5/2008,9/13/2008

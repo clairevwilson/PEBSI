@@ -38,6 +38,7 @@ parser.add_argument('-run_type', default='long', type=str)
 args = parser.parse_args()
 n_processes = args.n_simultaneous_processes
 
+# =============== PARALLELIZATION ===============
 # Determine number of runs for each process
 n_runs = 1
 for param in list(params.keys()):
@@ -52,14 +53,17 @@ else:
     n_runs_per_process = n_runs // n_processes  # Base number of runs per CPU
     n_process_with_extra = n_runs % n_processes    # Number of CPUs with one extra run
 
-# Create output directory
-if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+# Parse list for inputs to Pool function
+packed_vars = [[] for _ in range(n_processes)]
+run_no = 0  # Counter for runs added to each set
+set_no = 0  # Index for the parallel process
+
+# =================== MODEL ARGS ===================
 # Store all variables
 args.store_data = True
 prms.store_vars = ['MB','layers','temp','EB']
 
-# Force some args
+# Get timing for 2024 or long run
 if args.run_type == '2024': # Short AWS run
     args.use_AWS = True
     prms.AWS_fn = '../climate_data/AWS/Processed/gulkana2024.csv'
@@ -69,46 +73,74 @@ if args.run_type == '2024': # Short AWS run
 else: # Long MERRA-2 run
     args.use_AWS = False
     prms.store_vars = ['MB','layers','temp','EB']
-    args.startdate = pd.to_datetime('2000-04-15 00:00:00')
-    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
+    args.startdate = pd.to_datetime('2019-04-20 00:00:00')
+    args.enddate = pd.to_datetime('2025-08-20 00:00:00')
 
-if repeat_run:
-    date = '12_09' # if args.run_type == 'long' else '08_02'
-    print('Forcing run date to be', date)
-    n_today = '0'
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    if not os.path.exists(prms.output_fp + out_fp):
-        os.mkdir(prms.output_fp + out_fp)
-else:
-    date = str(pd.Timestamp.today()).replace('-','_')[5:10]
-    n_today = 0
-    out_fp = f'{date}_{args.site}_{n_today}/'
-    while os.path.exists(prms.output_fp + out_fp):
-        n_today += 1
-        out_fp = f'{date}_{args.site}_{n_today}/'
-    os.mkdir(prms.output_fp + out_fp)
+# =================== QUANTILE MAPPING ===================
+# Find the coordinates of all the available weather stations
+all_available = ['gulkana','lemon_creek','wolverine']
+coords_available = {}
+vars_available = {}
+for glac in all_available:
+    glac_df = pd.read_csv(f'data/by_glacier/{glac}/site_constants.csv',index_col='site')
+    lat = glac_df.loc['center','lat']
+    lon = glac_df.loc['center','lon']
+    coords_available[glac] = (lat, lon)
+    vars_available[glac] = []
+    for fn in os.listdir('data/bias_adjustment/'):
+        if glac in fn:
+            var = fn.split(glac)[-1].split('_')[1].split('.')[0]
+            if var not in vars_available[glac]:
+                vars_available[glac].append(var)
 
+# Find the coordinates of the site about to be run
+meta_df = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
+run_glacier = meta_df.loc[args.glac_no]['name']
+site_df = pd.read_csv(f'data/by_glacier/{run_glacier}/site_constants.csv',index_col='site')
+run_lat, run_lon = (site_df.loc[args.site, 'lat'], site_df.loc[args.site, 'lon'])
+
+# Find the nearest available point to the run lat/lon
+pts = np.array(list(coords_available.values()))
+distances = np.hypot(pts[:, 0] - run_lat, pts[:,1] - run_lon)
+nearest_qm_glac = all_available[np.argmin(distances)]
+
+# Store in args
+args.qm_glac_name = nearest_qm_glac 
+# prms.bias_vars = vars_available[nearest_qm_glac]
+prms.bias_vars = ['temp']
+
+# =================== PRECIPITATION FACTOR ===================
+# Pre-determined precipitation factor
+kp = site_df.loc[args.site, 'kp']
+if np.isnan(kp):
+    kp = 2.5 # 1
+
+# =================== OUTPUT ===================
+# Create output directory
+if 'trace' in prms.machine:
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+
+# Create the folder to store the data
+date = str(pd.Timestamp.today()).replace('-','_')[5:10]
+n_today = 0
+out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
+while os.path.exists(prms.output_fp + out_fp):
+    n_today += 1
+    out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
+os.mkdir(prms.output_fp + out_fp)
+
+# ============== INITIALIZE LOOP ==============
 # Transform params to strings for comparison
+param_1, param_2 = list(params.keys())
 for key in params:
     for v,value in enumerate(params[key]):
         params[key][v] = str(value)
-
-# Parse list for inputs to Pool function
-packed_vars = [[] for _ in range(n_processes)]
-run_no = 0  # Counter for runs added to each set
-set_no = 0  # Index for the parallel process
 
 # Storage for failed runs
 all_runs = []
 missing_fn = prms.output_fp + out_fp + 'missing.txt'
 
-# Dates depend on the site
-if args.run_type == 'long':
-    if args.site == 'A':
-        args.enddate = pd.to_datetime('2015-05-20 00:00:00')
-    elif args.site == 'AU':
-        args.startdate = pd.to_datetime('2012-04-20 00:00:00')
-
+# =================== CORE ===================
 # Loop through parameters
 for p1 in params[param_1]:
     for p2 in params[param_2]:
@@ -128,8 +160,16 @@ for p1 in params[param_1]:
         # Get the climate
         climate_run, args_run = sim.initialize_model(args_run)
 
+        # Handle BC fraction
+        # climate_run.cds['ocwet'] *= float(p1)
+        # climate_run.cds['bcwet'] *= float(p1)
+        # climate_run.cds['ocdry'] *= float(p1)
+        # climate_run.cds['bcdry'] *= float(p1)
+
         # Specify attributes for output file
-        store_attrs = {'lapse_rate':-6.5, 'c5':p1,'kp':p2}
+        store_attrs = {'lapse_rate':args_run.lapse_rate, 'C1':args_run.wet_grain_C,
+                       'c5':args_run.Boone_c5,'kp':args_run.kp,
+                       'ksp_BC':args_run.ksp_BC,'wet':'F = np.exp(0.01*(layers.ldensity.copy()[idx] - 150))'}
 
         # Set task ID for SNICAR input file
         args_run.task_id = set_no
@@ -181,11 +221,12 @@ def run_model_parallel(list_inputs):
                 massbal.output.add_basic_attrs(args,time_elapsed,climate)
 
             except Exception as e:
-                print('An error occurred at site',args.site,'with c5 =',args.Boone_c5,'kp =',args.kp,' ... removing',args.out)
+                print('An error occurred at site',args.site,'with',store_attrs,' ... removing',args.out)
                 traceback.print_exc()
                 os.remove(prms.output_fp + args.out + '0.nc')
     return
 
+# =================== EXECUTE ===================
 # Run model in parallel
 with Pool(n_processes) as processes_pool:
     processes_pool.map(run_model_parallel,packed_vars)

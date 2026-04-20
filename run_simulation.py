@@ -67,8 +67,12 @@ def get_args(parse=True):
                         default=prms.store_data, help='store the model output?')
     parser.add_argument('-debug', action='store_true',
                         default=prms.debug, help='print debug statements?')
+    parser.add_argument('-pb','--progress_bar', action='store_true',
+                        help='show progress bar for main loop?')
     parser.add_argument('-out',action='store',type=str,default='',
-                        help='output file name excluding extension (.nc)')
+                        help='output file name excluding extension')
+    parser.add_argument('-qm_glac_name',action='store',type=str,default='',
+                        help='glacier for quantile mapping climate data')
     
     # ALBEDO SWITCHES
     parser.add_argument('-switch_LAPs',action='store', type=int,
@@ -87,6 +91,10 @@ def get_args(parse=True):
                         help='Bare ice albedo')
     parser.add_argument('-lapse_rate',default=prms.lapserate,action='store',type=float,
                         help='Temperature lapse rate [K km-1]')
+    parser.add_argument('-ksp_BC',default=prms.ksp_BC,action='store',type=float,
+                        help='Meltwater partition coefficient for BC/OC')
+    parser.add_argument('-C1','--wet_grain_C',default=prms.wet_grain_C,action='store',type=float,
+                        help='Constant for wet grain metamorphosis')
     
     # FILEPATHS
     parser.add_argument('-initial_temp_fn',default=prms.initial_temp_fn,type=str,
@@ -97,6 +105,8 @@ def get_args(parse=True):
                         action='store',help='Filepath for initializing grain size')
     parser.add_argument('-initial_LAP_fn',default=prms.initial_LAP_fn,type=str,
                         action='store',help='Filepath for initializing LAPs')
+    parser.add_argument('-AWS_fn',action='store',default='',
+                        help='filepath to AWS data')
     
     # PARALLELIZATION
     parser.add_argument('-n','--n_simultaneous_processes',default=1,type=int,
@@ -133,15 +143,34 @@ def get_site_table(site_df, args):
     args.aspect = site_df.loc[site]['aspect']
     args.sky_view = site_df.loc[site]['sky_view']
 
-    # snow and firn depth may be specified in the site_constants table
+    # deal with site-specific constants from site table
+    # SNOW DEPTH
     if 'snowdepth' in site_df.columns:
         if not np.isnan(site_df.loc[site,'snowdepth']):
             args.initial_snow_depth = site_df.loc[site,'snowdepth']
-    if 'firndepth' in site_df.columns:
-        if not np.isnan(site_df.loc[site,'firndepth']):
-            args.initial_firn_depth = site_df.loc[site,'firndepth']
 
-    # Override site lat/lon/elevation with the AWS site
+    # FIRN DEPTH
+    if 'firndepth' in site_df.columns and ~np.isnan(site_df.loc[site,'firndepth']):
+        args.initial_firn_depth = site_df.loc[site,'firndepth']
+    # firn depth is not in the table: estimate if the site should have firn
+    elif args.elev > site_df.loc['center','elevation']:
+        # above median glacier elevation: initialize with firn
+        args.initial_firn_depth = prms.initial_firn_depth
+    else:
+        # below median glacier elevation: no firn
+        args.initial_firn_depth = 0
+
+    # ICE ALBEDO
+    if 'a_ice' in site_df.columns:
+        if not np.isnan(site_df.loc[site,'a_ice']):
+            args.a_ice = site_df.loc[site,'a_ice']
+
+    # ICE ALBEDO
+    if 'kp' in site_df.columns:
+        if not np.isnan(site_df.loc[site,'kp']):
+            args.kp = site_df.loc[site,'kp']
+
+    # if specified, override site lat/lon/elevation with the AWS site
     if args.use_AWS and prms.use_AWS_site:
         metadata_df = pd.read_csv(prms.AWS_metadata_fn, sep='\t', index_col='glacier')
         args.lat = metadata_df.loc[args.glac_name, 'latitude']
@@ -150,7 +179,7 @@ def get_site_table(site_df, args):
         if args.debug:
             print(f'~ Using AWS site: ({args.lat}, {args.lon}) at {args.elev} m a.s.l.')
 
-    # Check if initial data exists
+    # get fns for the initialization data
     initial_fns = {'temp':args.initial_temp_fn,
                    'density':args.initial_density_fn,
                    'grains':args.initial_grains_fn,
@@ -165,7 +194,7 @@ def get_site_table(site_df, args):
     args.initial_grains_fn = initial_fns['grains']
     args.initial_LAP_fn = initial_fns['LAP']
 
-    # *****Special HARD-CODED handling for Gulkana*****
+    # *****special HARD-CODED handling for Gulkana*****
     if args.glac_name == 'gulkana' and args.site != 'center':
         # set scaling albedo
         albedo_B = 0.337 # 485 in 2024, 337 in 2025
@@ -175,13 +204,13 @@ def get_site_table(site_df, args):
         args.a_ice = intercept + (args.elev - site_df.loc['A','elevation'])*slope
         args.a_ice = min(albedo_B,args.a_ice)
 
-        # HARD CODING FOR GULKANA:
-        if args.site == 'AB':
-            args.a_ice = 0.2777
-        elif args.site == 'AU':
-            args.a_ice = 0.3134
-        elif args.site == 'B':
-            args.a_ice = 0.3471
+        # HARD CODING:
+        # if args.site == 'AB':
+        #     args.a_ice = 0.2777
+        # elif args.site == 'AU':
+        #     args.a_ice = 0.3134
+        # elif args.site == 'B':
+        #     args.a_ice = 0.3471
 
         # set initial density profile from measurements
         if args.site not in ['AB','ABB','BD']:
@@ -237,6 +266,7 @@ def get_shading(args):
         # grab the lat/lon from RGI
         args.lat = RGI_df.loc[args.glac_no,'CenLat']
         args.lon = RGI_df.loc[args.glac_no,'CenLon']
+        args.elev = RGI_df.loc[args.glac_no,'Zmed']
         if args.site != 'center':
             print('~ Using centerpoint lat/lon: changed site name to \"center\"')
 
@@ -284,8 +314,8 @@ def check_inputs(args):
         if args.debug:
             print('Test glacier: using sample AWS data')
     else:
-        if args.use_AWS:
-            args.AWS_fn = prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
+        if args.use_AWS and len(args.AWS_fn) < 1:
+            args.AWS_fn = prms.climate_fp + prms.AWS_fp + args.glac_name + '/' + all_df.loc[glac_no,'AWS_fn']
 
     # specify filepaths to args
     args.shading_fn = prms.shading_fn.replace('GLACIER',args.glac_name).replace('SITE',args.site)

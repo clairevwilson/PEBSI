@@ -70,6 +70,7 @@ class energyBalance():
         # time
         self.timestamp = timestamp
         self.dt = prms.dt
+        self.iters = 0
 
         # store previous timestep incoming shortwave
         if timestamp != pd.to_datetime(climate.cds.time.values[0]):
@@ -170,6 +171,9 @@ class energyBalance():
 
         # OUTPUTS
         Qm = NR + Qp + Qs + Ql + Qg
+
+        # keep track of iterations
+        self.iters += 1
 
         if mode in ['sum']:
             return Qm
@@ -459,18 +463,29 @@ class energyBalance():
             # calculate stability coefficients
             csT = KARMAN**2/(np.log(z/z0) * np.log(z/z0t))
             csQ = KARMAN**2/(np.log(z/z0) * np.log(z/z0q))
-            if RICHARDSON <= 0.01:
-                psi = 1
-            elif 0.01 < RICHARDSON <= 0.2:
-                psi = np.square(1-5*RICHARDSON)
+
+            if prms.method_stability in ['cutoff']:
+                if RICHARDSON <= 0.01:
+                    psi = 1
+                elif 0.01 < RICHARDSON <= 0.2:
+                    psi = np.square(1-5*RICHARDSON)
+                else:
+                    psi = 0
+            elif prms.method_stability in ['BeljaarsHoltslag']:
+                # Beljaars and Holtslag
+                if RICHARDSON <= 0:
+                    psi = (1.0 - 15.0 * RICHARDSON)**0.5 # unstable
+                else:
+                    psi = np.exp(-5.0 * RICHARDSON) # stable
             else:
-                psi = 0
+                prms.ConfigError('Choose stability correction from  from [BeljaarsHoltslag, cutoff]')
             
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
+
         else:
-            assert prms.method_turbulent in ['BulkRichardson','MO-similarity'], 'Invalid turbulent method'
+            prms.ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
         
         return Qs, Ql
     
@@ -485,8 +500,6 @@ class energyBalance():
             Class object from pebsi.layers
         """
         # CONSTANTS
-        BC_RATIO = prms.ratio_BC2_BCtot
-        OC_RATIO = prms.ratio_OC2_OCtot
         DUST_RATIO = prms.ratio_DU3_DUtot
         
         # switch runs have no LAPs
@@ -497,8 +510,8 @@ class energyBalance():
 
         # ice layers are not affected by LAPs
         if layers.ltype[0] != 'ice':
-            layers.lBC[0] += self.bcdry * self.dt * BC_RATIO
-            layers.lOC[0] += self.ocdry * self.dt * OC_RATIO
+            layers.lBC[0] += self.bcdry * self.dt
+            layers.lOC[0] += self.ocdry * self.dt
             layers.ldust[0] += self.dustdry * self.dt * DUST_RATIO
         return
     

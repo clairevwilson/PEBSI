@@ -9,6 +9,8 @@ in an hourly time loop.
 """
 # Built-in libraries
 import os, sys
+import time
+from tqdm import tqdm
 # External libraries
 import numpy as np
 import pandas as pd
@@ -46,12 +48,14 @@ class massBalance():
         self.days_since_snowfall = 0
         self.time_list = climate.dates
         self.firn_converted = False
+        self.ice_exposed = False
 
         # initialize climate, layers and surface classes
         self.args = args
         self.climate = climate
         self.layers = Layers(climate,args)
         self.surface = Surface(self.layers,self.time_list,args,climate)
+        self.timer = ProgressTimer(total_steps=len(self.time_list))
 
         # initialize output class
         self.output = Output(self.time_list,args)
@@ -79,9 +83,10 @@ class massBalance():
         DENSITY_WATER = prms.density_water
 
         # ===== ENTER TIME LOOP =====
-        for time in self.time_list:
+        for time in self.iterable(self.time_list, desc='Main loop'):
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
+            self.timer.update()
 
             # initialize the energy balance to unpack climate data for this timestep
             enbal = energyBalance(self,time)
@@ -118,7 +123,7 @@ class massBalance():
             # >>> MELTING <<<
             # calculate subsurface heating from penetrating SW
             subsurf_layermelt = self.subsurface_heating()
-    
+
             # combine surface and subsurface melt into one array
             layermelt = self.melting(subsurf_layermelt)
 
@@ -162,9 +167,16 @@ class massBalance():
             if date_in_range and time.hour == 0 and not self.firn_converted:
                 self.end_of_summer()
 
-            # if start of calendar year, reset firn tracker
+            # if ice is first exposed, re-size ice layers
+            if len(layers.snow_idx) + len(layers.firn_idx) < 1 and not self.ice_exposed:
+                self.ice_exposed = True 
+                if prms.option_uniform_ice:
+                    layers.resize_ice()
+
+            # if start of calendar year, reset annual trackers
             if time.day_of_year == 1 and time.hour == 0:
                 self.firn_converted = False
+                self.ice_exposed = False
 
             # check mass conserves
             mass_in = snowfall + rainfall + self.condensation + self.deposition
@@ -188,18 +200,13 @@ class massBalance():
                 self.current_state_prints()
 
             # check if we still have a glacier before next timestep
-            self.check_glacier_exists()
+            no_glacier = self.check_glacier_exists()
+            if no_glacier:
+                # end simulation cleanly
+                return
 
         # ===== COMPLETED SIMULATION: STORE DATA =====
-        if self.args.store_data:
-            self.output.store_data()
-
-        # optionally store spectral albedo
-        if prms.store_bands:
-            surface.albedo_df.to_csv(prms.albedo_out_fn.replace('.csv',f'_{self.args.elev}.csv'))
-        
-        # delete temporary files
-        self.delete_temp_files()
+        self.store_simulation()
         return
     
     def get_precip(self):
@@ -322,9 +329,9 @@ class massBalance():
                             layers.ltype[0] in 'firn',
                             layers.ldensity[0] > new_density*3])
         # unless there is a small surface layer, then combine new snow
-        small_surf_layer = layers.lheight[0] < 1e-3
+        small_surf_layer = layers.lheight[0] < 1e-3 and layers.ltype[0] != 'ice'
 
-        # check conditions
+        # check conditions for a new layer
         if np.any(new_layer_cond) and not small_surf_layer:
             # check if there is enough snow to create a new layer (1 mm cutoff)
             if new_height < 1e-3:
@@ -392,7 +399,7 @@ class massBalance():
         surface = self.surface
 
         # CONSTANTS
-        WET_C = prms.wet_snow_C
+        WET_C = float(self.args.wet_grain_C)
         PI = np.pi
         RFZ_GRAINSIZE = prms.rfz_grainsize
         FIRN_GRAINSIZE = prms.firn_grainsize
@@ -488,8 +495,11 @@ class massBalance():
             grainsize_m = grainsize / 1e6   # in m
             drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
             drwet = drwetdt * dt * 1e6 # transform to um from m
+            # apply a factor to increase grain growth at high density (f_liq is low)
+            F = np.exp(0.01*(layers.ldensity.copy()[idx]))
+            drwet = drwet * F
             # cap runaway wet metamorphosis
-            drwet[drwet > prms.max_wet_metamorph] = prms.max_wet_metamorph
+            # drwet[drwet > 200] = 200
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
@@ -498,7 +508,7 @@ class massBalance():
             grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
 
             # enforce maximum grainsize
-            grainsize[grainsize > FIRN_GRAINSIZE] = FIRN_GRAINSIZE
+            grainsize[grainsize > RFZ_GRAINSIZE] = RFZ_GRAINSIZE
 
             # update grainsize in layers
             layers.lgrainsize[idx] = grainsize
@@ -707,7 +717,6 @@ class massBalance():
         DENSITY_WATER = prms.density_water
         DENSITY_ICE = prms.density_ice
         FRAC_IRREDUC = prms.Sr
-        dt = self.dt
 
         # get index of percolating (snow/firn) layers
         snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
@@ -762,10 +771,10 @@ class massBalance():
                 q_in = q_out
 
                 # irreducible water content depends on density
-                if layers.ldensity[layer] > 500:
-                    FRAC_IRREDUC = prms.Sr_dense
-                else:
-                    FRAC_IRREDUC = prms.Sr_light
+                # if layers.ldensity[layer] > 500:
+                #     FRAC_IRREDUC = prms.Sr_dense
+                # else:
+                #     FRAC_IRREDUC = prms.Sr_light
                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
 
                 # calculate flow out of layer i
@@ -831,8 +840,13 @@ class massBalance():
         enbal = self.enbal
 
         # CONSTANTS
-        PARTITION_COEF_BC = prms.ksp_BC
-        PARTITION_COEF_OC = prms.ksp_OC
+        PARTITION_COEF_BC = float(self.args.ksp_BC)
+        if self.args.ksp_BC != prms.ksp_BC:
+            # if ksp_BC was specified in args, treat OC the same way
+            PARTITION_COEF_OC = float(self.args.ksp_BC)
+        else:
+            # otherwise use default ksp_OC
+            PARTITION_COEF_OC = prms.ksp_OC
         PARTITION_COEF_DUST = prms.ksp_dust
         dt = prms.dt
 
@@ -1066,10 +1080,11 @@ class massBalance():
         squeezed_out = 0
         for layer in snowfirn_idx:
             # irreducible water content depends on density
-            if lp[layer] > 500:
-                FRAC_IRREDUC = prms.Sr_dense
-            else:
-                FRAC_IRREDUC = prms.Sr_light
+            # if lp[layer] > 500:
+            #     FRAC_IRREDUC = prms.Sr_dense
+            # else:
+            #     FRAC_IRREDUC = prms.Sr_light
+            FRAC_IRREDUC = prms.Sr
             porosity = 1 - lp[layer] / DENSITY_ICE
             lh = lm[layer] / lp[layer]
             water_irreduc = porosity * lh * DENSITY_WATER * FRAC_IRREDUC
@@ -1444,6 +1459,7 @@ class massBalance():
         icedepth = np.sum(layers.lheight[layers.ice_idx])
 
         # begin prints
+        self.timer.printout()
         print(f'MONTH COMPLETED: {ended_month} {year} with +{accum:.2f} and -{melt:.2f} m w.e.')
         print(f'Currently {airtemp:.2f} C with {melte:.0f} W m-2 melt energy')
         print(f'----------surface albedo: {albedo:.3f} -----------')
@@ -1497,8 +1513,8 @@ class massBalance():
         the run and saves the output.
         """
         # load layer height
-        layerheight = np.sum(self.layers.lheight)
-        if layerheight < prms.min_glacier_depth:
+        total_height = np.sum(self.layers.lheight)
+        if total_height < prms.min_glacier_depth:
             # new end date
             start = self.time_list[0]
             end = self.time
@@ -1516,10 +1532,33 @@ class massBalance():
             # save the data
             if self.args.store_data:
                 self.output.store_data()
-            print('Glacier fully melted in',self.args.out)
+            print(f'Glacier fully melted on {self.time} in {self.args.out}')
+
+            # delete temporary files
+            self.delete_temp_files()
             
-            # end the run
-            self.exit(failed=False)
+            return True # no glacier remaining
+        else:
+            return False # still glacier
+    
+    def store_simulation(self):
+        """
+        Stores data model output and
+        deletes temporary files used in 
+        the simulation.
+        """
+        # store main simulation
+        if self.args.store_data:
+            if self.args.debug:
+                print('~ Success! Storing data . . . ~')
+            self.output.store_data()
+
+        # optionally store spectral albedo
+        if prms.store_bands:
+            self.surface.albedo_df.to_csv(prms.albedo_out_fn.replace('.csv',f'_{self.args.elev}.csv'))
+        
+        # delete temporary files
+        self.delete_temp_files()
         return
     
     def delete_temp_files(self):
@@ -1537,24 +1576,8 @@ class massBalance():
             os.remove(self.surface.ice_spectrum_fn)
         return
 
-    def exit(self,failed=True):
-        """
-        Exit function. Default usage sends an error 
-        message if debug is on. Otherwise, exits the run.
-
-        Parameters
-        ==========
-        failed : Bool
-            If True, prints some layer properties for
-            debugging. Else, ends the run with no prints.
-        """
-        self.delete_temp_files()
-        if self.args.debug and failed:
-            print('Failed in mass balance')
-            print('Current layers',self.ltype)
-            print('Layer temp:',self.ltemp)
-            print('Layer density:',self.ldensity)
-        sys.exit()    
+    def iterable(self, iterable, **kwargs):
+        return tqdm(iterable, **kwargs) if self.args.progress_bar else iterable
 
 class Output():
     """
@@ -1693,7 +1716,7 @@ class Output():
         self.layerrefreeze_output = dict()  # layer refreeze [kg m-2]
         self.layerage_output = dict()       # layer age [datetime]
         self.layertype_output = dict()      # layer type [-]
-        self.last_height = prms.initial_ice_depth+prms.initial_firn_depth+prms.initial_snow_depth
+        self.last_height = prms.initial_ice_depth+args.initial_firn_depth+args.initial_snow_depth
         return
     
     def store_timestep(self,massbal,enbal,surface,layers,step):
@@ -1840,8 +1863,7 @@ class Output():
 
                 else:
                     n = len(layertemp_output.columns)
-                    print(f'Need to increase max_nlayers: currently have {n} layers')
-                    self.exit()
+                    assert 1==0, f'Need to increase max_nlayers: currently have {n} layers'
 
                 ds['layertemp'].values = layertemp_output
                 ds['layerheight'].values = layerheight_output
@@ -1852,11 +1874,23 @@ class Output():
                 ds['layerdust'].values = layerdust_output
                 ds['layergrainsize'].values = layergrainsize_output
                 ds['layerrefreeze'].values = layerrefreeze_output
-                ds['layerage'].values = layerage_output
                 ds['layertype'].values = layertype_output
 
+                # handle datetime object for layerage
+                arr = np.asarray(layerage_output, dtype=object)
+                arr[pd.isna(arr)] = np.datetime64("NaT")
+                ds['layerage'].values = arr.astype("datetime64[ns]")
+
+        encoding = {
+            "layerage": {
+                "units": "seconds since 1970-01-01 00:00:00",
+                "calendar": "standard",
+                "dtype":"float64"
+            }
+        }
+
         # save NetCDF
-        ds.to_netcdf(self.out_fn)
+        ds.to_netcdf(self.out_fn, encoding=encoding)
 
         return ds
     
@@ -1968,7 +2002,9 @@ class Output():
 
         # save NetCDF
         ds.to_netcdf(self.out_fn)
-        print(f'~ Success: saved to {self.out_fn}')
+
+        # success printout
+        print(f'~ Saved {args.glac_name.capitalize()} {args.site} model output to {self.out_fn} ~')
         return
     
     def add_attrs(self,new_attrs):
@@ -2002,3 +2038,42 @@ class MeltedLayers():
         self.BC = layers.lBC[fully_melted]
         self.OC = layers.lOC[fully_melted]
         self.dust = layers.ldust[fully_melted]
+
+class ProgressTimer:
+    """
+    Keeps track of time elapsed and 
+    estimates time remaining based on
+    the number of timesteps.
+    """
+    def __init__(self, total_steps):
+        self.total_steps = total_steps
+        self.start = time.perf_counter()
+        self.elapsed = 0
+        self.remaining = float("inf")
+        self.step = -1
+
+    def update(self):
+        """
+        Steps counter and estimates remaining time.
+        """
+        now = time.perf_counter()
+        elapsed = now - self.start
+        self.step += 1
+
+        frac = self.step / self.total_steps
+        est_total = elapsed / frac if frac > 0 else float("inf")
+        remaining = est_total - elapsed
+
+        self.remaining = remaining 
+        self.elapsed = elapsed
+
+    def printout(self):
+        percent_done = self.step / self.total_steps * 100
+        blocks_total = 48
+        n_blocks_filled = int(percent_done / 100 * blocks_total)
+        n_blocks_empty = blocks_total - n_blocks_filled
+        print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
+        print(
+            f"{percent_done:.0f}%  "
+            f"[ Elapsed: {self.elapsed/60:.2f} min | Remaining: {self.remaining/60:.2f} min ]"
+        )
