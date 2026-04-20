@@ -369,7 +369,7 @@ class energyBalance():
         if prms.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
         else:
-            assert prms.method_ground in ['MolgHardy'], 'Invalid ground heat flux method'
+            prms.ConfigError('Choose ground method from [MolgHardy]')
         return Qg
     
     def get_turbulent(self,surftemp):
@@ -449,8 +449,6 @@ class energyBalance():
                 diff = np.abs(Qs_last-Qs)
                 if counter > 10 or diff < 1e-1:
                     loop = False
-                    if diff > 1:
-                        print('Turbulent fluxes didnt converge; Qs still changing by',diff)
 
                 Qs_last = Qs
         elif prms.method_turbulent in ['BulkRichardson']:

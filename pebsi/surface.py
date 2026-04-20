@@ -198,7 +198,7 @@ class Surface():
                                       args=(self,'optim'))
                     Qm = enbal.surface_EB(result.x[0],self)
                     # check success and print warning 
-                    if not result.success and abs(Qm) > 10:
+                    if not result.success and abs(Qm) > 10 and self.args.debug:
                         print('Unsuccessful minimization, Qm = ',Qm)
                     else:
                         self.stemp = result.x[0]
@@ -241,8 +241,6 @@ class Surface():
                                     if self.args.debug:
                                         print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
                                         assert result.success, 'energy balance did not converge; check forcings'
-                                    else:
-                                        print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}; inspect output {self.args.out}')
                                 
                             break
 
