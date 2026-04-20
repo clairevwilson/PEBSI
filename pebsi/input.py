@@ -33,19 +33,22 @@ initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP conten
 dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
-climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
-# climate_fp = '../climate_data/'                             # Climate data filepath
+if 'trace' in machine:
+    climate_fp = '/trace/group/rounce/cvwilson/climate_data/'   
+else:
+    climate_fp = '../climate_data/'                         # General climate data filepath
 merra2_eg_fn = 'MERRA2/MERRA2constants.nc4'                 # Global file of MERRA-2 geopotential relative to climate_fp
-merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios
+merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios [template]
+ukesm_merra_laps_fn = 'ukesm_merra2_reg##_SPECIESDEP.nc'    # Regional file of UK-ESM-->MERRA-2 deposition ratio [template]
 ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
-bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
-cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++
-AWS_fp = 'AWS/Processed/'                                   # Weather station data filepath relative to climate_fp
+bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Bias adjustment filepath [template]
+cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
+AWS_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
 AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
 # OUTPUT
-output_fp = '../Output/'                                    # Output filepath
-albedo_out_fn = '../Output/EB/albedo.csv'                   # Output spectral albedo filepath
-cds_output_fn = 'default'                                   # 'default' or climate dataset filename ++
+output_fp = '../Output/'                                    # General output filepath
+albedo_out_fn = '../Output/EB/albedo_spectrum.csv'          # Output filepath for full albedo spectrum
+cds_output_fn = 'default'                                   # 'default' or filename to save climate dataset ++
 # ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
 #    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
 
@@ -84,7 +87,7 @@ store_bands = False         # Store spectral albedo .csv
 store_climate = False       # Store climate dataset .nc
 
 # METHODS
-method_turbulent = 'BulkRichardson'     # 'MO-similarity' or 'BulkRichardson' 
+method_turbulent = 'MO-similarity'      # 'MO-similarity' or 'BulkRichardson' 
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
 method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'

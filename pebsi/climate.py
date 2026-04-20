@@ -363,7 +363,9 @@ class Climate():
 
             # apply coefficient to deposition
             if not prms.deposition_data: 
-                self.apply_dep_ratio()
+                self.apply_merra_dep_ratio()
+            else:
+                self.apply_ukesm_dep_ratio()
 
         # check all variables are there
         failed = []
@@ -545,7 +547,7 @@ class Climate():
         self.cds['bcwet'].values *= f
         return
     
-    def apply_dep_ratio(self):
+    def apply_merra_dep_ratio(self):
         reg = self.args.glac_no[:2]
         fn_bc = prms.merra2_laps_fn.replace('SPECIES','BC').replace('##', reg)
         fn_oc = prms.merra2_laps_fn.replace('SPECIES','OC').replace('##', reg)
@@ -561,6 +563,24 @@ class Climate():
         # apply to dry deposition
         self.cds['bcdry'] *= ratio_bc 
         self.cds['ocdry'] *= ratio_oc
+        return
+    
+    def apply_ukesm_dep_ratio(self):
+        reg = self.args.glac_no[:2]
+        reg_fn = prms.ukesm_merra_laps_fn.replace('##', reg)
+
+        for species in ['bc','oc']:
+            for deptype in ['wet','dry']:
+                fn = reg_fn.replace('SPECIES', species).replace('DEP', deptype)
+                
+                # open ratio dataset
+                ds_bc = xr.open_dataarray(prms.climate_fp + fn)
+
+                # select ratio at the correct lat/lon
+                ratio = ds_bc.sel(lat=self.flat, lon=self.flon, method='nearest').values
+
+                # apply to climate dataset
+                self.cds[species+deptype] *= ratio 
         return
 
     def temp_to_elevation(self):

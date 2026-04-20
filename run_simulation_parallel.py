@@ -20,18 +20,20 @@ import pebsi.input as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
-n_runs_ahead = 36    # Step if you're going to run this script more than once
-
-out_str = 'merra2'
-# prms.deposition_data = 'UKESM'
-# prms.ukesm_fn = '../UKESM/dw068_nofires/'
+n_runs_ahead = 0    # Step if you're going to run this script more than once
 
 # Read command line args
 args = sim.get_args()
 
-# Edit these
+out_str = 'ukesm'
+prms.deposition_data = 'UKESM'
+prms.ukesm_fn = '../UKESM/dr401_GFED/'
 args.startdate = '1997-04-01 00:00'
 args.enddate = '2015-11-30 00:00'
+
+# Edit these
+# args.startdate = '1980-04-20 00:00'
+# args.enddate = '2025-09-01 00:00'
 args.use_AWS = False
 args.dates_from_data = False
 
@@ -40,11 +42,11 @@ args.dates_from_data = False
 
 # sites to run in parallel
 site_dict = {
-    '01.22193':['K14k','K17b','K53',], # KAHILTNA     'KPS',
+    '01.22193':['K17b','K53',], # KAHILTNA     'KPS',
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
     '01.00570':['AU','B','D'], # GULKANA
     '01.09162':['N','B','EC'], # WOLVERINE   
-    '01.01104':['B','C','D'], # LEMON CREEK
+    '01.01104':['C','D'], # LEMON CREEK 'B'
     '01.01390':['MG1','NWB1','TKG3'], # TAKU       
     #  '02.06675':[], # ATHABASCA
     #  '02.05098':[], # PEYTO
@@ -56,7 +58,6 @@ glac_nos = list(site_dict.keys())
 # Probably do not edit
 args.store_data = True             # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
-# run_date = '2026_03_19'
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
@@ -99,7 +100,7 @@ def pack_vars():
             # args_run.kp = 1.5
 
             # Set task ID for SNICAR input file
-            args_run.task_id = run_no + n_runs_ahead*n_processes
+            args_run.task_id = run_no + (n_runs_ahead+1)*n_processes
 
             # Store model inputs
             climate, args_run = sim.initialize_model(args_run)
