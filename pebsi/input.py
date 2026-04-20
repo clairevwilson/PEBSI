@@ -7,8 +7,8 @@ import pandas as pd
 import xarray as xr
 
 # ========== USER OPTIONS ========== 
-glac_no = '01.00570'    # RGI glacier ID     WOLV: 09162    KAH: 22193
-use_AWS = False         # Default to using AWS data?
+glac_no = '00.00000'    # RGI glacier ID
+use_AWS = True          # Default to using AWS data?
 debug = False           # Default to printing monthly model status?
 store_data = False      # Default to saving data?
 
@@ -37,7 +37,7 @@ if 'trace' in machine:
     climate_fp = '/trace/group/rounce/cvwilson/climate_data/'   
 else:
     climate_fp = '../climate_data/'                         # General climate data filepath
-merra2_eg_fn = 'MERRA2/MERRA2constants.nc4'                 # Global file of MERRA-2 geopotential relative to climate_fp
+merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential relative to climate_fp
 merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios [template]
 ukesm_merra_laps_fn = 'ukesm_merra2_reg##_SPECIESDEP.nc'    # Regional file of UK-ESM-->MERRA-2 deposition ratio [template]
 ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
@@ -55,7 +55,7 @@ cds_output_fn = 'default'                                   # 'default' or filen
 # ========== CLIMATE AND TIME INPUTS ========== 
 # TIME
 startdate = pd.to_datetime('2024-04-20 00:00:00') 
-enddate = pd.to_datetime('2024-04-20 02:00:00')
+enddate = pd.to_datetime('2024-08-20 00:00:00')
 
 # SITE
 use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
@@ -67,7 +67,7 @@ station_elevation = {                       # Elevation of the station used in t
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 deposition_data = None                      # None or 'UKESM'
 MERRA2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
-bias_vars = ['temp']                        # Vars to correct by quantile mapping # 'wind','temp','rh','SWin'
+bias_vars = ['temp']                        # Vars to correct by quantile mapping (only applied to reanalysis data)
 
 # ========== MODEL OPTIONS ========== 
 # INITIALIATION

@@ -61,7 +61,7 @@ class Climate():
 
         # find median elevation of the glacier from RGI for precip gradient
         RGI_region = args.glac_no.split('.')[0]
-        if float(RGI_region) > 0:
+        if int(RGI_region) > 0:
             for fn in os.listdir(prms.RGI_fp):
                 # open the attributes .csv for the correct region
                 if fn[:2] == RGI_region and fn[-3:] == 'csv':
@@ -80,10 +80,12 @@ class Climate():
             self.mapping_glacier = args.glac_name
         
         # find elevation of temperature data
-        if 'temp' in prms.bias_vars:
+        if 'temp' in prms.bias_vars and int(RGI_region) > 0:
             qm_print = f'Add {args.qm_glac_name} AWS elevation to station_elevation in input.py'
             assert self.mapping_glacier in prms.station_elevation, qm_print                
             self.temp_elev = prms.station_elevation[self.mapping_glacier]
+        elif int(RGI_region) == 0:
+            self.temp_elev = self.median_elev
 
         # check if storing the cds
         self.store_cds = prms.store_climate 
@@ -362,10 +364,11 @@ class Climate():
                 self.adjust_dep()
 
             # apply coefficient to deposition
-            if not prms.deposition_data: 
-                self.apply_merra_dep_ratio()
-            else:
-                self.apply_ukesm_dep_ratio()
+            if 'bcdry' in self.need_vars:
+                if not prms.deposition_data: 
+                    self.apply_merra_dep_ratio()
+                else:
+                    self.apply_ukesm_dep_ratio()
 
         # check all variables are there
         failed = []
@@ -840,7 +843,7 @@ class Climate():
         file and variable names.
         """
         # determine filetag for MERRA2 lat/lon file
-        eg_fn = prms.climate_fp + prms.merra2_eg_fn
+        eg_fn = prms.merra2_eg_fn
         assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
         ds_global = xr.open_dataset(eg_fn)
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
