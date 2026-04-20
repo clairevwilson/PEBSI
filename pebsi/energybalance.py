@@ -369,7 +369,7 @@ class energyBalance():
         if prms.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
         else:
-            assert 1==0, 'Ground flux method not accepted; choose from [\'MolgHardy\']'
+            assert prms.method_ground in ['MolgHardy'], 'Invalid ground heat flux method'
         return Qg
     
     def get_turbulent(self,surftemp):

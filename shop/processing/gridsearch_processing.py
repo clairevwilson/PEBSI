@@ -7,7 +7,7 @@ sys.path.append(os.getcwd() + '/../../../')
 sys.path.append(os.getcwd() + '/../../')
 sys.path.append(os.getcwd() + '/../')
 from PEBSI.shop.plotting.plotting_fxns import *
-from PEBSI.objectives import *
+from PEBSI.shop.processing.objectives import *
 # from PEBSI.seasonal_error import seasonal_mass_balance as seasonal_error
 # from PEBSI.seasonal_error import firn_cores
 import pickle

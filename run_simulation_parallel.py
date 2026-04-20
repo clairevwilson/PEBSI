@@ -20,7 +20,7 @@ import pebsi.input as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 
-n_runs_ahead = 0    # Step if you're going to run this script more than once
+n_runs_ahead = 0    # Step if you're going to run this script more than once simultaneously
 
 # Read command line args
 args = sim.get_args()

@@ -32,6 +32,14 @@ class Surface():
         self.args = args
         self.climate = climate
 
+        # get the SNICAR function from input
+        if prms.method_snicar in ['bioSNICAR']:
+            self.run_SNICAR = self.run_bioSNICAR
+        elif prms.method_snicar in ['SNICARfx']:
+            self.run_SNICAR = self.run_SNICARfx 
+        else:
+            assert prms.method_snicar in ['bioSNICAR','SNICARfx'], 'Invalid SNICAR method'
+
         # initialize surface properties
         self.stemp = prms.surftemp_guess
         self.days_since_snowfall = 0
@@ -224,15 +232,17 @@ class Surface():
                                 result = minimize(enbal.surface_EB,-50,method='L-BFGS-B',
                                                     bounds=((-60,0),),tol=1e-3,
                                                     args=(self,'optim'))
-                                if result.success or result.fun < 5:
+                                if result.success or result.fun < 10:
+                                    # successfully minimized
                                     self.stemp = result.x[0]
                                 else:
+                                    # did not minimize: energy balance is not converged, but surf temp is still bounded
+                                    # this will NOT break the run, but it might indicate an issue in the forcings
                                     if self.args.debug:
                                         print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
-                                        assert 1==0
+                                        assert result.success, 'energy balance did not converge; check forcings'
                                     else:
-                                        print(f'! {self.args.out} energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
-                                # assert result.success, 'energy balance did not converge; check forcings'
+                                        print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}; inspect output {self.args.out}')
                                 
                             break
 
@@ -374,11 +384,7 @@ class Surface():
         lgrainsize = layers.lgrainsize[idx].astype(int)
         lwater = layers.lwater[idx] / (layers.lice[idx]+layers.lwater[idx])
 
-        # grain size files are every 1um up to 1500um, then every 500
-        # idx_1500 = lgrainsize>1500
-        # lgrainsize[idx_1500] = np.round(lgrainsize[idx_1500]/500) * 500
-        # lgrainsize[lgrainsize < 30] = 30    # cap minimum grain size
-        # lgrainsize = lgrainsize.tolist()    # make array a list
+        # specific surface area
         ssa = 3 / (lgrainsize/1e6 * np.array(ldensity))
         ssa[ssa > 100] = 100
         ssa = (ssa.astype(float)).tolist()
@@ -485,7 +491,7 @@ class Surface():
         self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
         return albedo,spectral_weights
     
-    def run_SNICAR(self,layers,timestamp,
+    def run_bioSNICAR(self,layers,timestamp,
                    override_grainsize=False,override_LAPs=False):
         """
         Runs SNICAR model to retrieve broadband albedo. 

@@ -2,7 +2,7 @@
 This script executes a grid search in parallel over
 multiple parameters. These parameters can be specified
 in the params dict below. It is set up to perform the
-search over two parameters for ***Paper 1*** 
+search over two parameters for the first PEBSI publication
 (Boone c5 densification parameter and kp precipitation
 factor) but with minor edits more parameters can be added.
 
@@ -23,19 +23,14 @@ import xarray as xr
 import run_simulation as sim
 import pebsi.input as prms
 import pebsi.massbalance as mb
-from objectives import *
-if 'trace' in prms.machine:
-    prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
+from PEBSI.shop.processing.objectives import *
 
-# =================== INPUTS ===================
-# Define parameters for grid search
-params = {
-        # 'Boone_c5':[0.014,0.016,0.018,0.02,0.022,0.024],
-            # 'kp':[1,1.5,2,2.5,3],
-        #   'lapse_rate':[-3.5,-4.5,-5.5,-6.5,-7.5,-8.5]
-            'ksp_BC':[0.1,0.3,0.5,0.8,0.9,1],
-            'C1':[1e-15, 1e-14, 1e-13, 1e-12, 1e-11]
-}
+# OPTIONS
+repeat_run = True   # True if restarting an already begun run
+# Define sets of parameters
+params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024], # grid search used in JoG paper
+          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
+param_1, param_2 = list(params.keys())
 
 # Read command line args
 parser = sim.get_args(parse=False)
@@ -152,12 +147,11 @@ for p1 in params[param_1]:
         # Copy over args
         args_run = copy.deepcopy(args)
 
-        # Set parameters MANUALLY
-        args_run.lapse_rate = '-6.5'
-        args_run.ksp_BC = p1
-        args_run.wet_grain_C = p2
-        args_run.Boone_c5 = '0.016'
-        args_run.kp = str(kp)
+        # !!!!!!!!!!!!!!!!!!!!!!!
+        # USER MUST MANUALLY SET THESE PARAMETER NAMES
+        args_run.lapse_rate = -6.5
+        args_run.kp = p2
+        args_run.Boone_c5 = p1
 
         # Set identifying output filename
         args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'

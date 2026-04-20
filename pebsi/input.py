@@ -92,9 +92,10 @@ method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
 method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
-method_cooling = 'iterative'            # 'minimize','iterative' (fast)
+method_cooling = 'iterative'            # 'minimize' (slow),'iterative' (fast)
 method_ground = 'MolgHardy'             # 'MolgHardy'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville','Jansson','OstinAndersson','VanDusen'
+method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
@@ -149,6 +150,7 @@ min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice a
 mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
 min_glacier_depth = 2       # Minimum ice depth to end the model run [m]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
+max_wet_metamorph = 200     # Maximum possible wet grain metamorphosis in a timestep for a single layer [um]
 # <<<<<< Boundary conditions >>>>>>
 temp_temp = 0               # Temperature of temperate ice [C]
 temp_depth = 10             # Depth of temperate ice [m]
