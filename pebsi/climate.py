@@ -848,9 +848,9 @@ class Climate():
         assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
         ds_global = xr.open_dataset(eg_fn)
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
-        self.flat = str(ds_closest.lat.values)
-        self.flon = str(ds_closest.lon.values)
-        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{self.flat}_{self.flon[:6]}'
+        self.flat = f'{ds_closest.lat.values:.1f}'
+        self.flon = f'{ds_closest.lon.values:.1f}'
+        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{self.flat}_{self.flon}'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp
