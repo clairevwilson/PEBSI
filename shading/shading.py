@@ -38,10 +38,10 @@ from numpy import pi, cos, sin, arctan
 # this section is unused if running this from run_simulation_eb
 site_by = 'latlon'                  # method to choose lat/lon ('id' or 'latlon')
 site = 'AWS'                        # name of site for indexing .csv OR specify lat/lon
-lat,lon = [0.0178817,-78.0040317]   # [60.8155986,-139.1236350] # site latitude,longitude 
+lat,lon = [0.0178817,-78.0040317]   # site latitude,longitude 
 timezone = pd.Timedelta(hours=-5)   # time zone of location
 glacier_name = 'cayambe'            # name of glacier for labeling
-glac_no = '01.16195'                # RGI glacier ID
+rgi_id = '01.16195'                 # RGI glacier ID
 
 # storage options
 plot = ['result','search','horizon']           # list from ['result','search','horizon']
@@ -156,7 +156,7 @@ class Shading():
         parser = argparse.ArgumentParser(description='pygem-eb shading model')
         parser.add_argument('-latitude','--lat',action='store',default=lat)
         parser.add_argument('-longitude','--lon',action='store',default=lon)
-        parser.add_argument('-glac_no',action='store',default=glac_no)
+        parser.add_argument('-rgi_id',action='store',default=rgi_id)
         parser.add_argument('-dem_fn',action='store',default=dem_fn)
         parser.add_argument('-site',action='store',default=site)
         parser.add_argument('-timezone',action='store',default=timezone)
@@ -263,8 +263,8 @@ class Shading():
         return xs,ys
     
     def get_shapefile(self):
-        # find the shapefile in the RGI from the glac_no
-        id = self.args.glac_no
+        # find the shapefile in the RGI from the rgi_id
+        id = self.args.rgi_id
         region = id.split('.')[0]
         # search RGI folders for the correct shapefile
         for folder in os.listdir(fp_base + rgi_fp):

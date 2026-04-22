@@ -21,9 +21,9 @@ import pandas as pd
 import xarray as xr
 # Internal libraries
 import run_simulation as sim
-import pebsi.input as prms
+import pebsi.params as prms
 import pebsi.massbalance as mb
-from PEBSI.shop.processing.objectives import *
+from shop.processing.objectives import *
 
 # OPTIONS
 repeat_run = True   # True if restarting an already begun run

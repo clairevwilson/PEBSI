@@ -11,8 +11,6 @@ from individual heat fluxes.
 import pandas as pd
 import numpy as np
 import suncalc
-# Local libraries
-import pebsi.input as prms
 
 class energyBalance():
     """
@@ -36,15 +34,15 @@ class energyBalance():
             Timestamp to index the climate dataset.
         args : command-line arguments
         """
-        # CONSTANTS
-        SPH = prms.seconds_per_hour
-        CTOK = prms.celsius_to_kelvin
-
         # pull other classes from mass balance class
         climate = massbal.climate
         args = massbal.args
         layers = massbal.layers
         surface = massbal.surface
+
+        # CONSTANTS
+        SPH = args.seconds_per_hour
+        CTOK = args.celsius_to_kelvin
 
         # unpack climate variables
         climateds_now = climate.cds.sel(time=timestamp)
@@ -69,7 +67,7 @@ class energyBalance():
 
         # time
         self.timestamp = timestamp
-        self.dt = prms.dt
+        self.dt = args.dt
         self.iters = 0
 
         # store previous timestep incoming shortwave
@@ -90,7 +88,7 @@ class energyBalance():
         self.get_roughness(surface.days_since_snowfall,layers)
 
         # adjust wind speed
-        self.wind *= float(prms.wind_factor)
+        self.wind *= float(args.wind_factor)
 
         # radiation terms
         self.measured_SWin = 'SWin' in climate.measured_vars
@@ -126,11 +124,11 @@ class energyBalance():
         SWin,SWout = self.get_SW(surface)
 
         # Handle penetrating shortwave separately
-        if prms.option_SWpen:
+        if self.args.option_SWpen:
             if surface.stype in ['snow']:
-                FRAC_ABSRAD = prms.frac_absrad_snow
+                FRAC_ABSRAD = self.args.frac_absrad_snow
             else:
-                FRAC_ABSRAD = prms.frac_absrad_ice
+                FRAC_ABSRAD = self.args.frac_absrad_ice
         else:
             FRAC_ABSRAD = 1
         self.SWnet_surf = (SWin + SWout) * FRAC_ABSRAD
@@ -182,7 +180,7 @@ class energyBalance():
         elif mode in ['list']:
             return [self.SWin, self.SWout, LWin, LWout, Qs, Ql, Qp, Qg]
         else:
-            prms.ConfigError('argument \'mode\' in function surfaceEB should be sum or optim')
+            self.args.ConfigError('argument \'mode\' in function surfaceEB should be sum or optim')
     
     def get_SW(self,surface):
         """
@@ -198,21 +196,23 @@ class energyBalance():
         surface
             Class object from pebsi.surface
         """
+        args = self.args
+
         # CONSTANTS
-        SKY_VIEW = self.args.sky_view
-        LAT = self.args.lat
-        LON = self.args.lon
-        SLOPE = self.args.slope * np.pi/180
-        ASPECT = self.args.aspect * np.pi/180
+        SKY_VIEW = args.sky_view
+        LAT = args.lat
+        LON = args.lon
+        SLOPE = args.slope * np.pi/180
+        ASPECT = args.aspect * np.pi/180
 
         # albedo inputs
         albedo = surface.albedo
         spectral_weights = surface.spectral_weights
         if np.abs(1-np.sum(spectral_weights)) > 1e-5:
-            prms.ConfigError('surface.spectral_weights dont sum to 1: SNICAR issue')
+            args.ConfigError('surface.spectral_weights dont sum to 1: SNICAR issue')
 
         # get solar position
-        time_UTC = self.timestamp - self.args.timezone
+        time_UTC = self.timestamp - args.timezone
         sunpos = suncalc.get_position(time_UTC,LON,LAT)
         # suncalc gives azimuth with 0 = South, we want 0 = North
         SUN_AZ = sunpos['azimuth'] + np.pi     # solar azimuth angle
@@ -293,9 +293,11 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+        args = self.args
+
         # CONSTANTS
-        SIGMA_SB = prms.sigma_SB
-        CTOK = prms.celsius_to_kelvin
+        SIGMA_SB = args.sigma_SB
+        CTOK = args.celsius_to_kelvin
 
         if self.nanLWout:
             # calculate LWout frmo surftemp
@@ -306,13 +308,13 @@ class energyBalance():
             LWout = -self.LWout_ds/self.dt
         
         if self.nanLWin and self.nanNR:
+            # WARNING: THIS IS UNTESTED
             # calculate LWin from air temperature
             ezt = self.sat_vapor_pressure(self.tempC) / 100   # vapor pressure in hPa
             Ecs = .23+ .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
             Ecl = 0.984               # cloud emissivity, Klok and Oerlemans, 2002
             Esky = Ecs*(1-self.tcc**2)+Ecl*self.tcc**2    # sky emissivity
             LWin = SIGMA_SB*(Esky*self.tempK**4)
-            print('! Using untested LWin method')
         elif not self.nanLWin:
             # take LWin from data
             LWin = self.LWin_ds/self.dt
@@ -332,11 +334,12 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+      
         # CONSTANTS
-        SNOW_THRESHOLD_LOW = prms.snow_threshold_low
-        SNOW_THRESHOLD_HIGH = prms.snow_threshold_high
-        DENSITY_WATER = prms.density_water
-        CP_WATER = prms.Cp_water
+        SNOW_THRESHOLD_LOW = self.args.snow_threshold_low
+        SNOW_THRESHOLD_HIGH = self.args.snow_threshold_high
+        DENSITY_WATER = self.args.density_water
+        CP_WATER = self.args.Cp_water
 
         # define rain vs snow scaling
         rain_scale = np.linspace(0,1,20)
@@ -363,14 +366,16 @@ class energyBalance():
         surftemp : float
             Surface temperature [C]
         """
+        args = self.args 
+
         # CONSTANTS
-        K_ICE = prms.k_ice
+        K_ICE = args.k_ice
         
         # calculate ground flux from surface temperature
-        if prms.method_ground in ['MolgHardy']:
-            Qg = -K_ICE * (surftemp - prms.temp_temp) / prms.temp_depth
+        if args.method_ground in ['MolgHardy']:
+            Qg = -K_ICE * (surftemp - args.temp_temp) / args.temp_depth
         else:
-            prms.ConfigError('Choose ground method from [MolgHardy]')
+            args.ConfigError('Choose ground method from [MolgHardy]')
         return Qg
     
     def get_turbulent(self,surftemp):
@@ -386,13 +391,15 @@ class energyBalance():
         roughness : float
             Surface roughness [m]
         """
+        args = self.args 
+
         # CONSTANTS
-        KARMAN = prms.karman
-        GRAVITY = prms.gravity
-        R_GAS = prms.R_gas
-        MM_AIR = prms.molarmass_air
-        CP_AIR = prms.Cp_air
-        WIND_REF_Z = prms.wind_ref_height
+        KARMAN = args.karman
+        GRAVITY = args.gravity
+        R_GAS = args.R_gas
+        MM_AIR = args.molarmass_air
+        CP_AIR = args.Cp_air
+        WIND_REF_Z = args.wind_ref_height
         SLOPE = self.args.slope * np.pi/180
 
         # ROUGHNESS LENGTHS
@@ -402,7 +409,7 @@ class energyBalance():
 
         # adjust wind speed to reference height
         z = 2 # reference height in m
-        if prms.wind_ref_height != 2:
+        if args.wind_ref_height != 2:
             wind_2m *= np.log(2/z0) / np.log(WIND_REF_Z/z0)
         else:
             wind_2m = self.wind
@@ -418,16 +425,16 @@ class energyBalance():
 
         # latent heat term depends on direction of heat exchange
         if surftemp == 0. and (qz-q0) > 0:
-            Lv = prms.Lv_evap
+            Lv = args.Lv_evap
         else:
-            Lv = prms.Lv_sub 
+            Lv = args.Lv_sub 
 
         # initiate loop
         loop = True
         counter = 0
         L = 0
         Qs_last = np.inf
-        if prms.method_turbulent in ['MO-similarity']:
+        if args.method_turbulent in ['MO-similarity']:
             while loop:
                 # calculate stability terms
                 fric_vel = KARMAN*wind_2m / (np.log(z/z0)-self.PhiM(z,L))
@@ -452,7 +459,7 @@ class energyBalance():
                     loop = False
 
                 Qs_last = Qs
-        elif prms.method_turbulent in ['BulkRichardson']:
+        elif args.method_turbulent in ['BulkRichardson']:
             # calculate Richardson number
             if wind_2m != 0:
                 RICHARDSON = GRAVITY/self.tempK*(self.tempC-surftemp)*(z-z0)/wind_2m**2
@@ -463,28 +470,28 @@ class energyBalance():
             csT = KARMAN**2/(np.log(z/z0) * np.log(z/z0t))
             csQ = KARMAN**2/(np.log(z/z0) * np.log(z/z0q))
 
-            if prms.method_stability in ['cutoff']:
+            if args.method_stability in ['cutoff']:
                 if RICHARDSON <= 0.01:
                     psi = 1
                 elif 0.01 < RICHARDSON <= 0.2:
                     psi = np.square(1-5*RICHARDSON)
                 else:
                     psi = 0
-            elif prms.method_stability in ['BeljaarsHoltslag']:
+            elif args.method_stability in ['BeljaarsHoltslag']:
                 # Beljaars and Holtslag
                 if RICHARDSON <= 0:
                     psi = (1.0 - 15.0 * RICHARDSON)**0.5 # unstable
                 else:
                     psi = np.exp(-5.0 * RICHARDSON) # stable
             else:
-                prms.ConfigError('Choose stability correction from [BeljaarsHoltslag, cutoff]')
+                args.ConfigError('Choose stability correction from [BeljaarsHoltslag, cutoff]')
             
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
 
         else:
-            prms.ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
+            args.ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
         
         return Qs, Ql
     
@@ -499,10 +506,10 @@ class energyBalance():
             Class object from pebsi.layers
         """
         # CONSTANTS
-        DUST_RATIO = prms.ratio_DU3_DUtot
+        DUST_RATIO = self.args.ratio_DU3_DUtot
         
         # switch runs have no LAPs
-        if prms.switch_LAPs == 0:
+        if self.args.switch_LAPs == 0:
             self.bcdry = 0
             self.ocdry = 0
             self.dustdry = 0
@@ -529,11 +536,11 @@ class energyBalance():
             Class object from pebsi.layers
         """
         # CONSTANTS
-        ROUGHNESS_FRESH_SNOW = prms.roughness_fresh_snow
-        ROUGHNESS_AGED_SNOW = prms.roughness_aged_snow
-        ROUGHNESS_FIRN = prms.roughness_firn
-        ROUGHNESS_ICE = prms.roughness_ice
-        AGING_RATE = prms.roughness_aging_rate
+        ROUGHNESS_FRESH_SNOW = self.args.roughness_fresh_snow
+        ROUGHNESS_AGED_SNOW = self.args.roughness_aged_snow
+        ROUGHNESS_FIRN = self.args.roughness_firn
+        ROUGHNESS_ICE = self.args.roughness_ice
+        AGING_RATE = self.args.roughness_aging_rate
 
         # determine roughness from surface type
         layertype = layers.ltype
@@ -559,7 +566,7 @@ class energyBalance():
             Air temperature [C]
         """
         # CONSTANTS
-        CTOK = prms.celsius_to_kelvin
+        CTOK = self.args.celsius_to_kelvin
 
         # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
@@ -594,7 +601,7 @@ class energyBalance():
             Solar zenith angle [rad]
         """
         # CONSTANTS
-        SOLAR_CONSTANT = prms.solar_constant
+        SOLAR_CONSTANT = self.args.solar_constant
         P1 = 0.1001
         P2 = 4.7930
         P3 = 9.4758

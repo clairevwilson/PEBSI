@@ -1,0 +1,78 @@
+"""
+Configuration for PEBSI
+
+Contains functions which load and map the
+configuration YAML file to the args used
+by the model.
+
+@author: clairevwilson
+"""
+import yaml
+import pebsi.params as prms
+
+class ConfigError(Exception):
+    """Raised when an expected crash
+    ends the simulation."""
+    pass
+
+def get_config(cmd_args):
+    """
+    Loads the model configuration in the following order.
+    1. Fills in all variables present in pebsi.params.
+    2. Overwrites the variables present in config.yaml.
+    3. OVerwrites the variables present in the command line (cmd_args).
+    """
+    class Config:
+        pass 
+    args = Config()
+    args.ConfigError = ConfigError
+
+    # if config filename was specified, make sure use_config is True
+    if cmd_args.config_fn is not None:
+        cmd_args.use_config = True
+
+    # print debug statement
+    if cmd_args.debug:
+        print(f'~ Loading configs from {cmd_args.config_fn}')
+    valid = 'Please check pebsi/params.py for valid variable names.'
+
+    # 1: add all prms default attributes to args
+    for key in dir(prms):
+        if not key.startswith('__'):  # ignore internal python stuff
+            setattr(args, key, getattr(prms, key))
+                
+    # 2: fill out variables from yaml file, if specified
+    yaml_fn = args.config_fn
+    if cmd_args.use_config:
+        # open yaml
+        with open(yaml_fn, 'r') as f:
+            yaml_data = yaml.safe_load(f)
+
+        # loop through directories and subdirectories in .yaml
+        for key, value in yaml_data.items():
+            # if nested, flatten
+            if isinstance(value, dict):
+                for sub_key, sub_val in value.items():
+                    if not hasattr(args, sub_key):
+                        raise ConfigError(f'Unknown config key: {sub_key} found in {key}\n{valid}')
+                    setattr(args, sub_key, sub_val)
+            else:
+                if not hasattr(args, key):
+                    raise ConfigError(f'Unknown config key: {key}\n{valid}')
+                setattr(args, key, value)
+
+    # 3: overwrite anything specified in the command line
+    for key, value in vars(cmd_args).items():
+        # overwrite non-Boolean variables that are not None in command line
+        if value is not None and not isinstance(value, bool):
+            setattr(args, key, value)
+
+        # qm_glac_name can be None (climate.py handles this)
+        elif key == 'qm_glac_name':
+            setattr(args, key, value)
+        
+        # if the value is a Boolean, only override if it's True
+        elif isinstance(value, bool) and value is True:
+            setattr(args, key, value)
+
+    return args

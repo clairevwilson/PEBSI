@@ -15,20 +15,18 @@ import time
 import pandas as pd
 import numpy as np
 import xarray as xr
-# Local libraries
-import pebsi.input as prms
 
 class Climate():
     """
     Climate-related functions which build the 
     climate dataset for a single simulation.
 
-    If use_AWS = True in the input, the climate 
+    If use_aws = True in the input, the climate 
     dataset will be filled with all variables in
     the AWS dataset before turning to reanalysis 
     data to fill the remaining variables.
 
-    If use_AWS = False, only reanalysis data will 
+    If use_aws = False, only reanalysis data will 
     be used.
     """
     def __init__(self,args):
@@ -45,14 +43,14 @@ class Climate():
 
         # load args and run information
         self.args = args
-        self.dates = pd.date_range(args.startdate,args.enddate,freq='h')
+        self.dates = pd.date_range(args.start_date,args.end_date,freq='h')
         self.dates_UTC = self.dates - args.timezone
 
         # specify glacier and time information
         self.lat = args.lat
         self.lon = args.lon
         self.n_time = len(self.dates)
-        self.elev = args.elev
+        self.elev = args.elevation
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
@@ -60,19 +58,19 @@ class Climate():
         self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
         # find median elevation of the glacier from RGI for precip gradient
-        RGI_region = args.glac_no.split('.')[0]
-        if int(RGI_region) > 0:
-            for fn in os.listdir(prms.RGI_fp):
+        rgi_region = args.rgi_id.split('.')[0]
+        if int(rgi_region) > 0:
+            for fn in os.listdir(args.rgi_fp):
                 # open the attributes .csv for the correct region
-                if fn[:2] == RGI_region and fn[-3:] == 'csv':
-                    RGI_df = pd.read_csv(prms.RGI_fp + fn)
-                    RGI_df.index = [f.split('-')[-1] for f in RGI_df['RGIId']]
-            self.median_elev = RGI_df.loc[args.glac_no,'Zmed']
+                if fn[:2] == rgi_region and fn[-3:] == 'csv':
+                    rgi_df = pd.read_csv(args.rgi_fp + fn)
+                    rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
+            self.median_elev = rgi_df.loc[args.rgi_id,'Zmed']
         else:
             self.median_elev = self.elev
 
         # grab the name of the glacier of quantile mapping data
-        if len(args.qm_glac_name) > 0:
+        if str(args.qm_glac_name) != 'None':
             self.mapping_glacier = args.qm_glac_name
             if args.debug:
                 print('Using quantile mapping from', self.mapping_glacier)
@@ -80,21 +78,25 @@ class Climate():
             self.mapping_glacier = args.glac_name
         
         # find elevation of temperature data
-        if 'temp' in prms.bias_vars and int(RGI_region) > 0:
-            qm_print = f'Add {args.qm_glac_name} AWS elevation to station_elevation in input.py'
-            assert self.mapping_glacier in prms.station_elevation, qm_print                
-            self.temp_elev = prms.station_elevation[self.mapping_glacier]
-        elif int(RGI_region) == 0:
+        if 'temp' in args.bias_vars and int(rgi_region) > 0:
+            qm_print = f'Add {self.mapping_glacier} AWS elev to station_elevation or specify in config file'
+            check = self.mapping_glacier in args.station_elevation or args.aws_elev is not None
+            assert check, qm_print  
+            if args.aws_elev is not None:
+                self.temp_elev = args.aws_elev 
+            else:              
+                self.temp_elev = args.station_elevation[self.mapping_glacier]
+        elif int(rgi_region) == 0:
             self.temp_elev = self.median_elev
 
         # check if storing the cds
-        self.store_cds = prms.store_climate 
+        self.store_cds = args.store_climate 
 
         # get data from existing .nc or from AWS/MERRA-2
         if str(bool(args.input_climate)) != 'False':
             # open data from existing .nc
-            cds_input_fn = prms.cds_input_fn.replace('GLACIER', args.glac_name)
-            fn_data = prms.climate_fp + cds_input_fn.replace('SITE', args.site)
+            cds_input_fn = args.cds_input_fn.replace('GLACIER', args.glac_name)
+            fn_data = args.climate_fp + cds_input_fn.replace('SITE', args.site)
             if not os.path.exists(fn_data):
                 print(f'Climate data not found: getting new cds and saving to {fn_data}')
                 self.store_cds = True
@@ -105,9 +107,9 @@ class Climate():
                 cds = xr.open_dataset(fn_data)
 
                 # replace dates with dates from cds
-                args.startdate = pd.to_datetime(cds.time.values[0])
-                args.enddate = pd.to_datetime(cds.time.values[-1])
-                self.dates = pd.date_range(args.startdate,args.enddate,freq='h')
+                args.start_date = pd.to_datetime(cds.time.values[0])
+                args.end_date = pd.to_datetime(cds.time.values[-1])
+                self.dates = pd.date_range(args.start_date,args.end_date,freq='h')
                 self.dates_UTC = self.dates - args.timezone
                 self.n_time = len(self.dates)
                 self.cds = cds
@@ -121,7 +123,7 @@ class Climate():
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()
-        if not self.args.use_AWS:
+        if not self.args.use_aws:
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
 
@@ -154,7 +156,7 @@ class Climate():
             
         return
     
-    def get_AWS(self,fp):
+    def get_aws(self,fp):
         """
         Loads available AWS data and determines which
         variables need come from reanalysis data.
@@ -180,25 +182,17 @@ class Climate():
         df = df.reindex(index=index_joined).interpolate().reindex(new_index)
 
         # get AWS elevation
-        metadata_df = pd.read_csv(prms.AWS_metadata_fn, sep='\t', index_col='glacier')
-        self.AWS_elev = metadata_df.loc[self.args.glac_name, 'elevation']
-        # can have duplicates for a glacier
-        if '__iter__' in dir(self.AWS_elev):
-            station = fp.split(self.args.glac_name)[-1].split('.csv')[0]
-            glac_df = metadata_df.loc[self.args.glac_name]
-            if station not in glac_df['station'].values:
-                station = glac_df['station'].values[0]
-            self.AWS_elev = glac_df.loc[glac_df['station'] == station, 'elevation'].values[0]
+        self.aws_elev = self.args.aws_elev
 
         # get the available variables
-        all_AWS_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
+        all_aws_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
                         'NR','LWin','LWout','bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
-        AWS_vars = df.columns
-        self.measured_vars = list(set(all_AWS_vars) & set(AWS_vars))
+        aws_vars = df.columns
+        self.measured_vars = list(set(all_aws_vars) & set(aws_vars))
 
         # check if wind direction can be calculated
-        uwind_measured = 'uwind' in AWS_vars
-        vwind_measured = 'vwind' in AWS_vars
+        uwind_measured = 'uwind' in aws_vars
+        vwind_measured = 'vwind' in aws_vars
         if uwind_measured ^ vwind_measured:
             self.wind_direction = False
             # print('! Wind speed was input as a scalar. Wind shading is not handled')
@@ -210,7 +204,7 @@ class Climate():
             self.cds[var].values = df[var].astype(float)
 
         # determine which data variables are still needed from reanalysis
-        need_vars = [e for e in self.all_vars if e not in AWS_vars]
+        need_vars = [e for e in self.all_vars if e not in aws_vars]
 
         # if net radiation was measured, don't need LWin
         if 'NR' in self.measured_vars:
@@ -240,9 +234,10 @@ class Climate():
         dates = self.dates_UTC
         lat = self.lat
         lon = self.lon
+        args = self.args
         
         # interpolate data if time was input on the hour instead of half-hour
-        self.interpolate = dates[0].minute != 30 and prms.reanalysis == 'MERRA2'
+        self.interpolate = dates[0].minute != 30 and args.reanalysis == 'MERRA2'
         
         # get reanalysis data geopotential
         z_fp = self.reanalysis_fp + self.var_dict['elev']['fn']
@@ -267,10 +262,11 @@ class Climate():
     def get_var_data(self, fn, var, result_dict):
         # get dates
         dates = self.dates_UTC
+        args = self.args
 
         # special check for RH: must be calculated from QV
         if var == 'rh' and not os.path.exists(fn):
-            assert prms.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
+            assert args.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
         dep_var = 'dry' in var or 'wet' in var
 
@@ -280,15 +276,15 @@ class Climate():
         # get variable names and lat/lon resolution
         vn = self.var_dict[var]['vn'] 
         lat_vn, lon_vn = [self.lat_vn,self.lon_vn]
-        lat_res, lon_res = [prms.merra_lat_res, prms.merra_lon_res]
+        lat_res, lon_res = [args.merra_lat_res, args.merra_lon_res]
 
         # light-absorbing particles need special treatment
         if dep_var:
-            if prms.reanalysis == 'ERA5-hourly':
+            if args.reanalysis == 'ERA5-hourly':
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
-            if prms.deposition_data == 'UKESM' and var in self.carbon_vars:
+            if args.deposition_data == 'UKESM' and var in self.carbon_vars:
                 # tell lat/lon to use UKESM lat/lon names for BC/OC
                 lat_vn,lon_vn = ['latitude','longitude']
                 lat_res = np.diff(ds.isel({lat_vn:range(2)})[lat_vn].values)[0]
@@ -304,7 +300,7 @@ class Climate():
         else:
             ds = ds[vn]
 
-        if var in self.carbon_vars and prms.deposition_data:
+        if var in self.carbon_vars and args.deposition_data:
             # turn daily into hourly
             ds = ds.resample(time='h').ffill()
 
@@ -313,9 +309,9 @@ class Climate():
 
         # for time-varying variables, select/interpolate to the model time
         if var != 'elev':
-            assert dates[0] >= pd.to_datetime(ds.time.values[0])
-            assert dates[-1] <= pd.to_datetime(ds.time.values[-1])
-            if not dep_var and prms.reanalysis == 'ERA5-hourly':
+            assert dates[0] >= pd.to_datetime(ds.time.values[0]), f'Check input times and {var} data'
+            assert dates[-1] <= pd.to_datetime(ds.time.values[-1]), f'Check input times and {var} data'
+            if not dep_var and args.reanalysis == 'ERA5-hourly':
                 ds = ds.interp(time=dates)
             elif self.interpolate:
                 ds = ds.interp(time=dates)
@@ -340,6 +336,8 @@ class Climate():
         adjusts elevation-dependent variables, and
         checks that all required variables are filled.
         """
+        args = self.args
+
         # calculate wind speed and direction from u and v components
         # ***WINDMAPPER GOES HERE***
         uwind = self.cds['uwind'].values
@@ -350,23 +348,23 @@ class Climate():
         self.cds['winddir'].values = winddir
 
         if not self.loaded_climate:
-            if prms.reanalysis == 'MERRA2':
+            if args.reanalysis == 'MERRA2':
                 # correct MERRA-2 variables in inputs list
-                self.bias_vars = prms.bias_vars
+                self.bias_vars = [v for v in self.args.bias_vars if v not in self.measured_vars]
                 if self.args.debug and len(self.bias_vars) > 0:
                     print('~ Applying quantile mapping for:',self.bias_vars)
                 for var in self.bias_vars:
-                    from_MERRA = True if not self.args.use_AWS else var in self.need_vars
+                    from_MERRA = True if not self.args.use_aws else var in self.need_vars
                     if from_MERRA:
                         self.bias_adjust_qm(var)
             
             # adjust MERRA-2 deposition by reduction coefficient
-            if prms.reanalysis == 'MERRA2' and prms.adjust_deposition:
+            if args.reanalysis == 'MERRA2' and args.adjust_deposition:
                 self.adjust_dep()
 
             # apply coefficient to deposition
             if 'bcdry' in self.need_vars:
-                if not prms.deposition_data: 
+                if not args.deposition_data: 
                     self.apply_merra_dep_ratio()
                 else:
                     self.apply_ukesm_dep_ratio()
@@ -385,7 +383,7 @@ class Climate():
         # print any missing data
         if len(failed) > 0:
             failed_str = ', '.join(failed)
-            raise prms.ConfigError(f'Climate missing data from {failed_str}')
+            raise args.ConfigError(f'Climate missing data from {failed_str}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
@@ -442,11 +440,13 @@ class Climate():
         ds : xr.Dataset
             Updated climate dataset
         """
+        args = self.args
+
         # CONSTANTS
-        SPH = prms.seconds_per_hour
-        CTOK = prms.celsius_to_kelvin
-        GRAVITY = prms.gravity
-        DENSITY_WATER = prms.density_water
+        SPH = args.seconds_per_hour
+        CTOK = args.celsius_to_kelvin
+        GRAVITY = args.gravity
+        DENSITY_WATER = args.density_water
 
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
@@ -495,16 +495,18 @@ class Climate():
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
                 print('Make a manual change in check_units (climate.py)')
-                raise prms.ConfigError('Unit mismatch')
+                raise args.ConfigError('Unit mismatch')
         return ds
 
     def store(self):
+        args = self.args
+
         # set output filename for storing .nc
-        if prms.cds_output_fn == 'default':
-            cds_fn = self.args.out.replace('.nc','_climate.nc')
-            self.cds_output_fn = prms.climate_fp + cds_fn
+        if args.cds_output_fn == 'default':
+            cds_fn = self.args.output_fn.replace('.nc','_climate.nc')
+            self.cds_output_fn = args.climate_fp + cds_fn
         else:
-            self.cds_output_fn = prms.climate_fp + prms.cds_output_fn
+            self.cds_output_fn = args.climate_fp + args.cds_output_fn
 
         # store the data source of each variable
         for var in self.cds.variables:
@@ -516,8 +518,8 @@ class Climate():
                 self.cds[var].attrs['source'] = self.reanalysis 
 
                 # carbon variables could come from a different dataset
-                if prms.deposition_data and var in self.carbon_vars:
-                    self.cds[var].attrs['source'] = prms.deposition_data
+                if args.deposition_data and var in self.carbon_vars:
+                    self.cds[var].attrs['source'] = args.deposition_data
         
         # store cds
         self.cds.to_netcdf(self.cds_output_fn)
@@ -552,13 +554,15 @@ class Climate():
         return
     
     def apply_merra_dep_ratio(self):
-        reg = self.args.glac_no[:2]
-        fn_bc = prms.merra2_laps_fn.replace('SPECIES','BC').replace('##', reg)
-        fn_oc = prms.merra2_laps_fn.replace('SPECIES','OC').replace('##', reg)
+        args = self.args
+
+        reg = self.args.rgi_id[:2]
+        fn_bc = args.merra2_laps_fn.replace('SPECIES','BC').replace('##', reg)
+        fn_oc = args.merra2_laps_fn.replace('SPECIES','OC').replace('##', reg)
 
         # open ratio dataset
-        ds_bc = xr.open_dataset(prms.climate_fp + fn_bc)
-        ds_oc = xr.open_dataset(prms.climate_fp + fn_oc)
+        ds_bc = xr.open_dataset(args.climate_fp + fn_bc)
+        ds_oc = xr.open_dataset(args.climate_fp + fn_oc)
 
         # select ratio at the correct lat/lon
         ratio_bc = ds_bc['ratio'].sel(lat=self.flat, lon=self.flon, method='nearest').values
@@ -570,15 +574,16 @@ class Climate():
         return
     
     def apply_ukesm_dep_ratio(self):
-        reg = self.args.glac_no[:2]
-        reg_fn = prms.ukesm_merra_laps_fn.replace('##', reg)
+        args = self.args
+        reg = self.args.rgi_id[:2]
+        reg_fn = args.ukesm_merra_laps_fn.replace('##', reg)
 
         for species in ['bc','oc']:
             for deptype in ['wet','dry']:
                 fn = reg_fn.replace('SPECIES', species).replace('DEP', deptype)
                 
                 # open ratio dataset
-                ds_bc = xr.open_dataarray(prms.climate_fp + fn)
+                ds_bc = xr.open_dataarray(args.climate_fp + fn)
 
                 # select ratio at the correct lat/lon
                 ratio = ds_bc.sel(lat=self.flat, lon=self.flon, method='nearest').values
@@ -596,11 +601,11 @@ class Climate():
         LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
 
         # get elevation of the original temperature data
-        if 'temp' in prms.bias_vars and 'temp' not in self.measured_vars:
+        if 'temp' in self.args.bias_vars and 'temp' not in self.measured_vars:
             # if temperature was a bias-corrected variable, use pre-set temp_elev
             temp_elev = self.temp_elev
         else:
-            temp_elev = self.AWS_elev if 'temp' in self.measured_vars else self.reanalysis_elev
+            temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.reanalysis_elev
         new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
 
         # update temperature in the cds
@@ -613,10 +618,10 @@ class Climate():
         based on a % gradient
         """
         # CONSTANTS
-        if self.args.glac_name in prms.precgrads:
-            PREC_GRAD = prms.precgrads[self.args.glac_name]
+        if self.args.glac_name in self.args.precgrads:
+            PREC_GRAD = self.args.precgrads[self.args.glac_name]
         else:
-            PREC_GRAD = prms.precgrad
+            PREC_GRAD = self.args.precgrad
 
         # get elevation of the precipitation data
         tp_elev = self.median_elev
@@ -632,13 +637,13 @@ class Climate():
         """
         # CONSTANTS
         LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
-        GRAVITY = prms.gravity
-        R_GAS = prms.R_gas
-        MM_AIR = prms.molarmass_air
-        CTOK = prms.celsius_to_kelvin
+        GRAVITY = self.args.gravity
+        R_GAS = self.args.R_gas
+        MM_AIR = self.args.molarmass_air
+        CTOK = self.args.celsius_to_kelvin
         
         # get elevation of surface pressure data
-        sp_elev = self.AWS_elev if 'sp' in self.measured_vars else self.reanalysis_elev
+        sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.reanalysis_elev
 
         # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.cds.temp.values
@@ -667,15 +672,15 @@ class Climate():
         arg temp_LW_elev
         """
         # CONSTANTS
-        SIGMA_SB = prms.sigma_SB
+        SIGMA_SB = self.args.sigma_SB
         LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
-        SPH = prms.seconds_per_hour
-        CTOK = prms.celsius_to_kelvin
+        SPH = self.args.seconds_per_hour
+        CTOK = self.args.celsius_to_kelvin
 
         # get temperature and RH data at the site and data location
         rh = self.cds.rh.values             # RH assumed constant with elevation
         temp_site = self.cds.temp.values    # Temperature already updated to self.elev
-        LW_elev = self.AWS_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
+        LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
         if type(temp_LW_elev) == bool and not temp_LW_elev:
             temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
 
@@ -710,7 +715,7 @@ class Climate():
             Variable to bias correct
         """
         # get quantile mapping .csv filename
-        bias_fn = prms.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
+        bias_fn = self.args.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
         bias_fn = bias_fn.replace('GLACIER', self.mapping_glacier)
 
         # need to use file generated without a lapse rate for temperature
@@ -741,7 +746,7 @@ class Climate():
             Filename of the RH2M dataset to create
         """
         # CONSTANTS
-        CTOK = prms.celsius_to_kelvin
+        CTOK = self.args.celsius_to_kelvin
 
         # get variable names
         rh_vn = self.var_dict['rh']['vn']
@@ -787,7 +792,7 @@ class Climate():
             Air temperature [C]
         """
         # CONSTANTS
-        CTOK = prms.celsius_to_kelvin
+        CTOK = self.args.celsius_to_kelvin
 
         # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
@@ -816,7 +821,7 @@ class Climate():
             Relative humidity [%]
         """
         # CONSTANTS
-        CTOK = prms.celsius_to_kelvin
+        CTOK = self.args.celsius_to_kelvin
 
         # get saturation vapor pressure
         esat = self.sat_vapor_pressure(airtemp)
@@ -843,17 +848,19 @@ class Climate():
         Fills a dictionary with the reanalysis
         file and variable names.
         """
+        args = self.args 
+
         # determine filetag for MERRA2 lat/lon file
-        eg_fn = prms.merra2_eg_fn
+        eg_fn = args.merra2_eg_fn
         assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
         ds_global = xr.open_dataset(eg_fn)
         ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
         self.flat = f'{ds_closest.lat.values:.1f}'
         self.flon = f'{ds_closest.lon.values:.1f}'
-        tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{self.flat}_{self.flon}'
+        tag = args.merra2_filetag if args.merra2_filetag else f'{self.flat}_{self.flon}'
 
         # update filenames for MERRA-2 (need grid lat/lon)
-        self.reanalysis_fp = prms.climate_fp
+        self.reanalysis_fp = args.climate_fp
         self.var_dict = {'temp':{'fn':[],'vn':[]},
             'rh':{'fn':[],'vn':[]},'sp':{'fn':[],'vn':[]},
             'tp':{'fn':[],'vn':[]},'tcc':{'fn':[],'vn':[]},
@@ -864,7 +871,7 @@ class Climate():
             'dustdry':{'fn':[],'vn':[]},'dustwet':{'fn':[],'vn':[]},
             'elev':{'fn':[],'vn':[]},'time':{'fn':'','vn':''},
             'lat':{'fn':'','vn':''}, 'lon':{'fn':'','vn':''}}
-        if prms.reanalysis == 'MERRA2':
+        if args.reanalysis == 'MERRA2':
             self.reanalysis_fp += 'MERRA2/'
             self.var_dict['temp']['vn'] = 'T2M'
             self.var_dict['rh']['vn'] = 'RH2M'
@@ -904,7 +911,7 @@ class Climate():
             self.var_dict['ocdry']['fn'] = f'{tag}/OCDP002_{tag}.nc'
             self.var_dict['dustwet']['fn'] = f'{tag}/DUWT003_{tag}.nc'
             self.var_dict['dustdry']['fn'] = f'{tag}/DUDP003_{tag}.nc'
-        elif prms.reanalysis == 'ERA5-hourly':
+        elif args.reanalysis == 'ERA5-hourly':
             self.reanalysis_fp += 'ERA5/ERA5_hourly/'
 
             # Variable names for energy balance
@@ -948,8 +955,8 @@ class Climate():
             self.var_dict['dustdry']['fn'] = f'./../../MERRA2/{tag}/DUDP003_{tag}.nc'
 
         # functionality for independent deposition datasets
-        if prms.deposition_data:
-            if prms.deposition_data == 'UKESM':
+        if args.deposition_data:
+            if args.deposition_data == 'UKESM':
                 # Define names used in UKESM data
                 sp_oc = 'particulate_organic_matter'
                 sp_bc = 'elemental_carbon'
@@ -962,7 +969,7 @@ class Climate():
                 self.var_dict['ocdry']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'dry')
 
                 # Variable filenames
-                dep_fp = prms.ukesm_fn
+                dep_fp = args.ukesm_fn
                 self.var_dict['bcwet']['fn'] = dep_fp + 'sum_bc_wetdeposition_kgm-2s-1.nc'
                 self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
                 self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'

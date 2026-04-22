@@ -16,7 +16,7 @@ import pandas as pd
 # Internal libraries
 import run_simulation as sim
 import pebsi.massbalance as mb
-import pebsi.input as prms
+import pebsi.params as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
 

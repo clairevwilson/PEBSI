@@ -13,8 +13,6 @@ warnings.simplefilter('error', RuntimeWarning)
 import numpy as np
 import pandas as pd
 import xarray as xr
-# Local libraries
-import pebsi.input as prms
 
 class Layers():
     """
@@ -40,7 +38,7 @@ class Layers():
         # load in initial depths of snow, firn and ice in m
         dz_snow = args.initial_snow_depth
         dz_firn = args.initial_firn_depth
-        dz_ice = prms.initial_ice_depth
+        dz_ice = args.initial_ice_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
         lheight,ldepth,ltype,nlayers = self.make_layers(dz_snow,dz_firn,dz_ice)
@@ -58,7 +56,7 @@ class Layers():
         self.lgrainsize = lgrainsize        # LAYER GRAIN SIZE [um]
 
         # initialize LAPs (black carbon, organic carbon, and dust)
-        if prms.switch_LAPs == 1:
+        if args.switch_LAPs == 1:
             lBC,lOC,ldust = self.initialize_LAPs()
         else:
             lBC = np.zeros(self.nlayers)
@@ -108,11 +106,13 @@ class Layers():
         ltype : np.ndarray
             Layers types (snow, firn, ice)
         """
+        args = self.args
+
         # CONSTANTS
-        DZ_TOP = prms.dz_toplayer
-        DZ_SNOW = prms.dz_snowlayer
-        DZ_ICE = prms.dz_icelayer
-        LAYER_GROWTH = prms.layer_growth
+        DZ_TOP = args.dz_toplayer
+        DZ_SNOW = args.dz_snowlayer
+        DZ_ICE = args.dz_icelayer
+        LAYER_GROWTH = args.layer_growth
 
         # initialize variables to get looped
         lheight = []
@@ -122,7 +122,7 @@ class Layers():
 
         # make exponentially growing snow layers
         while current_depth < snow_height:
-            if prms.option_uniform_snow:
+            if args.option_uniform_snow:
                 lheight.append(DZ_SNOW)
             else:
                 lheight.append(DZ_TOP * np.exp(layer*LAYER_GROWTH))
@@ -150,7 +150,7 @@ class Layers():
         # add ice layers
         current_depth = 0
         while current_depth < ice_height:
-            if prms.option_uniform_ice:
+            if args.option_uniform_ice:
                 lheight.append(DZ_ICE)
             else:
                 lheight.append(DZ_TOP * np.exp(layer*LAYER_GROWTH))
@@ -162,8 +162,8 @@ class Layers():
         
         # get depth of layers (distance from surface to midpoint of layer) [m]
         nlayers = len(lheight)
-        if 'layers' in prms.store_vars:
-            assert nlayers <= prms.max_nlayers, f'Need >= {nlayers} in prms.max_nlayers'
+        if 'layers' in args.store_vars:
+            assert nlayers <= args.max_nlayers, f'Need >= {nlayers} in args.max_nlayers'
         ldepth = [np.sum(lheight[:i+1])-(lheight[i]/2) for i in range(nlayers)]
 
         # make into arrays
@@ -195,6 +195,7 @@ class Layers():
             density [kg m-3], water content [kg m-2],
             and grain size [um]
         """
+        args = self.args
         snow_idx = self.snow_idx
         firn_idx = self.firn_idx
         ice_idx = self.ice_idx
@@ -205,36 +206,36 @@ class Layers():
         grainsize_data = pd.read_csv(self.args.initial_grains_fn)
 
         # TEMPERATURE [C]
-        if prms.initialize_temp == 'interpolate':
+        if args.initialize_temp == 'interpolate':
             ltemp = np.interp(self.ldepth,temp_data['depth'],temp_data['temp'])
-        elif prms.initialize_temp == 'ripe':
+        elif args.initialize_temp == 'ripe':
             ltemp = np.ones(self.nlayers)*0
         else:
-            raise prms.ConfigError('Invalid configuration: initialize_temp')
+            raise args.ConfigError('Invalid configuration: initialize_temp')
         
         # GRAIN SIZE [um]
         lgrainsize = np.interp(self.ldepth,grainsize_data['depth'],
                                grainsize_data['grainsize'])
-        lgrainsize[self.ltype == 'firn'] = prms.firn_grainsize
-        lgrainsize[self.ltype == 'ice'] = prms.ice_grainsize
+        lgrainsize[self.ltype == 'firn'] = args.firn_grainsize
+        lgrainsize[self.ltype == 'ice'] = args.ice_grainsize
 
         # DENSITY [kg m-3]
-        if prms.initialize_density == 'interpolate':
+        if args.initialize_density == 'interpolate':
             # SNOW layers initialized by interpolation
             ldensity = np.interp(self.ldepth[snow_idx],
                                 density_data['depth'],density_data['density'])
             if len(firn_idx) > 0:
                 # calculate firn density slope from snow --> ice
                 if snow_height > 0 and firn_height > 0:
-                    pslope = (prms.density_ice - ldensity[-1]) / (
+                    pslope = (args.density_ice - ldensity[-1]) / (
                         self.ldepth[ice_idx[0]]-self.ldepth[snow_idx[-1]])
                 # no snow: set boundary tp constant density_firn
                 elif firn_height > 0:
-                    pslope = (prms.density_ice - prms.density_firn)/(firn_height)
-        elif prms.initialize_density == 'constant':
-            ldensity = np.ones_like(snow_idx) * prms.density_snow
+                    pslope = (args.density_ice - args.density_firn)/(firn_height)
+        elif args.initialize_density == 'constant':
+            ldensity = np.ones_like(snow_idx) * args.density_snow
         else:
-            raise prms.ConfigError('Invalid configuration: initialize_density')
+            raise args.ConfigError('Invalid configuration: initialize_density')
             
         # append firn and ice layer densities
         for (type,depth) in zip(self.ltype,self.ldepth):
@@ -242,16 +243,16 @@ class Layers():
                 ldensity = np.append(ldensity,
                     ldensity[snow_idx[-1]] + pslope*(depth-self.ldepth[snow_idx[-1]]))
             elif type in ['ice']:
-                ldensity = np.append(ldensity,prms.density_ice)
+                ldensity = np.append(ldensity,args.density_ice)
 
         # WATER CONTENT [kg m-2]
-        if prms.initialize_water == 'dry':
+        if args.initialize_water == 'dry':
             lwater = np.zeros(self.nlayers)
-        elif prms.initialize_water == 'saturated':
-            porosity = 1 - ldensity / prms.density_ice
-            lwater = porosity * prms.Sr * self.lheight * prms.density_water
+        elif args.initialize_water == 'saturated':
+            porosity = 1 - ldensity / args.density_ice
+            lwater = porosity * args.Sr * self.lheight * args.density_water
         else:
-            raise prms.ConfigError('Invalid configuration: initialize_water')
+            raise args.ConfigError('Invalid configuration: initialize_water')
 
         return ltemp,ldensity,lwater,lgrainsize
     
@@ -260,22 +261,24 @@ class Layers():
         Initializes light-absorbing particle content
         of the snow and firn layers.
         """
+        args = self.args
+
         # CONSTANTS
-        BC_FRESH = prms.BC_freshsnow
-        OC_FRESH = prms.OC_freshsnow
-        DUST_FRESH = prms.dust_freshsnow
+        BC_FRESH = args.BC_freshsnow
+        OC_FRESH = args.OC_freshsnow
+        DUST_FRESH = args.dust_freshsnow
 
         # INPUTS
         n = self.nlayers
         lheight = self.lheight
         ldepth = self.ldepth
 
-        if prms.initialize_LAPs in ['clean']:
+        if args.initialize_LAPs in ['clean']:
             # snowpack is clean; initialize as constant values
             lBC = np.ones(n)*BC_FRESH*lheight
             lOC = np.ones(n)*OC_FRESH*lheight
             ldust = np.ones(n)*DUST_FRESH*lheight 
-        elif prms.initialize_LAPs in ['interpolate']:
+        elif args.initialize_LAPs in ['interpolate']:
             # read in LAP data
             lap_data = pd.read_csv(self.args.initial_LAP_fn,index_col=0)
 
@@ -299,7 +302,7 @@ class Layers():
             lOC = cOC * lheight
             ldust = cdust * lheight
         else:
-            raise prms.ConfigError('Invalid configuration: initialize_LAPs')
+            raise args.ConfigError('Invalid configuration: initialize_LAPs')
         lBC[self.ice_idx] = 0
         lOC[self.ice_idx] = 0
         ldust[self.ice_idx] = 0
@@ -307,7 +310,7 @@ class Layers():
     
     def initialize_age(self):
         # set snow layers ages to the first date of the simulation
-        time_0 = pd.to_datetime(self.args.startdate)
+        time_0 = pd.to_datetime(self.args.start_date)
         lage = np.array([time_0 for _ in range(self.nlayers)])
 
         # set firn layer ages counting back from start year
@@ -389,8 +392,9 @@ class Layers():
         layer_to_split : int
             Index of the layer to split
         """
-        if (self.nlayers+1) > prms.max_nlayers and 'layers' in prms.store_vars:
-            raise prms.ConfigError('Too many layers: increase max_nlayers')
+        args = self.args
+        if (self.nlayers+1) > args.max_nlayers and 'layers' in args.store_vars:
+            raise args.ConfigError('Too many layers: increase max_nlayers')
         l = layer_to_split
         self.nlayers += 1
         self.ltemp = np.insert(self.ltemp,l,self.ltemp[l])
@@ -457,28 +461,30 @@ class Layers():
         If layers have become too large (more than double their
         original size), they are split into two layers.
         """
+        args = self.args
+
         # define initial mass for conservation check
         initial_mass = np.sum(self.lice + self.lwater)
 
         # layer heights
         if self.ltype[0] in ['snow','firn']:
-            DZ0 = prms.dz_toplayer
+            DZ0 = args.dz_toplayer
         else: # if there is only ice, make the minimum layer size larger
-            DZ0 = prms.min_dz_ice
-        min_heights = lambda i: DZ0 * np.exp((i-1)*prms.layer_growth)/2
-        max_heights = lambda i: DZ0 * np.exp((i-1)*prms.layer_growth)*2
+            DZ0 = args.min_dz_ice
+        min_heights = lambda i: DZ0 * np.exp((i-1)*args.layer_growth)/2
+        max_heights = lambda i: DZ0 * np.exp((i-1)*args.layer_growth)*2
 
         # check if using uniform layers
-        if prms.option_uniform_snow:
+        if args.option_uniform_snow:
             # only check minimum size
             layer = 0
             while layer < len(self.snow_idx):
                 dz = self.lheight[layer]
-                if dz < prms.min_dz and self.ltype[layer]==self.ltype[layer+1]:
+                if dz < args.min_dz and self.ltype[layer]==self.ltype[layer+1]:
                     # layer too small: merge if it is the same type as the layer underneath
                     self.merge_layers(layer)
                 layer += 1
-        if prms.option_uniform_ice:
+        if args.option_uniform_ice:
             # update ice_idx
             self.ice_idx = np.where(self.ltype=='ice')[0]
 
@@ -487,10 +493,10 @@ class Layers():
             while layer < len(self.ice_idx) - 1:
                 # don't check the bottom layer
                 dz = self.lheight[layer]
-                if dz < prms.min_dz:
+                if dz < args.min_dz:
                     self.merge_layers(layer)
                 layer += 1
-            if prms.option_uniform_snow:
+            if args.option_uniform_snow:
                 return
 
         # loop through layers
@@ -503,7 +509,7 @@ class Layers():
             dz = self.lheight[layer]
 
             # remove any 0 mass layers
-            if self.lice[layer] < prms.mb_threshold / 1000:
+            if self.lice[layer] < args.mb_threshold / 1000:
                 self.remove_layer(layer)
 
             # SNOW layers
@@ -519,7 +525,7 @@ class Layers():
             # FIRN layers can be any size and are not handled
 
             # ICE layers
-            if self.ltype[layer] in ['ice'] and not prms.option_uniform_ice:
+            if self.ltype[layer] in ['ice'] and not args.option_uniform_ice:
                 layer_check = layer - len(self.firn_idx)
                 if dz < min_heights(layer_check) and layer < self.nlayers - 1:
                     # layer too small: merge if it is not the bottom layer
@@ -535,7 +541,7 @@ class Layers():
 
         # CHECK MASS CONSERVATION
         change = np.sum(self.lice + self.lwater) - initial_mass
-        assert np.abs(change) < prms.mb_threshold, f'check_layers failed mass conservation in {self.args.out}'
+        assert np.abs(change) < args.mb_threshold, f'check_layers failed mass conservation in {self.args.output_fn}'
         return
     
     def update_layer_props(self,do=['depth','density']):
@@ -558,7 +564,7 @@ class Layers():
             self.ldepth = np.array([np.sum(lh[:i+1])-(lh[i]/2) for i in range(self.nlayers)])
         if 'density' in do:
             self.ldensity = self.lice / self.lheight
-            self.ldensity[self.ice_idx] = prms.density_ice
+            self.ldensity[self.ice_idx] = self.args.density_ice
         return
     
     def update_layer_types(self):
@@ -566,9 +572,11 @@ class Layers():
         Checks if new ice layers have been created by 
         densification of firn.
         """
+        args = self.args
+
         # CONSTANTS
-        DENSITY_ICE = prms.density_ice
-        DZ_CHECK = prms.min_dz_ice
+        DENSITY_ICE = args.density_ice
+        DZ_CHECK = args.min_dz_ice
 
         layer = 0
         while layer < self.nlayers:
@@ -604,13 +612,15 @@ class Layers():
         This makes it so ice melt is identical between
         simulations with the same forcings.
         """
+        args = self.args
+        
         # define initial mass for conservation check
         initial_mass = np.sum(self.lice + self.lwater)
 
         # CONSTANTS
-        DZ_ICE = prms.dz_icelayer
-        DENSITY_ICE = prms.density_ice
-        ICE_GRAINSIZE = prms.ice_grainsize
+        DZ_ICE = args.dz_icelayer
+        DENSITY_ICE = args.density_ice
+        ICE_GRAINSIZE = args.ice_grainsize
 
         # get information about existing layers
         ice_mass = np.sum(self.lice[self.ice_idx])
@@ -666,7 +676,7 @@ class Layers():
 
         # CHECK MASS CONSERVATION
         change = np.sum(self.lice + self.lwater) - initial_mass
-        assert np.abs(change) < prms.mb_threshold, f'resize_ice failed mass conservation in {self.args.out}'
+        assert np.abs(change) < args.mb_threshold, f'resize_ice failed mass conservation in {self.args.output_fn}'
         return
     
     def to_decimal_year(self, dates):

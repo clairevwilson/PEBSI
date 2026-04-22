@@ -1,3 +1,23 @@
+"""
+Params for PEBSI
+
+Contains directories and filepaths, options for
+handling climate inputs, model physics, and outputs,
+internal configuration information, and physical
+constants and parameters.
+
+Any updates to made to these variables can also be
+specified in config.yaml under the same name.
+
+E.g.: to change the initial temperature data, add 
+      initial_temp_fn: 'xxx.csv' to your config.yaml.
+
+Anything with a commented $ can also be flagged from 
+the command line. This will overwrite if the same
+variable is present in config.yaml.
+
+@author: clairevwilson
+"""
 # Built-in libraries
 import os
 import socket
@@ -6,45 +26,59 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-# ========== USER OPTIONS ========== 
-glac_no = '00.00000'    # RGI glacier ID
-use_AWS = True          # Default to using AWS data?
-debug = False           # Default to printing monthly model status?
-store_data = False      # Default to saving data?
+# ====================================================================================================================
+#                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
+# ====================================================================================================================
+output_fn = 'test_out'  #$ -out, --output_fn        Output file name
+rgi_id = '00.00000'     #$ -id, --rgi_id            RGI glacier ID
+site = 'center'         #$ -site                    Name of site
+use_aws = False         #$ -use_aws                 Use AWS data?
+store_data = False      #$ -store_data              Store output?
+store_climate = False   #$ -store_climate           Store climate dataset?
+debug = False           #$ -debug                   Print debug statements?
+progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
 
-# ========== DIRECTORIES AND FILEPATHS ========== 
+# ====================================================================================================================
+#                         DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
+# ====================================================================================================================
+# get machine this simulation is running on
 machine = socket.gethostname()
-# ALL FILEPATHS ARE RELATIVE TO PEBSI/
+config_fn = 'config.yaml'                                   # Default configuration .yaml file
+
 # GLACIER
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
-RGI_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
+rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
+site_fn = 'site_constants.csv'                              # Name for site constants file
+
 # SNICAR
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
-# snicar_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'      # SNICAR input filepath
-snicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'
+snicarfx_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'    # SNICAR input filepath (SNICARfx)
+biosnicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'   # SNICAR input filepath (bioSNICAR)
 clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
+
 # INITIAL CONDITIONS
 initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
 initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
 initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
 initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
+
 # SHADING
 dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
 shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
+
 # CLIMATE
-if 'trace' in machine:
-    climate_fp = '/trace/group/rounce/cvwilson/climate_data/'   
-else:
-    climate_fp = '../climate_data/'                         # General climate data filepath
+climate_fp = '../climate_data/'                             # General climate data filepath
 merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential relative to climate_fp
 merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios [template]
 ukesm_merra_laps_fn = 'ukesm_merra2_reg##_SPECIESDEP.nc'    # Regional file of UK-ESM-->MERRA-2 deposition ratio [template]
 ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Bias adjustment filepath [template]
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
-AWS_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
-AWS_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
+aws_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
+aws_fn = 'data/sample_aws.csv'                               # Sample weather station filename
+aws_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
+
 # OUTPUT
 output_fp = '../Output/'                                    # General output filepath
 albedo_out_fn = '../Output/EB/albedo_spectrum.csv'          # Output filepath for full albedo spectrum
@@ -52,24 +86,41 @@ cds_output_fn = 'default'                                   # 'default' or filen
 # ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
 #    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
 
-# ========== CLIMATE AND TIME INPUTS ========== 
+# ====================================================================================================================
+#                                            CLIMATE AND TIME INPUTS
+# ====================================================================================================================
 # TIME
-startdate = pd.to_datetime('2024-04-20 00:00:00') 
-enddate = pd.to_datetime('2024-08-20 00:00:00')
+start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
+end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
+dates_from_data = False                     #$ -dfd, --dates_from_data  Overwrite simulation time with dates from the input AWS data?
+input_climate = False                       #$ -cds, --input_climate    Use a previously prepared cds for climate data (if True, see ++ above)
 
-# SITE
-use_AWS_site = False                        # True to override site (lat, lon, etc.) with the AWS site
+# WEATHER STATION SITE
 station_elevation = {                       # Elevation of the station used in temp quantile mapping [m a.s.l.]
-    'gulkana':1725, 'wolverine':990, 'kahiltna':2377, 'lemon_creek':1280,
-} 
+    'gulkana':1725, 'wolverine':990, 
+    'kahiltna':2377, 'lemon_creek':1280,
+}
+aws_elev = None                             # Same as station_elevation but can be overwritten in config
+
+# SITE: If running a new site, the user must specify these in config.yaml or command line
+lat = None                                  #$ -lat         Site latitude
+lon = None                                  #$ -lon         Site longitude
+elevation = None                            #$ -elevation   Site elevation
+timezone = None                             #$ -timezone    Glacier timezone
+glac_name = None                            #$ -glac_name   Glacier name
+slope = None                                # Site slope
+aspect = None                               # Site aspect 
+sky_view = None                             # Site sky-view factor
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 deposition_data = None                      # None or 'UKESM'
-MERRA2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
+merra2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
 bias_vars = ['temp']                        # Vars to correct by quantile mapping (only applied to reanalysis data)
 
-# ========== MODEL OPTIONS ========== 
+# ====================================================================================================================
+#                                            MODEL PHYSICS OPTIONS
+# ====================================================================================================================
 # INITIALIATION
 initialize_temp = 'interpolate'     # 'interpolate' or 'ripe'
 initialize_density = 'interpolate'  # 'interpolate' or 'constant'
@@ -79,12 +130,10 @@ surftemp_guess =  -10               # guess for surface temperature of first tim
 initial_snow_depth = 1              # default amount of initial snow [m]
 initial_firn_depth = 10             # default amount of initial firn [m] * only for sites identified as accumulation area
 initial_ice_depth = 200             # default amount of initial ice [m]
-# Initial depths of snow and firn may be specified in site_constants or the command line using --s0, --f0
 
 # OUTPUT
 store_vars = ['MB','EB','temp','layers']  # Variables to store of the possible set: ['MB','EB','temp','layers','SW]
 store_bands = False         # Store spectral albedo .csv
-store_climate = False       # Store climate dataset .nc
 
 # METHODS
 method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
@@ -92,9 +141,9 @@ method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
 method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
-method_cooling = 'iterative'            # 'minimize' (slow),'iterative' (fast)
+method_cooling = 'iterative'            # 'minimize' (slow), 'iterative' (fast)
 method_ground = 'MolgHardy'             # 'MolgHardy'
-method_conductivity = 'Douville'        # 'Sauter', 'Douville','Jansson','OstinAndersson','VanDusen'
+method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested)
 
 # OPTIONAL MODULES
@@ -112,7 +161,9 @@ switch_snow = 1             # 0 to turn off fresh snow feedback; 1 to include it
 switch_melt = 2             # 0 to turn off melt feedback; 1 for simple degradation; 2 for grain size evolution
 switch_LAPs = 1             # 0 to turn off LAPs; 1 to turn on
 
-# ========== INTERNAL CONFIGURATION ========== 
+# ====================================================================================================================
+#                                             INTERNAL CONFIGURATION
+# ====================================================================================================================
 # TIMESTEP
 dt = 3600                   # Model timestep [s]
 daily_dt = 3600*24          # Seconds in a day [s]
@@ -120,20 +171,21 @@ n_heat_steps = 5            # Number of times to run heat equation per dt [-]
 
 # ALBEDO BANDS
 wvs = np.round(np.arange(0.2,5,0.01),2) # 480 bands used by SNICAR
-band_indices = {}           # dictionary for storing spectral albedo
+band_indices = {}                       # dictionary for storing spectral albedo
 for i in np.arange(0,480):
     band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA))).load()
 
-# ========== PARAMETERS and CONSTANTS ==========
+# ====================================================================================================================
+#                                            PARAMETERS AND CONSTANTS
+# ====================================================================================================================
 # <<<<<< Climate downscaling >>>>>>
-sky_view = 0.95             # Sky-view factor [-]
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
 precgrads = {} # 'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
 precgrad = 0                # Precipitation gradient with elevation [% m-1] 
-lapserate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
+lapse_rate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 albedo_firn = 0.4           # Albedo of firn [-]
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
@@ -239,9 +291,3 @@ start_end_summer = 228      # Julian day of year to start checking for end of su
 new_snow_threshold = 0.02   # Threshold for new snow to consider the start of winter [m w.e.]
 new_snow_days = 10          # Number of days to sum snow over and compare against threshold [d]
 firn_age = 60               # Number of days old a snow layer has to be to turn it into firn [d]
-
-# ========== EXCEPTIONS ==========
-class ConfigError(Exception):
-    """Raised when an expected crash
-    ends the simulation."""
-    pass
