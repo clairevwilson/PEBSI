@@ -208,20 +208,36 @@ def check_inputs(args):
     # get rgi_id from args
     rgi_id = args.rgi_id 
 
+    # open the RGI dataframe
+    rgi_region = args.rgi_id.split('.')[0]
+    for fn in os.listdir(args.rgi_fp):
+        # open the attributes .csv for the correct region
+        if fn[:2] == rgi_region and fn[-3:] == 'csv':
+            rgi_df = pd.read_csv(args.rgi_fp + fn)
+            rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
+
     # BASIC METADATA
     all_df = pd.read_csv(args.metadata_fn,index_col=0,converters={0: str})
-    # check if the rgi_id is in the metadata file
     if rgi_id not in all_df.index:
-        if None in [args.glac_name, args.timezone]:
-            raise args.ConfigError('Must specify name and timezone for new glaciers')
-        else:
-            # add rgi_id to metadata file
-            all_df.loc[rgi_id] = None
-            all_df.loc[rgi_id, 'name'] = args.glac_name 
-            all_df.loc[rgi_id, 'timezone'] = args.timezone 
+        # this RGI ID was not found in the metadata file
+        if args.glac_name is None:
+            args.glac_name = args.rgi_id
+            if args.debug:
+                print('! glac_name not specified: using RGI ID')
+        if args.timezone is None:
+            lon_est = rgi_df.loc[args.rgi_id,'CenLon']
+            args.timezone = round(lon_est / 15)
+            if args.debug:
+                print('! timezone not specified: estimating from RGI CenLon')
 
-            # store the csv
-            all_df.to_csv(args.metadata_fn) 
+        # add rgi_id to metadata file
+        all_df.loc[rgi_id] = None
+        all_df.loc[rgi_id, 'name'] = args.glac_name 
+        all_df.loc[rgi_id, 'timezone'] = args.timezone 
+
+        # store the csv
+        all_df.to_csv(args.metadata_fn) 
+        
     # load the metadata for the glacier
     args.timezone = pd.Timedelta(hours=int(all_df.loc[rgi_id,'timezone']))
     args.glac_name = all_df.loc[rgi_id, 'name']
@@ -243,14 +259,6 @@ def check_inputs(args):
     site_df = None
     if os.path.exists(args.site_fn):
         site_df = pd.read_csv(args.site_fn,index_col='site')
-
-    # open the RGI dataframe
-    rgi_region = args.rgi_id.split('.')[0]
-    for fn in os.listdir(args.rgi_fp):
-        # open the attributes .csv for the correct region
-        if fn[:2] == rgi_region and fn[-3:] == 'csv':
-            rgi_df = pd.read_csv(args.rgi_fp + fn)
-            rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
 
     # check if we have lat, lon, and elevation information from config
     if None in [args.lat, args.lon]:
