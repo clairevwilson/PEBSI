@@ -3,6 +3,7 @@ This script executes a grid search in parallel over
 multiple parameters. These parameters can be specified
 in the params dict below. It is set up to perform the
 search over two parameters for the first PEBSI publication
+search over two parameters for the first PEBSI publication
 (Boone c5 densification parameter and kp precipitation
 factor) but with minor edits more parameters can be added.
 
