@@ -52,9 +52,9 @@ def get_args(parse=True):
                         help='site name')
     
     # MODEL TIME
-    parser.add_argument('-start','--startdate', type=str, default=None,
+    parser.add_argument('-start','--start_date', type=str, default=None,
                         help='pass str like datetime of model run start')
-    parser.add_argument('-end','--enddate', default=None,
+    parser.add_argument('-end','--end_date', default=None,
                         help='pass str like datetime of model run end')
     parser.add_argument('-dfd','--dates_from_data',action='store_true',
                         help='use dates from input AWS data?')

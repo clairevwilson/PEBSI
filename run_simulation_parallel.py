@@ -28,13 +28,13 @@ args = sim.get_args()
 out_str = 'ukesm'
 prms.deposition_data = 'UKESM'
 prms.ukesm_fn = '../UKESM/dr401_GFED/'
-args.startdate = '1997-04-01 00:00'
-args.enddate = '2015-11-30 00:00'
+args.start_date = '1997-04-01 00:00'
+args.end_date = '2015-11-30 00:00'
 
 # Edit these
-# args.startdate = '1980-04-20 00:00'
-# args.enddate = '2025-09-01 00:00'
-args.use_AWS = False
+# args.start_date = '1980-04-20 00:00'
+# args.end_date = '2025-09-01 00:00'
+args.use_aws = False
 args.dates_from_data = False
 
 # with open('project/best_datasets_grains.pkl','rb') as f:

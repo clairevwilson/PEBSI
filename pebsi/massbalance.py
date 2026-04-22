@@ -2010,8 +2010,8 @@ class Output():
                                  from_reanalysis=re_str,
                                  which_reanalysis=which_re,
                                  bias_corrected=corr_str,
-                                 run_start=str(args.startdate),
-                                 run_end=str(args.enddate),
+                                 run_start=str(args.start_date),
+                                 run_end=str(args.end_date),
                                  model_run_date=str(pd.Timestamp.today()),
                                  time_elapsed=time_elapsed,
                                  run_by=args.machine)
