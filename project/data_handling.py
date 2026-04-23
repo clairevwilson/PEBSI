@@ -639,7 +639,9 @@ class Albedo():
         )
         ax.add_patch(rect)
         
-        ds['albedo'].plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
+        im = ds['albedo'].plot(ax=ax, cmap='Grays_r', vmin=0.2, vmax=0.9)
+        im.colorbar.set_ticks([0.2, 0.4, 0.6, 0.8, 0.9])
+        im.colorbar.ax.tick_params(length=5, labelsize=10)
 
         for site in plot_sites:
             lat = self.site_df.loc[site, 'lat']
@@ -652,6 +654,11 @@ class Albedo():
             ax.text(x + xrange*0.02, y + yrange*0.02, site, c='r',
                             bbox=dict(facecolor='white', edgecolor='none',
                                       pad=1, alpha=0.8))
+            
+        ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
+        ax.set_xlabel('Easting [m]')
+        ax.set_ylabel('Northing [m]')
+        ax.tick_params(length=5)
         
         ax.set_aspect('equal')
         if time == 'mean':
@@ -871,6 +878,195 @@ class Albedo():
 
         plt.show()
         return fig, ax
+    
+# import os
+# import numpy as np
+# import pandas as pd
+# import rasterio
+# import geopandas as gpd
+# from rasterio.mask import mask as rio_mask
+# from rasterio.warp import reproject, Resampling
+# from scipy.stats import binned_statistic
+
+# # file paths
+# albedo_fp = '/trace/group/rounce/cvwilson/gulkana_albedo/albedo/'
+# mask_fp   = '/trace/group/rounce/cvwilson/gulkana_masks/masks/'
+# dem_fp    = '/trace/home/cvwilson/research/data/dems/gulkana_dem.tif'
+# shp_fp    = '/trace/group/rounce/cvwilson/dems/gulkana_shapefile.shp'
+
+# # load DEM once
+# with rasterio.open(dem_fp) as dem_src:
+#     dem_data = dem_src.read(1)
+#     dem_profile = dem_src.profile
+#     dem_crs = dem_src.crs
+
+# # elevation bins
+# min_elev = int(np.nanmin(dem_data) // 100 * 100)
+# max_elev = int(np.nanmax(dem_data) // 100 * 100 + 100)
+# bins = np.arange(min_elev, max_elev + 100, 100)
+
+# # load shapefile
+# shp = gpd.read_file(shp_fp)
+
+# # sort file lists to ensure matching order
+# albedo_files = sorted(os.listdir(albedo_fp))
+# mask_files   = sorted(os.listdir(mask_fp))
+
+# # dataframe to store results
+# bin_centers = (bins[:-1] + bins[1:]) / 2
+# df = pd.DataFrame(index=bin_centers)
+
+# # loop through all albedo/mask pairs
+# results = []
+# for i, (fmask, falbedo) in enumerate(zip(mask_files, albedo_files)):
+#     with rasterio.open(os.path.join(albedo_fp, falbedo)) as albedo_ds, rasterio.open(os.path.join(mask_fp, fmask)) as mask_ds:
+
+#         date = pd.to_datetime(falbedo[:8])
+#         if i < len(mask_files) - 1:
+#             date_next = pd.to_datetime(albedo_files[i+1][:8])
+#             last_of_year = date_next.year > date.year 
+#         else:
+#             last_of_year = False
+        
+#         # if date.year < 2023:
+#         #     continue
+
+#         # clip albedo to shapefile
+#         shp_proj = shp.to_crs(albedo_ds.crs)
+#         geom = [shp_proj.union_all().__geo_interface__]
+#         albedo_clipped, albedo_transform = rio_mask(albedo_ds, geom, crop=True)
+#         albedo_arr = albedo_clipped[0].astype(float)
+
+#         # clip mask to shapefile
+#         mask_clipped, mask_transform = rio_mask(mask_ds, geom, crop=True)
+#         mask_arr = mask_clipped[0].astype(float)
+
+#         # resample mask to albedo grid
+#         mask_resampled = np.empty(albedo_arr.shape, dtype=np.float32)
+#         reproject(
+#             source=mask_arr,
+#             destination=mask_resampled,
+#             src_transform=mask_transform,
+#             src_crs=mask_ds.crs,
+#             dst_transform=albedo_transform,
+#             dst_crs=albedo_ds.crs,
+#             resampling=Resampling.nearest
+#         )
+
+#         # apply mask to albedo
+#         albedo_arr = np.where(mask_resampled == 1.0, albedo_arr, np.nan)
+
+#         # resample DEM to albedo grid (inside loop!)
+#         dem_clipped, dem_transform = rio_mask(rasterio.open(dem_fp), geom, crop=True)
+#         dem_arr = dem_clipped[0].astype(float)
+#         dem_resampled = np.empty(albedo_arr.shape, dtype=np.float32)
+#         reproject(
+#             source=dem_arr,
+#             destination=dem_resampled,
+#             src_transform=dem_transform,
+#             src_crs=dem_crs,
+#             dst_transform=albedo_transform,
+#             dst_crs=albedo_ds.crs,
+#             resampling=Resampling.nearest
+#         )
+
+#         # apply mask to DEM as well
+#         dem_resampled = np.where(mask_resampled == 1.0, dem_resampled, np.nan)
+#         dem_resampled = np.where(dem_resampled > 0, dem_resampled, np.nan)
+
+#         # mask NaNs before binning
+#         # valid = ~np.isnan(albedo_arr) & ~np.isnan(dem_resampled)
+#         albedo_binned, bin_edges, bin_number = binned_statistic(
+#             dem_resampled.flatten(),
+#             albedo_arr.flatten(),
+#             bins=bins,
+#             statistic='mean'
+#         )
+
+#         # store results
+#         results.append(pd.Series(albedo_binned, index=bin_centers, name=date))
+#         if last_of_year:
+#             date_plus_10 = date + pd.Timedelta(days=10)
+#             results.append(pd.Series(np.ones_like(albedo_binned)*np.nan, index=bin_centers, name=date_plus_10))
+
+# # build DataFrame in one go
+# df = pd.concat(results, axis=1)
+
+# def plot_db_heatmap(db_bin, dates, bins_center, set_ymin, set_ymax, cmap='Grays_r',
+#                     cbar_label='Broadband albedo', ylabel='Elevation [m a.s.l.]',
+#                     figsize=(9,6),save_fn=None, years=None,
+#                     bins2plot_lowerquantile=2, bins2plot_upperquantile=98):
+#     """" Heatmap plotting function """
+
+#     if years is None:
+#         years = np.unique(dates.year)
+#     nyears = len(years)
+#     fig, axes = plt.subplots(1, nyears, figsize=figsize, sharey=True)
+
+#     for ax, year in zip(axes, years):
+#         dates_windows = pd.to_datetime(dates[dates.year == year])
+#         dates_str = [x.strftime('%Y%m%d') for x in dates_windows]
+#         db_bin_full = np.full((db_bin.shape[0], len(dates_windows)), np.nan)
+
+#         for ndate, date in enumerate(dates_str):
+#             date_np = np.datetime64(f'{date[:4]}-{date[4:6]}-{date[6:]}').astype('datetime64[ns]')
+#             if date_np in dates:
+#                 date_idx = np.where(dates == date_np)[0][0]
+#                 db_bin_full[:, ndate] = db_bin[:, date_idx]
+
+#         dbmin = np.nanpercentile(db_bin, bins2plot_lowerquantile)
+#         dbmax = np.nanpercentile(db_bin, bins2plot_upperquantile)
+
+#         bin_sizes = np.diff(bins_center)
+#         if ylabel == 'Elevation [m a.s.l.]':
+#             assert np.all(bin_sizes == bin_sizes[0]), 'Elevation bins are not regularly spaced.'
+
+#         x = mpl.dates.date2num(dates_windows)
+#         y = bins_center
+
+#         # build edges: start at each timestamp, end at the next
+#         x_edges = np.concatenate([
+#             x,                                   # each timestamp as a left edge
+#             [x[-1] + 10]                         # last edge = 10 days after last timestamp
+#         ])
+
+#         # db_bin_full shape: (n_bins, n_dates)
+#         mesh = ax.pcolormesh(x_edges, y, db_bin_full, cmap=cmap, vmin=0.2, vmax=0.9, shading='auto')
+#         ax.set_xlim(x[0], x[-1])
+
+#         ax.set_title(str(year))
+#         ax.set_xlim(pd.to_datetime(f'{year}-04-10'), pd.to_datetime(f'{year}-09-10'))
+#         ax.set_ylim([set_ymin, set_ymax])
+#         ax.xaxis_date()
+#         ax.set_xticks(pd.date_range(f'{year}-04-10', f'{year}-09-10', freq='2MS'))
+#         ax.xaxis.set_major_formatter(mpl.dates.DateFormatter('%b-%d'))
+#         ax.xaxis.set_minor_locator(mpl.dates.MonthLocator(2))
+#         ax.tick_params(length=3, which='minor')
+#         ax.set_facecolor('#FFF6C9')
+#         ax.tick_params(length=5)
+#         for label in ax.get_xticklabels():
+#             label.set_rotation(45)   # or 90 for vertical
+#             label.set_ha('right') 
+#     axes[0].set_ylabel('Elevation (m a.s.l.)')
+    
+#     cax = fig.add_axes((0.95, 0.1, 0.02, 0.8))
+#     cb = fig.colorbar(mesh, cax=cax, orientation='vertical')
+#     cb.set_label('Broadband albedo')
+
+#     # cax.axis('off')
+#     # cb = plt.colorbar(plt.cm.ScalarMappable(cmap=cmap),
+#     #                   boundaries=np.arange(0.2, 0.9, 0.1),
+#     #             cax=cax, orientation='vertical')
+#     # cb.ax.tick_params(labelsize=10,direction='inout',length=8)
+#     # cb.ax.set_title('Albedo')
+#     # fig.colorbar(cax, orientation='vertical', label=cbar_label)
+#     if save_fn:
+#         plt.savefig(save_fn, dpi=300, bbox_inches='tight')
+#     plt.close(fig)
+#     return fig
+
+# plot_db_heatmap(df.to_numpy(), df.columns, bins, set_ymin=1200, set_ymax=2400, figsize=(6, 3), years=np.arange(2019, 2024),
+#                 save_fn='/trace/group/rounce/cvwilson/Output/albedo_heatmap.png')
 
 class DEM():
     def __init__(self, name, epsg='default'):

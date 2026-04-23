@@ -25,12 +25,13 @@ from data_handling import MassBalance
 #                                       USER OPTIONS
 # ===========================================================================================
 surface = 'snow'        # ice, snow or both
-hold_constant = ('SW_absorbed', 1.31211e-6)
-reprocess_dfs = True   # reprocess individual dataframes?
+hold_constant = None # ('SW_absorbed', 1.31211e-6)
+reprocess_dfs = False   # reprocess individual dataframes?
 group = 'all'           # all, coastal, continental, accumulation, or ablation
 time_res = 'daily'      # daily or hourly
+penalty = None          # None, L1 or L2
 regression_vars = ['positive_temp','SW_absorbed']           # vars to use in melt regression
-albedo_regression_vars = ['PDD_cumsum','log_bc_5d_rolling','days_since_acc','SWin']  # vars to use in albedo regression
+albedo_regression_vars = ['PDD_cumsum','bc_5d_rolling','days_since_acc','SWin']  # vars to use in albedo regression
 
 # ===========================================================================================
 #                                       LOAD INPUTS 
@@ -59,7 +60,7 @@ else:
     base_fp = 'C:/Users/cvw30/Research/Output/'
     home_fp = 'C:/Users/cvw30/Research/'
 sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_17_ukesm_0.nc'
-all_df_fn = base_fp + f'ddf/all_{args.surface}_{args.time_res}_df.csv' # UKESM_
+all_df_fn = base_fp + f'ddf/UKESM_all_{args.surface}_{args.time_res}_df.csv' 
 temp_fn = base_fp + f'ddf/temp_GLACIERSITE_{args.surface}_{args.time_res}_df.csv'
 groups_fn = base_fp + f'ddf/glacier_groups.json'
 model_fn = base_fp + 'ddf/albedo_model.joblib'
@@ -141,27 +142,42 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
         # load the glacier coordinates for the MERRA-2 data
         coords = coord_dict[glacier]
 
-        # grab MERRA-2 data
-        ds_bcd = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/BCDP002_{coords}.nc')
-        ds_bcw = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/BCWT002_{coords}.nc')
-        # ds_sw = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/SWGDN_{coords}.nc')
-        ds_lw = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/LWGAB_{coords}.nc')
+        if 'ukesm' not in all_df_fn.lower():
+            # grab MERRA-2 data
+            ds_bcd = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/BCDP002_{coords}.nc')
+            ds_bcw = xr.open_dataset(f'/trace/group/rounce/cvwilson/climate_data/MERRA2/{coords}/BCWT002_{coords}.nc')
 
-        # combine wet and dry deposition
-        ds_bc = ds_bcd['BCDP002'] + ds_bcw['BCWT002']
+            # combine wet and dry deposition
+            ds_bc = ds_bcd['BCDP002'] + ds_bcw['BCWT002']
         
-        # convert time to be in the Alaska timezone
-        ds_bc = ds_bc.assign_coords({'time':ds_bc.time.values - pd.Timedelta(hours=8)})
-        # ds_sw = ds_sw.assign_coords({'time':ds_sw.time.values - pd.Timedelta(hours=8)})
-        ds_lw = ds_lw.assign_coords({'time':ds_lw.time.values - pd.Timedelta(hours=8)})
+            # convert time to be in the Alaska timezone
+            ds_bc = ds_bc.assign_coords({'time':ds_bc.time.values - pd.Timedelta(hours=8)})
+        else:
+            ds_bcd = xr.open_dataset('/trace/group/rounce/cvwilson/climate_data/UKESM/dr401_GFED/sum_bc_drydeposition_kgm-2s-1.nc').rename({'latitude':'lat', 'longitude':'lon'})
+            ds_bcw = xr.open_dataset('/trace/group/rounce/cvwilson/climate_data/UKESM/dr401_GFED/sum_bc_wetdeposition_kgm-2s-1.nc').rename({'latitude':'lat', 'longitude':'lon'})
+            ratio_dry = xr.open_dataarray('/trace/group/rounce/cvwilson/climate_data/ukesm_merra2_reg01_bcdry.nc')
+            ratio_wet = xr.open_dataarray('/trace/group/rounce/cvwilson/climate_data/ukesm_merra2_reg01_bcdry.nc')
 
-        for site in tqdm(site_dict[glacier], desc=f'{glacier} site loop', leave=False):
+            # select coordinate
+            cen_lat = float(coords.split('_')[0])
+            cen_lon = float(coords.split('_')[1])
+            ds_bcd = ds_bcd.sel(lat=cen_lat, lon=cen_lon, method='nearest')
+            ds_bcw = ds_bcw.sel(lat=cen_lat, lon=cen_lon, method='nearest')
+            ratio_dry = ratio_dry.sel(lat=cen_lat, lon=cen_lon, method='nearest')
+            ratio_wet = ratio_wet.sel(lat=cen_lat, lon=cen_lon, method='nearest')
+            ds_bcd = ds_bcd['tendency_of_atmosphere_mass_content_of_elemental_carbon_dry_aerosol_particles_due_to_dry_deposition'] * ratio_dry
+            ds_bcw = ds_bcw['tendency_of_atmosphere_mass_content_of_elemental_carbon_dry_aerosol_particles_due_to_wet_deposition'] * ratio_wet
+
+            # combine wet and dry deposition
+            ds_bc = ds_bcd + ds_bcw
+            ds_bc = ds_bc.drop_vars(['forecast_reference_time','level_height','model_level_number','sigma'])
+
+        for site in site_dict[glacier]: #  tqdm(site_dict[glacier], desc=f'{glacier} site loop', leave=False):
             site_temp_fn = temp_fn.replace('GLACIER',glacier).replace('SITE', site)
             if os.path.exists(site_temp_fn):
                 df = pd.read_csv(site_temp_fn, index_col=0, parse_dates=True)
             else:
                 sim_fn_site = sim_fn.replace('GLACIER', glacier).replace('SITE', site)
-                print(sim_fn_site)
                 ds = xr.open_dataset(sim_fn_site)
                 time_res_hours = 24 if args.time_res == 'daily' else 1
 
@@ -176,9 +192,11 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
                     accum = ds['accum'].resample({'time': time_res}).sum() * 1000 # m w.e.
                     rain = ds['rainfall'].resample({'time': time_res}).sum() * 1000 # m w.e.
                     albedo = ds['albedo'].resample({'time': time_res}).min() # -
-                    bc = ds_bc.resample(time=time_res).sum() * 3600 # kg m-2
+                    if 'ukesm' not in all_df_fn.lower():
+                        bc = ds_bc.resample(time=time_res).sum() * 3600 # kg m-2
+                    else:
+                        bc = ds_bc * 3600
                     SWin = ds['SWin'].resample(time=time_res).sum() * 3600 # J m-2
-                    LWin = ds_lw['LWGAB'].resample(time=time_res).sum() * 3600 # J m-2
 
                     # days since accumulation
                     last = np.maximum.accumulate(np.where(accum > 1e-3, np.arange(len(accum)), -1))
@@ -191,22 +209,26 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
                     accum = ds['accum'] * 1000 # m w.e.
                     rain = ds['rainfall'] * 1000 # m w.e.
                     albedo = ds['albedo'] # -
-                    bc = ds_bc * 3600 # kg m02
+                    if 'ukesm' not in all_df_fn.lower():
+                        bc = ds_bc * 3600 # kg m-2
+                    else:
+                        bc = ds_bc.resample(time='h').ffill() * 3600
                     SWin = ds['SWin'] * 3600 # J m-2
-                    LWin = ds_lw['LWGAB'] * 3600 # J m-2
                     days_since_acc = ds['melt'] * np.nan # PLACEHOLDER
+
+                t_shared = np.intersect1d(melt.time.dt.floor('d').values, bc.time.dt.floor('d').values)
+                bc['time'] = bc.time.dt.floor('d')
 
                 # build new dataset
                 ds_out = xr.Dataset({
-                    'melt': melt,
-                    'positive_temp': positive_temp_sum,
-                    'accum': accum,
-                    'rain': rain,
-                    'albedo':albedo,
-                    'bc_dep':bc,
-                    'SWin':SWin,
-                    'LWin':LWin,
-                    'days_since_acc':days_since_acc,
+                    'melt': melt.sel(time=t_shared, method='nearest'),
+                    'positive_temp': positive_temp_sum.sel(time=t_shared, method='nearest'),
+                    'accum': accum.sel(time=t_shared, method='nearest'),
+                    'rain': rain.sel(time=t_shared, method='nearest'),
+                    'albedo':albedo.sel(time=t_shared, method='nearest'),
+                    'bc_dep':bc.sel(time=t_shared, method='nearest'),
+                    'SWin':SWin.sel(time=t_shared, method='nearest'),
+                    'days_since_acc':days_since_acc.sel(time=t_shared, method='nearest'),
                 })
 
                 # clip to bounds to help in computational messiness
@@ -221,20 +243,20 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
 
                 # define lists of variables to sum cumulatively and drop from dataframe
                 cum_vars = ['bc_dep', 'positive_temp']
-                drop_vars = ['lat','lon']
+                drop_vars = []
 
                 # add cumulative variables
                 water_year = xr.where(ds_out['time.month'] >= 10, ds_out['time.year'] + 1, ds_out['time.year'])
                 for var in cum_vars: 
                     ds_out[f'{var}_cumsum'] = (ds_out[var].groupby(water_year).cumsum())
-                # drop_vars += cum_vars
+                drop_vars += cum_vars
 
                 # add rolling deposition (n days prior to each timestep)
                 n_rolling_bc = 5
                 ds_out[f'bc_{n_rolling_bc}d_rolling'] = ds_out['bc_dep'].rolling(time=n_rolling_bc).sum()
 
                 # create dataframe and drop variables
-                df = ds_out.to_dataframe().drop(columns=drop_vars)
+                df = ds_out.to_dataframe() # .drop(columns=drop_vars)
                 df = df.rename(columns={'positive_temp_cumsum':'PDD_cumsum'})
 
                 # crop out any nans
@@ -262,9 +284,6 @@ else:
     # open dataframe processed in `get_ddf.py` containing hourly data for all sites
     all_df = pd.read_csv(all_df_fn, index_col=0, parse_dates=True)
 
-print('stored UKESM results')
-assert 1==0
-
 # clip the dataframe to the sites of interest
 if args.group in glacier_based_groups:
     glac_df = all_df.loc[all_df['glacier'].isin(all_groups[args.group])].copy()
@@ -279,8 +298,8 @@ if args.debug:
     print(f'Got dataframe! Running regression on {args.regression_vars}')
 
 # get log term for BC
-if 'log_bc_5d_rolling' not in glac_df.columns:
-    glac_df['log_bc_5d_rolling'] = np.log1p(glac_df['bc_5d_rolling'] * 1e9)
+# if 'log_bc_5d_rolling' not in glac_df.columns:
+#     glac_df['log_bc_5d_rolling'] = np.log1p(glac_df['bc_5d_rolling'] * 1e9)
 
 # subset the dataframe differently for melt
 albedo_df = glac_df.copy()
@@ -305,8 +324,14 @@ else:
     fixed_var = None
 
 # train OLS model
-model = sm.OLS(y, X).fit()
-if args.debug:
+if penalty is None:
+    model = sm.OLS(y, X).fit()
+elif penalty == 'L1':
+    model = sm.OLS(y, X).fit_regularized(L1_wt=1.0, alpha=0.1)
+elif penalty == 'L2':
+    model = sm.OLS(y, X).fit_regularized(L1_wt=0, alpha=0.1)
+
+if args.debug and penalty is None:
     print(model.summary())
 
 # extract model parameters
@@ -409,7 +434,7 @@ else:
 # add error metrics
 mae = np.nanmean(np.abs(melt_predicted - melt_actual))
 bias = np.nanmean(melt_predicted - melt_actual)
-r2_melt = model.rsquared
+r2_melt = 1 - np.sum((melt_actual - melt_predicted)**2) / np.sum(melt_actual**2)
 
 # if using albedo predictor, add that scatter plot
 if args.albedo_predicted and 'SW_absorbed' in args.regression_vars:
