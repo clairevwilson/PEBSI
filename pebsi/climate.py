@@ -88,6 +88,7 @@ class Climate():
                 self.temp_elev = args.station_elevation[self.mapping_glacier]
         elif int(rgi_region) == 0:
             self.temp_elev = self.median_elev
+            self.aws_elev = self.temp_elev
 
         # check if storing the cds
         self.store_cds = args.store_climate 
@@ -182,7 +183,8 @@ class Climate():
         df = df.reindex(index=index_joined).interpolate().reindex(new_index)
 
         # get AWS elevation
-        self.aws_elev = self.args.aws_elev
+        if self.args.aws_elev is not None:
+            self.aws_elev = self.args.aws_elev
 
         # get the available variables
         all_aws_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',

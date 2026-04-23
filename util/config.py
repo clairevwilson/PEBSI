@@ -8,7 +8,7 @@ by the model.
 @author: clairevwilson
 """
 import yaml
-import pebsi.params as prms
+import util.params as prms
 
 class ConfigError(Exception):
     """Raised when an expected crash

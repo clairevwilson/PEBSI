@@ -124,14 +124,25 @@ class Shading():
         # save the args
         self.args = args
 
+        # see if we can get a shapefile
+        if args.shapefile_exists:
+            self.get_shapefile()
+        else:
+            if 'search' in args.plot:
+                args.plot.remove('search')
+
         # check if the DEM exists; if not, print out the bounding box to manually retrieve one
-        self.get_shapefile()
         if not os.path.exists(args.dem_fn):
-            minx, miny, maxx, maxy = self.shapefile.total_bounds
             dem_not_found = f'DEM was not found for {args.glac_name}. Download for the box around:'
-            bounding_box = f'      latitude: {miny:.6f} to {maxy:.6f}    longitude: {minx:.6f} to {maxx:.6f}'
             move_to = f'                and move to {args.dem_fn}'
-            assert os.path.exists(args.dem_fn), f'{dem_not_found}\n{bounding_box}\n{move_to}'
+            if args.shapefile_exists:
+                minx, miny, maxx, maxy = self.shapefile.total_bounds
+                bounding_box = f'      latitude: {miny:.6f} to {maxy:.6f}    longitude: {minx:.6f} to {maxx:.6f}'
+                assert os.path.exists(args.dem_fn), f'{dem_not_found}\n{bounding_box}\n{move_to}'
+            else:
+                latlon = f'        latitude: {args.lat}         longitude: {args.lon}'
+                surr = '                make sure extent covers glacier + surrounding ridges'
+                assert os.path.exists(args.dem_fn),f'{dem_not_found}\n{latlon}\n{move_to}\n{surr}'
 
         # Load the DEM
         self.load_dem()
@@ -273,6 +284,8 @@ class Shading():
                     if f[-3:] == 'shp':
                         fn = folder + '/' + f
         # open and index regional shapefile to the glacier
+        self.args.shapefile_exists = os.path.exists(fp_base + rgi_fp + fn)
+        assert self.args.shapefile_exists, f'Shapefile not found at {fp_base + rgi_fp + fn}'
         all_gdf = gpd.read_file(fp_base + rgi_fp + fn).set_crs(epsg=4326)
         shapefile = all_gdf.loc[all_gdf['RGIId'] == 'RGI60-'+id]
         self.shapefile = shapefile
@@ -304,7 +317,8 @@ class Shading():
         self.y_res = dem.rio.resolution()[1]
 
         # ensure consistent coordinates for the shapefile
-        self.shapefile = self.shapefile.to_crs(dem.rio.crs)
+        if self.args.shapefile_exists:
+            self.shapefile = self.shapefile.to_crs(dem.rio.crs)
 
         # filter below sea level
         dem = dem.where(dem > 0)

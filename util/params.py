@@ -23,12 +23,12 @@ import os
 import socket
 # External libraries
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 # ====================================================================================================================
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
 # ====================================================================================================================
+use_config = False      #$ -c, --use_config         Use configuration file?
 output_fn = 'test_out'  #$ -out, --output_fn        Output file name
 rgi_id = '00.00000'     #$ -id, --rgi_id            RGI glacier ID
 site = 'center'         #$ -site                    Name of site
@@ -39,17 +39,38 @@ debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
 
 # ====================================================================================================================
-#                         DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
+#           DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/ UNLESS OTHERWISE SPECIFIED)
 # ====================================================================================================================
 # get machine this simulation is running on
 machine = socket.gethostname()
-config_fn = 'config.yaml'                                   # Default configuration .yaml file
 
+# =========================================== USER EDITABLE ==========================================================
+# GENERAL
+config_fn = 'config.yaml'                                   # Default configuration .yaml file
+output_fp = '../Output/'                                    # General output filepath
+
+# GLACIER
+rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
+dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
+
+# CLIMATE
+climate_fp = '../climate_data/'                             # General climate data filepath
+aws_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
+merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential relative to climate_fp
+cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
+
+# INITIAL CONDITIONS
+initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
+initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
+initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
+initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content
+
+# =============================================== INTERNAL ===========================================================
 # GLACIER
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
-rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
 site_fn = 'site_constants.csv'                              # Name for site constants file
+shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 
 # SNICAR
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
@@ -57,30 +78,14 @@ snicarfx_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'    # SNICAR input filep
 biosnicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'   # SNICAR input filepath (bioSNICAR)
 clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 
-# INITIAL CONDITIONS
-initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
-initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
-initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
-initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content # f'/../Data/Nagorski/May_Mend-2_BC.csv'
-
-# SHADING
-dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
-shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
-
 # CLIMATE
-climate_fp = '../climate_data/'                             # General climate data filepath
-merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential relative to climate_fp
 merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios [template]
 ukesm_merra_laps_fn = 'ukesm_merra2_reg##_SPECIESDEP.nc'    # Regional file of UK-ESM-->MERRA-2 deposition ratio [template]
 ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Bias adjustment filepath [template]
-cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
-aws_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
-aws_fn = 'data/sample_aws.csv'                               # Sample weather station filename
-aws_metadata_fn = 'data/aws_metadata.txt'                   # Weather station metadata filename
+aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename 
 
 # OUTPUT
-output_fp = '../Output/'                                    # General output filepath
 albedo_out_fn = '../Output/EB/albedo_spectrum.csv'          # Output filepath for full albedo spectrum
 cds_output_fn = 'default'                                   # 'default' or filename to save climate dataset ++
 # ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be

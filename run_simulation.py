@@ -18,8 +18,8 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 # Internal libraries
-import pebsi.params as prms
-import pebsi.config as config
+import util.params as prms
+import util.config as config
 from pebsi.climate import Climate
 from pebsi.massbalance import massBalance
 from shading.shading import Shading
@@ -40,7 +40,7 @@ def get_args(parse=True):
     parser = argparse.ArgumentParser(description='energy balance model runs')
 
     # CONFIG FILE (any command-line args will overwrite the config file)
-    parser.add_argument('-c', '--use_config', action='store_true',
+    parser.add_argument('-c', '--use_config', action='store_true', default=prms.use_config,
                         help='load settings from config file?')
     parser.add_argument('-cf', '--config_fn', type=str, default=None,
                         help='filename of config yaml file')
@@ -126,12 +126,12 @@ def get_site_table(site_df, rgi_df, args):
         if 'firndepth' in site_df.columns and ~np.isnan(site_df.loc[site,'firndepth']):
             args.initial_firn_depth = site_df.loc[site,'firndepth']
         # firn depth is not in the table: estimate if the site should have firn
-        elif args.elevation > rgi_df.loc[args.rgi_id, 'Zmed']:
-            # above median glacier elevation: initialize with firn
-            args.initial_firn_depth = args.initial_firn_depth
-        else:
+        elif len(rgi_df) == 0 or args.elevation <= rgi_df.loc[args.rgi_id, 'Zmed']:
             # below median glacier elevation: no firn
             args.initial_firn_depth = 0
+        else:
+            # above median glacier elevation: initialize with firn
+            args.initial_firn_depth = args.initial_firn_depth
 
     # ICE ALBEDO
     if args.albedo_ice == prms.albedo_ice:
@@ -210,11 +210,24 @@ def check_inputs(args):
 
     # open the RGI dataframe
     rgi_region = args.rgi_id.split('.')[0]
-    for fn in os.listdir(args.rgi_fp):
-        # open the attributes .csv for the correct region
-        if fn[:2] == rgi_region and fn[-3:] == 'csv':
-            rgi_df = pd.read_csv(args.rgi_fp + fn)
-            rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
+    if rgi_region != '00':
+        for fn in os.listdir(args.rgi_fp):
+            # open the attributes .csv for the correct region
+            if fn[:2] == rgi_region and fn[-3:] == 'csv':
+                # open the RGI attributes dataframe
+                rgi_df = pd.read_csv(args.rgi_fp + fn)
+                rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
+
+                # get filepath where .shp would be stored
+                shp_fn = args.rgi_fp + '../' + fn.replace('.csv','')
+
+                # tell model if shapefile exists for plotting shade
+                args.shapefile_exists = os.path.exists(shp_fn)    
+                if not args.shapefile_exists:
+                    print('! Warning: shapefile not found')
+                    print(f'  Recommended to move RGI O1 shapefile to: {shp_fn}')  
+    else:
+        rgi_df = pd.DataFrame([])
 
     # BASIC METADATA
     all_df = pd.read_csv(args.metadata_fn,index_col=0,converters={0: str})
@@ -233,7 +246,7 @@ def check_inputs(args):
         # add rgi_id to metadata file
         all_df.loc[rgi_id] = None
         all_df.loc[rgi_id, 'name'] = args.glac_name 
-        all_df.loc[rgi_id, 'timezone'] = args.timezone 
+        all_df.loc[rgi_id, 'timezone'] = args.timezone
 
         # store the csv
         all_df.to_csv(args.metadata_fn) 

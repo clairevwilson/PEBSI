@@ -21,7 +21,7 @@ import pandas as pd
 import xarray as xr
 # Internal libraries
 import run_simulation as sim
-import pebsi.params as prms
+import util.params as prms
 import pebsi.massbalance as mb
 from shop.processing.objectives import *
 
