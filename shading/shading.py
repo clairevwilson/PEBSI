@@ -82,9 +82,9 @@ MEAN_RAD = 1    # mean earth-sun radius in AU
 varprops = {'dirirr':{'label':'direct flat-surface irradiance [W m-2]','cmap':'plasma'},
             'dirirrslope':{'label':'direct slope-corrected irradiance [W m-2]','cmap':'plasma'},
             'shaded':{'label':'shading [black = shaded]','cmap':'binary'},
-            'sun_elev':{'label':'sun elevation angle [$\circ$]','cmap':'Spectral_r'},
-            'horizon_elev':{'label':'horizon elevation angle [[$\circ$]','cmap':'YlOrRd'},
-            'sun_az':{'label':'sun azimuth angle [$\circ$]','cmap':'twilight'}}
+            'sun_elev':{'label':r'sun elevation angle [$\circ$]','cmap':'Spectral_r'},
+            'horizon_elev':{'label':r'horizon elevation angle [[$\circ$]','cmap':'YlOrRd'},
+            'sun_az':{'label':r'sun azimuth angle [$\circ$]','cmap':'twilight'}}
 
 class Shading():
     """
@@ -596,9 +596,9 @@ class Shading():
         args = self.args
         ax.fill_between(self.angles,self.horizon_elev*180/pi,color='black',alpha=0.6)
         ax.plot(self.angles,self.horizon_elev*180/pi,color='black')
-        ax.set_xlabel('Azimuth angle ($\circ$)')
-        ax.set_ylabel('Horizon angle ($\circ$)')
-        fig.suptitle(args.glac_name+' shading by azimuth angle (0$^{\circ}$N)',fontsize=14)
+        ax.set_xlabel(r'Azimuth angle ($\circ$)')
+        ax.set_ylabel(r'Horizon angle ($\circ$)')
+        fig.suptitle(args.glac_name+r' shading by azimuth angle (0$^{\circ}$N)',fontsize=14)
         if 'horizon_plot' in args.store:
             plt.savefig(self.out_horizon_fp)
         else:
