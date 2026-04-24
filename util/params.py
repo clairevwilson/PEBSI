@@ -56,12 +56,13 @@ output_fp = '../Output/'                                    # General output fil
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
-dem_fn = '../data/dems/GLACIER_dem.tif'                     # DEM filepath
+dem_fn = '../data/dems/{g}_dem.tif'                         # DEM filepath
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
 merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential
-cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
+cds_input_fn = '{g}{s}_climate.nc'                          # Climate dataset filepath to load ++
+aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename
 
 # INITIAL CONDITIONS
 initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
@@ -76,25 +77,25 @@ initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP conten
 
 # GLACIER
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
-glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath
+glac_fp = 'data/by_glacier/{g}/'                            # Generalized glacier filepath
 site_fn = 'site_constants.csv'                              # Name for site constants file
-shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
+shading_fn = 'data/by_glacier/{g}/shade/{g}{s}_shade.csv'   # Generalized shading filepath
 
 # SNICAR
-grainsize_fn = 'data/grainsize/drygrainsizeSSAin##.nc'      # Grain size evolution lookup table filepath
+grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'    # Grain size evolution lookup table filepath
 snicarfx_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'    # SNICAR input filepath (SNICARfx)
 biosnicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'   # SNICAR input filepath (bioSNICAR)
 clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 
 # CLIMATE
-merra2_laps_fn = 'MERRA2/reg##_SPECIES_regression_map.nc'   # Regional file of BC2-->BCtot and OC2-->OCtot ratios [template]
-ukesm_merra_laps_fn = 'ukesm_merra2_reg##_SPECIESDEP.nc'    # Regional file of UK-ESM-->MERRA-2 deposition ratio [template]
-ukesm_fn = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
-bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Bias adjustment filepath [template]
-aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename 
+merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
+ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of UK-ESM-->MERRA-2 deposition ratio
+ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
+ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
+bias_fn = 'data/bias_adjustment/{m}_{g}_{v}.csv'            # Bias adjustment filepath
 
 # OUTPUT
-albedo_out_fn = '../Output/EB/albedo_spectrum.csv'          # Output filepath for full albedo spectrum
+albedo_out_fn = '../Output/EB/albedo_spectrum_{s}.csv'      # Output filepath for full albedo spectrum
 cds_output_fn = 'default'                                   # 'default' or filename to save climate dataset ++
 # ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
 #    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
@@ -106,10 +107,10 @@ cds_output_fn = 'default'                                   # 'default' or filen
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
 dates_from_data = False                     #$ -dfd, --dates_from_data  Overwrite simulation time with dates from the input AWS data?
-input_climate = False                       #$ -cds, --input_climate    Use a previously prepared cds for climate data (if True, see ++ above)
+input_cds = False                           #$ -cds, --input_cds        Use a previously prepared cds for climate data (if True, see ++ above)
 
 # WEATHER STATION SITE
-station_elevation = {                       # Elevation of the station used in temp quantile mapping [m a.s.l.]
+station_elevation = {                       # Elevation of the stations used in temperature quantile mapping [m a.s.l.]
     'gulkana':1725, 'wolverine':990, 
     'kahiltna':2377, 'lemon_creek':1280,
 }
@@ -128,6 +129,7 @@ sky_view = None                             # Site sky-view factor
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 deposition_data = None                      # None or 'UKESM'
+ukesm_vn = 'tendency_of_atmosphere_mass_content_of_{sp}_dry_aerosol_particles_due_to_{t}_deposition'  # Name of var in UKESM data
 merra2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
 bias_vars = ['temp']                        # Vars to correct by quantile mapping (only applied to reanalysis data)
 
@@ -188,7 +190,7 @@ band_indices = {}                       # dictionary for storing spectral albedo
 for i in np.arange(0,480):
     band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
-grainsize_ds = xr.open_dataset(grainsize_fn.replace('##',str(initSSA))).load()
+grainsize_ds = xr.open_dataset(grainsize_fn.format(s=str(initSSA))).load()
 
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS

@@ -94,10 +94,10 @@ class Climate():
         self.store_cds = args.store_climate 
 
         # get data from existing .nc or from AWS/MERRA-2
-        if str(bool(args.input_climate)) != 'False':
+        if str(bool(args.input_cds)) != 'False':
             # open data from existing .nc
-            cds_input_fn = args.cds_input_fn.replace('GLACIER', args.glac_name)
-            fn_data = args.climate_fp + cds_input_fn.replace('SITE', args.site)
+            cds_input_fn = args.cds_input_fn.format(g=args.glac_name, s=args.site)
+            fn_data = args.climate_fp + cds_input_fn
             if not os.path.exists(fn_data):
                 print(f'Climate data not found: getting new cds and saving to {fn_data}')
                 self.store_cds = True
@@ -559,8 +559,8 @@ class Climate():
         args = self.args
 
         reg = self.args.rgi_id[:2]
-        fn_bc = args.merra2_laps_fn.replace('SPECIES','BC').replace('##', reg)
-        fn_oc = args.merra2_laps_fn.replace('SPECIES','OC').replace('##', reg)
+        fn_bc = args.merra2_laps_fn.format(sp='BC', r=reg)
+        fn_oc = args.merra2_laps_fn.format(sp='OC', r=reg)
 
         # open ratio dataset
         ds_bc = xr.open_dataset(args.climate_fp + fn_bc)
@@ -578,11 +578,11 @@ class Climate():
     def apply_ukesm_dep_ratio(self):
         args = self.args
         reg = self.args.rgi_id[:2]
-        reg_fn = args.ukesm_merra_laps_fn.replace('##', reg)
+        reg_fn = args.ukesm_merra_laps_fn.format(r=reg)
 
         for species in ['bc','oc']:
             for deptype in ['wet','dry']:
-                fn = reg_fn.replace('SPECIES', species).replace('DEP', deptype)
+                fn = reg_fn.format(sp=species, t=deptype)
                 
                 # open ratio dataset
                 ds_bc = xr.open_dataarray(args.climate_fp + fn)
@@ -717,8 +717,9 @@ class Climate():
             Variable to bias correct
         """
         # get quantile mapping .csv filename
-        bias_fn = self.args.bias_fn.replace('METHOD','quantile_mapping').replace('VAR',var)
-        bias_fn = bias_fn.replace('GLACIER', self.mapping_glacier)
+        method = 'quantile_mapping'
+        map_glac = self.mapping_glacier
+        bias_fn = self.args.bias_fn.format(m=method, v=var, g=map_glac)
 
         # need to use file generated without a lapse rate for temperature
         if var == 'temp':
@@ -781,6 +782,8 @@ class Climate():
         # drop QV data and store the RH dataset
         ds_rh = ds_rh.drop_vars('QV2M')
         ds_rh.to_netcdf(fn)
+        if self.args.debug:
+            print(f'RH dataset created at {fn}')
         return
 
     def sat_vapor_pressure(self,airtemp,method='ARM'):
@@ -962,17 +965,17 @@ class Climate():
                 # Define names used in UKESM data
                 sp_oc = 'particulate_organic_matter'
                 sp_bc = 'elemental_carbon'
-                vn = 'tendency_of_atmosphere_mass_content_of_SPECIES_dry_aerosol_particles_due_to_DEPTYPE_deposition'
+                vn = args.ukesm_vn
 
                 # Variable names 
-                self.var_dict['bcwet']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'wet')
-                self.var_dict['bcdry']['vn'] = vn.replace('SPECIES', sp_bc).replace('DEPTYPE', 'dry')
-                self.var_dict['ocwet']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'wet')
-                self.var_dict['ocdry']['vn'] = vn.replace('SPECIES', sp_oc).replace('DEPTYPE', 'dry')
+                self.var_dict['bcwet']['vn'] = vn.format(sp=sp_bc, t='wet')
+                self.var_dict['bcdry']['vn'] = vn.format(sp=sp_bc, t='dry')
+                self.var_dict['ocwet']['vn'] = vn.format(sp=sp_oc, t='wet')
+                self.var_dict['ocdry']['vn'] = vn.format(sp=sp_oc, t='dry')
 
                 # Variable filenames
-                dep_fp = args.ukesm_fn
-                self.var_dict['bcwet']['fn'] = dep_fp + 'sum_bc_wetdeposition_kgm-2s-1.nc'
-                self.var_dict['bcdry']['fn'] = dep_fp + 'sum_bc_drydeposition_kgm-2s-1.nc'
-                self.var_dict['ocwet']['fn'] = dep_fp + 'sum_oc_wetdeposition_kgm-2s-1.nc'
-                self.var_dict['ocdry']['fn'] = dep_fp + 'sum_oc_drydeposition_kgm-2s-1.nc'
+                fp = args.ukesm_fp
+                self.var_dict['bcwet']['fn'] = fp + args.ukesm_fn.format(sp='bc',t='wet')
+                self.var_dict['bcdry']['fn'] = fp + args.ukesm_fn.format(sp='bc',t='dry')
+                self.var_dict['ocwet']['fn'] = fp + args.ukesm_fn.format(sp='oc',t='wet')
+                self.var_dict['ocdry']['fn'] = fp + args.ukesm_fn.format(sp='oc',t='dry')

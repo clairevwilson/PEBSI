@@ -72,7 +72,7 @@ def get_args(parse=True):
     # CLIMATE OPTOINS
     parser.add_argument('-use_aws', action='store_true',
                         help='use AWS or just reanalysis?')
-    parser.add_argument('-cds','--input_climate',action='store_true',
+    parser.add_argument('-cds','--input_cds',action='store_true',
                         help='use existing cds?')
     parser.add_argument('-qm_glac_name',type=str,default=None,
                         help='glacier for quantile mapping climate data')
@@ -219,13 +219,14 @@ def check_inputs(args):
                 rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
 
                 # get filepath where .shp would be stored
-                shp_fn = args.rgi_fp + '../' + fn.replace('.csv','')
+                raw_fp = os.path.join(args.rgi_fp,'../',fn.replace('.csv',''))
+                reg_fp = os.path.normpath(raw_fp)
 
                 # tell model if shapefile exists for plotting shade
-                args.shapefile_exists = os.path.exists(shp_fn)    
+                args.shapefile_exists = os.path.exists(reg_fp)    
                 if not args.shapefile_exists:
                     print('! Warning: shapefile not found')
-                    print(f'  Recommended to move RGI O1 shapefile to: {shp_fn}')  
+                    print(f'  Recommended to add RGI O1 shapefile to: {reg_fp}')  
     else:
         rgi_df = pd.DataFrame([])
 
@@ -266,9 +267,9 @@ def check_inputs(args):
             print('Test glacier: using sample AWS data')
 
     # specify other filepaths to args
-    args.shading_fn = args.shading_fn.replace('GLACIER',args.glac_name).replace('SITE',args.site)
-    args.dem_fn = args.dem_fn.replace('GLACIER', args.glac_name)
-    args.glac_fp = args.glac_fp.replace('GLACIER', args.glac_name)
+    args.shading_fn = args.shading_fn.format(g=args.glac_name, s=args.site)
+    args.dem_fn = args.dem_fn.format(g=args.glac_name)
+    args.glac_fp = args.glac_fp.format(g=args.glac_name)
     args.site_fn = args.glac_fp + args.site_fn
 
     # open the site dataframe

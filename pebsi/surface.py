@@ -17,7 +17,7 @@ import suncalc
 
 # Make SNICAR find-able
 sys.path.append(os.getcwd()+'/biosnicar-py/')
-sys.path.append(os.getcwd()+'snicar-fx/src/')
+sys.path.append(os.getcwd()+'/snicar-fx/src/')
 
 class Surface():
     """
@@ -69,14 +69,18 @@ class Surface():
 
         # get the underlying ice spectrum
         clean_ice = pd.read_csv(args.clean_ice_fn,names=[''])
+
         # find albedo of the base spectrum from the filename
         albedo_string = args.clean_ice_fn.split('bba')[-1].split('.')[0]
         bba = int(albedo_string) / (10 ** len(albedo_string))
+
         # scale the new spectrum by the ice albedo
         ice_point_spectrum = clean_ice * args.albedo_ice / bba
+
         # name file for ice spectrum
         clean_ice_fn = args.clean_ice_fn.split('/')[-1]
-        self.ice_spectrum_fn = args.clean_ice_fn.replace(clean_ice_fn,f'gulkana{args.site}_ice_spectrum_{args.task_id}.csv')
+        self.ice_spectrum_fn = args.clean_ice_fn.replace(clean_ice_fn,f'ice_spectrum_{args.task_id}{args.site}.csv')
+
         # store new spectrum (will be deleted after run completion)
         df_spectrum = pd.DataFrame(ice_point_spectrum)
         df_spectrum.to_csv(self.ice_spectrum_fn, index=False, header=False)
@@ -100,8 +104,8 @@ class Surface():
             # problem in the SNICAR input file: create a new one
             self.reset_SNICAR()
 
-        # need some initial value for cloud cover and annual minimum albedo (firn)
-        self.tcc = 0.5
+        # need some initial value for cloud cover and annual minimum albedo
+        self.tcc = 1
         self.min_annual_albedo = 1
         return
     

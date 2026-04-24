@@ -1570,7 +1570,7 @@ class massBalance():
 
         # optionally store spectral albedo
         if self.args.store_bands:
-            self.surface.albedo_df.to_csv(self.args.albedo_out_fn.replace('.csv',f'_{self.args.site}.csv'))
+            self.surface.albedo_df.to_csv(self.args.albedo_out_fn.format(s=self.args.site))
         
         # delete temporary files
         self.delete_temp_files()
