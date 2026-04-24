@@ -99,7 +99,7 @@ class energyBalance():
         self.nanalbedo = True if np.isnan(self.albedo_ds) else False
         return
 
-    def surface_EB(self,surftemp,surface,mode='sum'):
+    def surface_EB(self,surftemp,surface):
         """
         Calculates the surface heat fluxes for the 
         current timestep.
@@ -173,14 +173,7 @@ class energyBalance():
         # keep track of iterations
         self.iters += 1
 
-        if mode in ['sum']:
-            return Qm
-        elif mode in ['optim']:
-            return np.abs(Qm)
-        elif mode in ['list']:
-            return [self.SWin, self.SWout, LWin, LWout, Qs, Ql, Qp, Qg]
-        else:
-            self.args.ConfigError('argument \'mode\' in function surfaceEB should be sum or optim')
+        return Qm
     
     def get_SW(self,surface):
         """

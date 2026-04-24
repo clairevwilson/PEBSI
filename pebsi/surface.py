@@ -12,7 +12,7 @@ import yaml
 # External libraries
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import brentq
 import suncalc
 
 # Make SNICAR find-able
@@ -157,12 +157,16 @@ class Surface():
         CTOK = args.celsius_to_kelvin
         dt = args.dt
 
+        # define target function to solve energy balance
+        def target_func(t):
+            return enbal.surface_EB(t, self)
+
         if not enbal.nanLWout:
             # CASE (1): surftemp from LW data
             self.stemp = np.power(np.abs(enbal.LWout_ds/(dt*STEFAN_BOLTZMANN)),1/4) - CTOK
-            Qm = enbal.surface_EB(self.stemp,self)
+            Qm = target_func(self.stemp)
         else:
-            Qm_check = enbal.surface_EB(0,self)
+            Qm_check = target_func(0)
             # if Qm>0 with surftemp=0, the surface is melting or warming.
             # if Qm<0 with surftemp=0, the surface is cooling.
             cooling = True if Qm_check < 0 else False
@@ -171,9 +175,6 @@ class Surface():
                 self.stemp = 0
                 Qm = Qm_check
                 if layers.ltemp[0] < 0.: 
-                    # check heat with a surftemp of 0
-                    Qm_check = enbal.surface_EB(self.stemp,self)
-                    
                     # warm the top layer to the melting point
                     temp_change = Qm_check*dt/(HEAT_CAPACITY_ICE*layers.lice[0])
                     layers.ltemp[0] += temp_change
@@ -193,18 +194,18 @@ class Surface():
                         Qm = 0
 
             elif cooling:
+                # check cold boundary (-60°C)
+                eb_at_60 = target_func(-60)
+                if eb_at_60 <= 0:
+                    # met cold boundary: stay there
+                    self.stemp = -60
+                    self.Qm = eb_at_60
+                
                 # CASE (3): Energy away from surface
-                if args.method_cooling in ['minimize']:
+                elif args.method_cooling in ['minimize']:
                     # run minimization on EB function
-                    result = minimize(enbal.surface_EB,self.stemp,
-                                      method='L-BFGS-B',bounds=((-60,0),),tol=1e-3,
-                                      args=(self,'optim'))
-                    Qm = enbal.surface_EB(result.x[0],self)
-                    # check success and print warning 
-                    if not result.success and abs(Qm) > 10 and self.args.debug:
-                        print('Unsuccessful minimization, Qm = ',Qm)
-                    else:
-                        self.stemp = result.x[0]
+                    self.stemp = brentq(target_func, -60, 0, xtol=1e-3)
+                    Qm = 0
 
                 elif args.method_cooling in ['iterative']:
                     # loop to iteratively calculate surftemp
@@ -232,19 +233,7 @@ class Surface():
                         if abs(Qm_check) < 0.5 or n_iters > 10:
                             # if temp is still bottoming out at -60, resolve minimization
                             if self.stemp == -60 or n_iters > 10:
-                                result = minimize(enbal.surface_EB,-50,method='L-BFGS-B',
-                                                    bounds=((-60,0),),tol=1e-3,
-                                                    args=(self,'optim'))
-                                if result.success or result.fun < 10:
-                                    # successfully minimized
-                                    self.stemp = result.x[0]
-                                else:
-                                    # did not minimize: energy balance is not converged, but surf temp is still bounded
-                                    # this will NOT break the run, but it might indicate an issue in the forcings
-                                    if self.args.debug:
-                                        print(f'! energy balance did not converge at {enbal.timestamp}; stemp = {self.stemp:.3f}')
-                                        assert result.success, 'energy balance did not converge; check forcings'
-                                
+                                self.stemp = brentq(target_func, -60, 0, xtol=1e-3)
                             break
 
                 # if cooling, Qm must be 0
