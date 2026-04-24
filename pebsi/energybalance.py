@@ -238,10 +238,7 @@ class energyBalance():
             # split sky into direct and diffuse
             f_diff = self.diffuse_fraction(SWin_sky, SUN_ZEN)
             SWin_direct = SWin_sky * (1-f_diff)
-            SWin_diffuse = SWin_sky * f_diff
-
-            # correct direct radiation for slope
-            SWin_direct *= slope_correction
+            SWin_diffuse = SWin_sky * f_diff * SKY_VIEW
 
             # correct for shade
             time_str = str(self.timestamp).replace(str(self.timestamp.year),'2024')
