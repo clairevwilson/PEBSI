@@ -257,6 +257,9 @@ def check_inputs(args):
     
     # AWS FILENAME
     if args.glac_name == 'test' or args.aws_fn is None:
+        # if aws_fn was not supplied, try to read it from all_df
+        if rgi_id in all_df.index and args.glac_name != 'test':
+            raise args.ConfigError('Specify aws_fn in command line or config file')
         args.aws_fn = all_df.loc[rgi_id,'AWS_fn']
         args.use_aws = True
         if args.debug and args.glac_name == 'test':
@@ -278,7 +281,7 @@ def check_inputs(args):
         # check if site constants table exists
         if site_df is not None:
             # check if the site is already in site_df
-            assert args.site in site_df.index, f'Specify lat/lon or add {args.site} to site constants'
+            assert args.site in site_df.index, f'Specify lat/lon for {args.site} in config file'
 
             # fill missing pieces to args from the site_df
             if args.lat is None: args.lat = site_df.loc[args.site, 'lat']
@@ -300,9 +303,10 @@ def check_inputs(args):
         db_lat = site_df.loc[args.site, 'lat']
         db_lon = site_df.loc[args.site, 'lon']
         if not (np.isclose(args.lat, db_lat) and np.isclose(args.lon, db_lon)):
+            # site lat/lon was changed: need to rerun shading
             coords_match = False
 
-    # check if the shading file exists
+    # check if shading model should be run
     if not os.path.exists(args.shading_fn) or not coords_match:
         # run shading model
         args = get_shading(args, coords_match)

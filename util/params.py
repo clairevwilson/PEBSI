@@ -28,8 +28,8 @@ import xarray as xr
 # ====================================================================================================================
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
 # ====================================================================================================================
-use_config = False      #$ -c, --use_config         Use configuration file?
-output_fn = 'test_out'  #$ -out, --output_fn        Output file name
+use_config = True       #$ -c, --use_config         Use configuration file?
+output_fn = None        #$ -out, --output_fn        Output file name (None for a default, descriptive name)
 rgi_id = '00.00000'     #$ -id, --rgi_id            RGI glacier ID
 site = 'center'         #$ -site                    Name of site
 use_aws = False         #$ -use_aws                 Use AWS data?
@@ -39,24 +39,28 @@ debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
 
 # ====================================================================================================================
-#           DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/ UNLESS OTHERWISE SPECIFIED)
+#                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
 # ====================================================================================================================
 # get machine this simulation is running on
 machine = socket.gethostname()
 
 # =========================================== USER EDITABLE ==========================================================
+#           The following filepaths can be absolute or relative to the current directory, PEBSI.
+#                           Thus in config.yaml you can use absolute filepaths 
+#                   (e.g., if you want to store the output to a different location.)
+# ====================================================================================================================
+
 # GENERAL
-config_fn = 'config.yaml'                                   # Default configuration .yaml file
+config_fn = 'config.yaml'          # $ -cf, --config_fn     # Configuration .yaml file    
 output_fp = '../Output/'                                    # General output filepath
 
 # GLACIER
-rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory filepath
-dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM filepath
+rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
+dem_fn = '../data/dems/GLACIER_dem.tif'                     # DEM filepath
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
-aws_fp = 'AWS/Processed/'                                   # General weather station data filepath relative to climate_fp
-merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential relative to climate_fp
+merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load ++ [template]
 
 # INITIAL CONDITIONS
@@ -66,6 +70,10 @@ initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size
 initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content
 
 # =============================================== INTERNAL ===========================================================
+#       The following filepaths are internal to the model and must be relative to the current directory.
+#                            Don't edit these unless you have good reason to.
+# ====================================================================================================================
+
 # GLACIER
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/GLACIER/'                        # Generalized glacier filepath

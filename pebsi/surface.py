@@ -194,6 +194,7 @@ class Surface():
                         Qm = 0
 
             elif cooling:
+                # CASE (3): Energy away from surface
                 # check cold boundary (-60°C)
                 eb_at_60 = target_func(-60)
                 if eb_at_60 <= 0:
@@ -201,11 +202,10 @@ class Surface():
                     self.stemp = -60
                     self.Qm = eb_at_60
                 
-                # CASE (3): Energy away from surface
+                # apply cooling methods to determine surf temp
                 elif args.method_cooling in ['minimize']:
                     # run minimization on EB function
                     self.stemp = brentq(target_func, -60, 0, xtol=1e-3)
-                    Qm = 0
 
                 elif args.method_cooling in ['iterative']:
                     # loop to iteratively calculate surftemp

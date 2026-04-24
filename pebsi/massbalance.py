@@ -1977,7 +1977,7 @@ class Output():
         if args.use_aws:
             measured = climate.measured_vars
             AWS_name = args.glac_name
-            AWS_elev = climate.AWS_elev
+            AWS_elev = climate.aws_elev
             which_AWS = f'{AWS_name} {AWS_elev}'
             AWS_str = ', '.join(measured)
             re_vars = [e for e in climate.all_vars if e not in measured]
