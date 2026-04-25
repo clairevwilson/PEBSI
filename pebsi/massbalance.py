@@ -891,41 +891,42 @@ class massBalance():
 
         # add LAPs from fully melted layers
         if self.melted_layers != 0:
-            m_BC_in_top = np.array(np.sum(self.melted_layers.BC) / dt)
-            m_OC_in_top = np.array(np.sum(self.melted_layers.OC) / dt)
-            m_dust_in_top = np.array(np.sum(self.melted_layers.dust) / dt)
+            m_BC_in_val = np.array(np.sum(self.melted_layers.BC))
+            m_OC_in_val = np.array(np.sum(self.melted_layers.OC))
+            m_dust_in_val = np.array(np.sum(self.melted_layers.dust))
         else:
-            m_BC_in_top = np.array([0],dtype=float) 
-            m_OC_in_top = np.array([0],dtype=float) 
-            m_dust_in_top = np.array([0],dtype=float)
+            m_BC_in_val = np.array([0],dtype=float) 
+            m_OC_in_val = np.array([0],dtype=float) 
+            m_dust_in_val = np.array([0],dtype=float)
 
-        # partition in aqueous phase for incoming flux
-        m_BC_in_top *= PARTITION_COEF_BC
-        m_OC_in_top *= PARTITION_COEF_OC
-        m_dust_in_top *= PARTITION_COEF_DUST
+        # initiate arrays to store flow
+        m_BC_in = np.zeros_like(mBC)
+        m_BC_out = np.zeros_like(mBC)
+        m_OC_in = np.zeros_like(mOC)
+        m_OC_out = np.zeros_like(mOC)
+        m_dust_in = np.zeros_like(mdust)
+        m_dust_out = np.zeros_like(mdust)
 
-        # inward fluxes = outward fluxes from previous layer
-        m_BC_in = PARTITION_COEF_BC*q_out[:-1]*cBC[:-1]
-        m_OC_in = PARTITION_COEF_OC*q_out[:-1]*cOC[:-1]
-        m_dust_in = PARTITION_COEF_DUST*q_out[:-1]*cdust[:-1]
-        m_BC_in = np.append(m_BC_in_top,m_BC_in)
-        m_OC_in = np.append(m_OC_in_top,m_OC_in)
-        m_dust_in = np.append(m_dust_in_top,m_dust_in)
+        for i in range(len(mBC)):
+            # inflow for this layer
+            m_BC_in[i] = m_BC_in_val
+            m_OC_in[i] = m_OC_in_val
+            m_dust_in[i] = m_dust_in_val
 
-        # outward fluxes are simply (flow out)*(concentration of the layer)
-        m_BC_out = PARTITION_COEF_BC*q_out*cBC
-        m_OC_out = PARTITION_COEF_OC*q_out*cOC
-        m_dust_out = PARTITION_COEF_DUST*q_out*cdust
+            # potential outflow
+            out_BC = PARTITION_COEF_BC * q_out[i] * cBC[i]
+            out_OC = PARTITION_COEF_OC * q_out[i] * cOC[i]
+            out_dust = PARTITION_COEF_DUST * q_out[i] * cdust[i]
 
-        # ensure fluxes do not go negative
-        m_BC_out = np.minimum(m_BC_out, mBC + m_BC_in)
-        m_OC_out = np.minimum(m_OC_out, mOC + m_OC_in)
-        m_dust_out = np.minimum(m_dust_out, mdust + m_dust_in)
+            # outflow cannot exceed what was already there + what just flowed in
+            m_BC_out[i] = min(out_BC, mBC[i] + m_BC_in[i])
+            m_OC_out[i] = min(out_OC, mOC[i] + m_OC_in[i])
+            m_dust_out[i] = min(out_dust, mdust[i] + m_dust_in[i])
 
-        # check that mass is accounted for in inflow terms
-        m_BC_in = np.append(m_BC_in_top,m_BC_out[:-1])
-        m_OC_in = np.append(m_OC_in_top,m_OC_out[:-1])
-        m_dust_in = np.append(m_dust_in_top,m_dust_out[:-1])
+            # set inflow for the next layer
+            m_BC_in_val = m_BC_out[i]
+            m_OC_in_val = m_OC_out[i]
+            m_dust_in_val = m_dust_out[i]
 
         # mass balance on each constituent
         dmBC = m_BC_in - m_BC_out
@@ -966,6 +967,7 @@ class massBalance():
         lw = layers.lwater.copy()[snow_firn_idx]
         lm = layers.lice.copy()[snow_firn_idx]
         lh = layers.lheight.copy()[snow_firn_idx]
+        lmw = lm + lw
 
         # skip if no snow or firn
         if len(snow_firn_idx) < 1:
@@ -1322,40 +1324,36 @@ class massBalance():
 
         # check number of layers
         if nl > 2:
-            # loop through thermal conduction equation
+            # distances between centers of layers
+            dz = 0.5 * (lh[:-1] + lh[1:]) 
+
+            # thermal conductivity at the interfaces
+            k_inter = 0.5 * (lcond[:-1] + lcond[1:])
+
+            # loop through timesteps
             for _ in range(args.n_heat_steps):
-                # heights of imaginary average bins between layers
-                up_lh = np.array([np.mean(lh[i:i+2]) for i in range(nl-2)])  # upper layer 
-                dn_lh = np.array([np.mean(lh[i+1:i+3]) for i in range(nl-2)])  # lower layer
+                # flux from surface into layer 0 [W m-2]
+                flux_surf = lcond[0] * (surftemp - lT_prev[0]) / (0.5 * lh[0])
+                
+                # flux between layers [W m-2]
+                flux_inter = k_inter * (lT_prev[:-1] - lT_prev[1:]) / dz
 
-                # conductivity
-                up_kcond = np.array([np.mean(lcond[i:i+2]*lh[i:i+2]) for i in range(nl-2)]) / up_lh
-                dn_kcond = np.array([np.mean(lcond[i+1:i+3]*lh[i+1:i+3]) for i in range(nl-2)]) / dn_lh
+                # temperature change of top layer
+                dT_0 = (flux_surf - flux_inter[0]) * dt_heat / (CP_ICE * lp[0] * lh[0])
+                lT[0] = lT_prev[0] + dT_0
+                
+                # temperature change of other layers
+                dT_mid = (flux_inter[:-1] - flux_inter[1:]) * dt_heat / (CP_ICE * lp[1:-1] * lh[1:-1])
+                
+                # cap temperature change to a limit
+                dT_limit = MAX_DT / args.n_heat_steps
+                dT_mid = np.clip(dT_mid, -dT_limit, dT_limit)
+                lT[1:-1] = lT_prev[1:-1] + dT_mid
 
-                # density
-                up_dens = np.array([np.mean(lp[i:i+2]) for i in range(nl-2)]) / up_lh
-                dn_dens = np.array([np.mean(lp[i+1:i+3]) for i in range(nl-2)]) / dn_lh
+                # safety check for top layer stability
+                if lT[0] > 0 or lT[0] < -50:
+                    lT[0] = np.mean([surftemp, lT_prev[1]])
 
-                # top layer uses surftemp boundary condition
-                surf_heat_0 = up_kcond[0]*2/(up_dens[0]*lh[0])*(surftemp-lT_prev[0])
-                subsurf_heat_0 = dn_kcond[0]/(up_dens[0]*up_lh[0])*(lT_prev[0]-lT_prev[1])
-                lT[0] = lT_prev[0] + (surf_heat_0 - subsurf_heat_0)*dt_heat/(CP_ICE*lh[0])
-
-                # if top layer of snow is very thin on top of ice, it can break this calculation
-                if lT[0] > 0 or lT[0] < -50: 
-                    lT[0] = np.mean([surftemp,lT_prev[1]])
-
-                # middle layers solve heat equation
-                surf_heat = up_kcond/(up_dens*up_lh)*(lT_prev[:-2]-lT_prev[1:-1])
-                subsurf_heat = dn_kcond/(dn_dens*dn_lh)*(lT_prev[1:-1]-lT_prev[2:])
-                dT = (surf_heat - subsurf_heat)*dt_heat/(CP_ICE*lh[1:-1])
-
-                # limit the temperature change 
-                exceeded_max = np.where(np.abs(dT) > MAX_DT / args.n_heat_steps)[0]
-                dT[exceeded_max] = MAX_DT / args.n_heat_steps
-                lT[1:-1] = lT_prev[1:-1] + dT
-
-                # update 'previous' temperature in loop
                 lT_prev = lT.copy()
 
         # cases for less than 3 layers do not need to be iterated
