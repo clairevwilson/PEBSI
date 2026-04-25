@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
 import suncalc
+# Internal libraries
+from util.config import ConfigError
 
 # Make SNICAR find-able
 sys.path.append(os.getcwd()+'/biosnicar-py/')
@@ -39,7 +41,7 @@ class Surface():
             self.snicar_base_fn = args.snicarfx_input_fn
             self.snicar_fn = args.snicarfx_input_fn
         else:
-            raise args.ConfigError('Invalid SNICAR method')
+            raise ConfigError('Invalid SNICAR method')
 
         # initialize surface properties
         self.stemp = args.surftemp_guess

@@ -257,10 +257,11 @@ def check_inputs(args):
     args.glac_name = all_df.loc[rgi_id, 'name']
     
     # AWS FILENAME
-    if args.glac_name == 'test' or args.aws_fn is None:
+    if args.glac_name == 'test' or (args.use_aws and args.aws_fn is None):
         # if aws_fn was not supplied, try to read it from all_df
         if rgi_id in all_df.index and args.glac_name != 'test':
-            raise args.ConfigError('Specify aws_fn in command line or config file')
+            raise config.ConfigError('Specify aws_fn in config file')
+
         args.aws_fn = all_df.loc[rgi_id,'AWS_fn']
         args.use_aws = True
         if args.debug and args.glac_name == 'test':

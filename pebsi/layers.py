@@ -13,6 +13,8 @@ warnings.simplefilter('error', RuntimeWarning)
 import numpy as np
 import pandas as pd
 import xarray as xr
+# Internal libraries
+from util.config import ConfigError
 
 class Layers():
     """
@@ -211,7 +213,7 @@ class Layers():
         elif args.initialize_temp == 'ripe':
             ltemp = np.ones(self.nlayers)*0
         else:
-            raise args.ConfigError('Invalid configuration: initialize_temp')
+            raise ConfigError('Invalid configuration: initialize_temp')
         
         # GRAIN SIZE [um]
         lgrainsize = np.interp(self.ldepth,grainsize_data['depth'],
@@ -235,7 +237,7 @@ class Layers():
         elif args.initialize_density == 'constant':
             ldensity = np.ones_like(snow_idx) * args.density_snow
         else:
-            raise args.ConfigError('Invalid configuration: initialize_density')
+            raise ConfigError('Invalid configuration: initialize_density')
             
         # append firn and ice layer densities
         for (type,depth) in zip(self.ltype,self.ldepth):
@@ -252,7 +254,7 @@ class Layers():
             porosity = 1 - ldensity / args.density_ice
             lwater = porosity * args.Sr * self.lheight * args.density_water
         else:
-            raise args.ConfigError('Invalid configuration: initialize_water')
+            raise ConfigError('Invalid configuration: initialize_water')
 
         return ltemp,ldensity,lwater,lgrainsize
     
@@ -302,7 +304,7 @@ class Layers():
             lOC = cOC * lheight
             ldust = cdust * lheight
         else:
-            raise args.ConfigError('Invalid configuration: initialize_LAPs')
+            raise ConfigError('Invalid configuration: initialize_LAPs')
         lBC[self.ice_idx] = 0
         lOC[self.ice_idx] = 0
         ldust[self.ice_idx] = 0
@@ -394,7 +396,7 @@ class Layers():
         """
         args = self.args
         if (self.nlayers+1) > args.max_nlayers and 'layers' in args.store_vars:
-            raise args.ConfigError('Too many layers: increase max_nlayers')
+            raise ConfigError('Too many layers: increase max_nlayers')
         l = layer_to_split
         self.nlayers += 1
         self.ltemp = np.insert(self.ltemp,l,self.ltemp[l])

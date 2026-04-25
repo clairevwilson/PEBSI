@@ -15,6 +15,8 @@ import time
 import pandas as pd
 import numpy as np
 import xarray as xr
+# Internal libraries
+from util.config import ConfigError
 
 class Climate():
     """
@@ -385,7 +387,7 @@ class Climate():
         # print any missing data
         if len(failed) > 0:
             failed_str = ', '.join(failed)
-            raise args.ConfigError(f'Climate missing data from {failed_str}')
+            raise ConfigError(f'Climate missing data from {failed_str}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
@@ -497,7 +499,7 @@ class Climate():
                 print(f'WARNING! Units did not match for {var} but were not updated')
                 print(f'Previously {units_in}; should be {units_out}')
                 print('Make a manual change in check_units (climate.py)')
-                raise args.ConfigError('Unit mismatch')
+                raise ConfigError('Unit mismatch')
         return ds
 
     def store(self):

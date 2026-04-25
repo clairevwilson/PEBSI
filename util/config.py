@@ -8,7 +8,12 @@ by the model.
 @author: clairevwilson
 """
 import yaml
+import types
 import util.params as prms
+
+class Config:
+    def __init__(self):
+        return
 
 class ConfigError(Exception):
     """Raised when an expected crash
@@ -18,14 +23,11 @@ class ConfigError(Exception):
 def get_config(cmd_args):
     """
     Loads the model configuration in the following order.
-    1. Fills in all variables present in pebsi.params.
+    1. Fills in all variables present in util.params (prms).
     2. Overwrites the variables present in config.yaml.
-    3. OVerwrites the variables present in the command line (cmd_args).
+    3. Overwrites the variables present in the command line (cmd_args).
     """
-    class Config:
-        pass 
     args = Config()
-    args.ConfigError = ConfigError
 
     # if config filename was specified, make sure use_config is True
     if cmd_args.config_fn is not None:
@@ -39,7 +41,11 @@ def get_config(cmd_args):
     # 1: add all prms default attributes to args
     for key in dir(prms):
         if not key.startswith('__'):  # ignore internal python stuff
-            setattr(args, key, getattr(prms, key))
+            val = getattr(prms, key)
+            if isinstance(val, types.ModuleType):
+                continue
+            else:
+                setattr(args, key, val)
                 
     # 2: fill out variables from yaml file, if specified
     yaml_fn = args.config_fn

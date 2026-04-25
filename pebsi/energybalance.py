@@ -11,6 +11,8 @@ from individual heat fluxes.
 import pandas as pd
 import numpy as np
 import suncalc
+# Internal libraries
+from util.config import ConfigError
 
 class energyBalance():
     """
@@ -202,7 +204,7 @@ class energyBalance():
         albedo = surface.albedo
         spectral_weights = surface.spectral_weights
         if np.abs(1-np.sum(spectral_weights)) > 1e-5:
-            args.ConfigError('surface.spectral_weights dont sum to 1: SNICAR issue')
+            ConfigError('surface.spectral_weights dont sum to 1: SNICAR issue')
 
         # get solar position
         time_UTC = self.timestamp - args.timezone
@@ -365,7 +367,7 @@ class energyBalance():
         if args.method_ground in ['MolgHardy']:
             Qg = -K_ICE * (surftemp - args.temp_temp) / args.temp_depth
         else:
-            args.ConfigError('Choose ground method from [MolgHardy]')
+            ConfigError('Choose ground method from [MolgHardy]')
         return Qg
     
     def get_turbulent(self,surftemp):
@@ -474,14 +476,14 @@ class energyBalance():
                 else:
                     psi = np.exp(-5.0 * RICHARDSON) # stable
             else:
-                args.ConfigError('Choose stability correction from [BeljaarsHoltslag, cutoff]')
+                ConfigError('Choose stability correction from [BeljaarsHoltslag, cutoff]')
             
             # calculate fluxes
             Qs = density_air*CP_AIR*csT*psi*wind_2m*(self.tempC - surftemp)*np.cos(SLOPE)
             Ql = density_air*Lv*csQ*psi*wind_2m*(qz-q0)*np.cos(SLOPE)
 
         else:
-            args.ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
+            ConfigError('Choose turbulent method from [MO-similarity, BulkRichardson]')
         
         return Qs, Ql
     
