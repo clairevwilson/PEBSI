@@ -76,8 +76,8 @@ class MassBalance():
         valid_periods = np.where((self.period_starts >= ds.time.values[0]) & 
                                  (self.period_ends <= ds.time.values[-1]))[0]
         
-        if len(valid_periods) == 0:
-            self.mod = [np.nan ]
+        if len(valid_periods) < 2:
+            self.mod = [np.nan]
             self.meas = [np.nan]
             return
         

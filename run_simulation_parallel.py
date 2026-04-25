@@ -19,21 +19,26 @@ import pebsi.massbalance as mb
 import util.params as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
-
+prms.use_config = False
 n_runs_ahead = 0    # Step if you're going to run this script more than once simultaneously
 
 # Read command line args
-args = sim.get_args()
+parser = sim.get_args(parse=False)
+parser.add_argument('-n','--n_simultaneous_processes',default=1)
+args = parser.parse_args()
+out_str = 'check'
+# out_str = 'qmwind'
+# prms.bias_vars = ['temp','wind']
 
-out_str = 'ukesm'
-prms.deposition_data = 'UKESM'
-prms.ukesm_fn = '../UKESM/dr401_GFED/'
-args.start_date = '1997-04-01 00:00'
-args.end_date = '2015-11-30 00:00'
+# out_str = 'ukesm'
+# prms.deposition_data = 'UKESM'
+# prms.ukesm_fn = '../UKESM/dr401_GFED/'
+# args.start_date = '1997-04-01 00:00'
+# args.end_date = '2015-11-30 00:00'
 
 # Edit these
-# args.start_date = '1980-04-20 00:00'
-# args.end_date = '2025-09-01 00:00'
+args.start_date = '1997-04-01 00:00'
+args.end_date = '2025-09-01 00:00'
 args.use_aws = False
 args.dates_from_data = False
 
@@ -46,14 +51,14 @@ site_dict = {
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
     '01.00570':['AU','B','D'], # GULKANA
     '01.09162':['N','B','EC'], # WOLVERINE   
-    '01.01104':['C','D'], # LEMON CREEK 'B'
+    '01.01104':['C','B','D'], # LEMON CREEK
     '01.01390':['MG1','NWB1','TKG3'], # TAKU       
     #  '02.06675':[], # ATHABASCA
     #  '02.05098':[], # PEYTO
     #  '02.17023':[], # SPERRY
     #  '02.18778':[], # SOUTH CASCADE
 }
-glac_nos = list(site_dict.keys())
+rgi_ids = list(site_dict.keys())
  
 # Probably do not edit
 args.store_data = True             # Ensures output is stored
@@ -62,21 +67,21 @@ if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
 # Determine number of runs for each process
-n_processes = sum([len(site_dict[gn]) for gn in glac_nos])
+n_processes = sum([len(site_dict[gn]) for gn in rgi_ids])
 args.n_processes = n_processes
 
 def pack_vars():
     # Parse list for inputs to Pool function
     packed_vars = [[] for _ in range(n_processes)]
     run_no = 0
-    for glac_no in glac_nos:
+    for rgi_id in rgi_ids:
         args_glac = copy.deepcopy(args)
-        args_glac.glac_no = glac_no
-        sites = site_dict[args_glac.glac_no]
+        args_glac.rgi_id = rgi_id
+        sites = site_dict[args_glac.rgi_id]
 
-        if glac_no == '01.01390':
+        if rgi_id == '01.01390':
             args_glac.qm_glac_name = 'lemon_creek'
-        elif glac_no == '01.15645':
+        elif rgi_id == '01.15645':
             args_glac.qm_glac_name = 'gulkana'
 
         for site in sites:
@@ -86,8 +91,8 @@ def pack_vars():
 
             # Output name
             df_meta = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
-            glac = df_meta.loc[args_run.glac_no,'name']
-            args_run.out = f'{glac}{site}_{run_date}_{out_str}_'
+            glac = df_meta.loc[args_run.rgi_id,'name']
+            args_run.output_fn = f'{glac}{site}_{run_date}_{out_str}_'
 
             # AWS fn for albedo timeseries
             # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
@@ -128,8 +133,8 @@ def run_model_parallel(list_inputs):
 
             # Get file name
             args = sim.get_output_name(args, climate)
-            if os.path.exists(args.out):
-                print(args.out, 'already exists')
+            if os.path.exists(args.output_fn):
+                print(args.output_fn, 'already exists')
                 return
             
             # Start timer

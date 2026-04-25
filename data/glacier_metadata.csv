@@ -1,7 +1,7 @@
 RGI_ID,name,timezone,AWS_fn,AWS_elev,start,end
 00.00000,test,0.0,data/sample_aws.csv,1500.0,,
 01.00570,gulkana,-8.0,gulkana2024.csv,1682.0,,
-01.01104,lemoncreek,-8.0,LemonCreek1285_hourly.csv,,5/5/2008,9/13/2008
+01.01104,lemon_creek,-8.0,LemonCreek1285_hourly.csv,,5/5/2008,9/13/2008
 01.00709,mendenhall,-8.0,,,5/11/2016,7/18/2016
 01.01390,taku,-8.0,,,,
 01.00704,gilkey,-8.0,,,,
@@ -15,3 +15,4 @@ RGI_ID,name,timezone,AWS_fn,AWS_elev,start,end
 01.16545,naluday,-7.0,naluday/naluday2021.csv,,,
 01.09162,wolverine,-8.0,,990.0,,
 01.22193,kahiltna,-8.0,,2377.0,,
+01.15645,kennicott,-9,,,,
