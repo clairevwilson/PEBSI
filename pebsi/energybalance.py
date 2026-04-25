@@ -243,7 +243,7 @@ class energyBalance():
             SWin_diffuse = SWin_sky * f_diff * SKY_VIEW
 
             # correct for shade
-            time_2024 = self.timestamp.replace(year=self.timestamp.year)
+            time_2024 = self.timestamp.replace(year=2024)
             self.shade = bool(surface.shading_df.loc[time_2024,'shaded'])
 
             # determine overall SWin flux
