@@ -598,16 +598,18 @@ class energyBalance():
 
         # calculate potential (extraterrestrial) shortwave radiation
         doy = self.timestamp.day_of_year
-        rad_pot = SOLAR_CONSTANT*(1+0.033*np.cos(2*np.pi*doy/366))*np.cos(solar_zenith)
+        rad_pot = SOLAR_CONSTANT*(1+0.033*np.cos(2*np.pi*doy/365.25))*np.cos(solar_zenith)
+
+        # exit if it's night
+        if np.cos(solar_zenith) <= 0 or rad_pot < 1:
+            return 0.0
 
         # determine clearness index
         CI = rad_glob / rad_pot
+        CI = np.clip(CI, 0, 1)
 
         # empirical relationship for diffuse fraction
-        if CI > 50:
-            diffuse_fraction = P4
-        else:
-            diffuse_fraction = np.exp(-np.exp(P1-(P2-P3*CI)))*(1-P4)+P4
+        diffuse_fraction = np.exp(-np.exp(P1-(P2-P3*CI)))*(1-P4)+P4
         return diffuse_fraction
 
     def stable_PhiM(self,z,L):

@@ -9,6 +9,7 @@ as albedo and surface temperature.
 # Built-in libraries
 import sys, os
 import yaml
+import copy
 # External libraries
 import numpy as np
 import pandas as pd
@@ -105,6 +106,7 @@ class Surface():
         except:
             # problem in the SNICAR input file: create a new one
             self.reset_SNICAR()
+        self.snicar_initialized = False
 
         # need some initial value for cloud cover and annual minimum albedo
         self.tcc = 1
@@ -194,7 +196,7 @@ class Surface():
                         # if top layer is melted, warm the next layer
                         if Qm*dt/args.Lh_rf > layers.lice[0] and layers.ltemp[1] < 0.:
                             leftover = Qm*dt/args.Lh_rf - layers.lice[0]
-                            layers.ltemp[1] += leftover*dt/(HEAT_CAPACITY_ICE*layers.lice[1])
+                            layers.ltemp[1] += leftover/(HEAT_CAPACITY_ICE*layers.lice[1])
                     else:
                         # all energy was used up
                         Qm = 0
@@ -312,9 +314,11 @@ class Surface():
                 # if year is not in the dict, use default
                 self.albedo = self.albedo_dict[self.stype]
             self.bba = self.albedo
+            self.spectral_weights = np.ones(1)
         else:
             self.albedo = self.albedo_dict[self.stype]
             self.bba = self.albedo
+            self.spectral_weights = np.ones(1)
 
         # make albedo a list
         if '__iter__' not in dir(self.albedo):
@@ -327,7 +331,27 @@ class Surface():
         if args.store_bands:
             if '__iter__' not in dir(self.albedo):
                 self.albedo = np.ones(480) * self.albedo
+                self.spectral_weights = np.ones(480)
             self.albedo_df.loc[timestamp] = self.albedo.copy()
+        return
+    
+    def initialize_SNICARfx(self):
+        # SNICARfx imports
+        from snicarfx import snicarfx_wrapper
+        from snicarfx.core.config_validator import Config
+        
+        # open the inputs file        
+        with open(self.snicar_fn, 'r') as f:
+            self.inputs = yaml.safe_load(f)
+        self.SNICAR = snicarfx_wrapper.run_two_stream
+        self.snicar_initialized = True
+
+        # verify the YAML using SNICAR functionality
+        # this is the proper way of doing it but has issues:
+        # crashes on units being None for LAPs
+        #    >>> probably need to ask developer
+        # as is, it works if you just open inputs and don't validate
+        # self.inputs = Config.validate_yaml_file(self.snicar_fn).model_dump()
         return 
     
     def run_SNICARfx(self,layers,timestamp,
@@ -360,16 +384,15 @@ class Surface():
         spectral_weights : np.ndarray
             Wights of each spectral band
         """
-        from snicarfx import snicarfx_wrapper
-
+        # check if we already validated inputs
+        if not self.snicar_initialized:
+            self.initialize_SNICARfx()
         args = self.args 
 
         # CONSTANTS
         AVG_GRAINSIZE = args.average_grainsize
         DIFFUSE_CLOUD_LIMIT = args.diffuse_cloud_limit
         DENSITY_FIRN = args.density_firn
-        DENSITY_ICE = args.density_ice
-        FRAC_IRREDUC = args.Sr
 
         # get layers to include in the calculation (top 1m of non-ice layers)
         nlayers = np.where(layers.ldepth >= 1)[0][0] + 1
@@ -390,7 +413,6 @@ class Surface():
         ssa = (ssa.astype(float)).tolist()
 
         # check if grains in each layer are rounded
-        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
         shapes = np.ones(nlayers)*0
         # shapes[lwater >= porosity * FRAC_IRREDUC] = 0
         shapes = (shapes.astype(int)).tolist()
@@ -427,38 +449,28 @@ class Surface():
             ldust4 = ldust1.copy()
             ldust5 = ldust1.copy()
 
-        # open and edit yaml input file for SNICAR
-        with open(self.snicar_fn) as f:
-            list_doc = yaml.safe_load(f)
-
-        # update changing layer variables
-        try:
-            list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
-        except:
-            self.reset_SNICAR()
-            with open(self.snicar_fn) as f:
-                list_doc = yaml.safe_load(f)
-            list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
+        # copy inputs for this timestep
+        inputs = copy.deepcopy(self.inputs)
 
         # LIGHT_ABSORBING_PARTICLES
-        list_doc['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
-        list_doc['LIGHT_ABSORBING_PARTICLES']['OC']['CONC'] = lOC
-        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST1']['CONC'] = ldust1
-        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST2']['CONC'] = ldust2
-        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST3']['CONC'] = ldust3
-        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST4']['CONC'] = ldust4
-        list_doc['LIGHT_ABSORBING_PARTICLES']['DUST5']['CONC'] = ldust5
+        inputs['LIGHT_ABSORBING_PARTICLES']['BC']['CONC'] = lBC
+        inputs['LIGHT_ABSORBING_PARTICLES']['OC']['CONC'] = lOC
+        inputs['LIGHT_ABSORBING_PARTICLES']['DUST1']['CONC'] = ldust1
+        inputs['LIGHT_ABSORBING_PARTICLES']['DUST2']['CONC'] = ldust2
+        inputs['LIGHT_ABSORBING_PARTICLES']['DUST3']['CONC'] = ldust3
+        inputs['LIGHT_ABSORBING_PARTICLES']['DUST4']['CONC'] = ldust4
+        inputs['LIGHT_ABSORBING_PARTICLES']['DUST5']['CONC'] = ldust5
 
         # ICE
-        list_doc['ICE']['THICKNESS'] = lheight
-        list_doc['ICE']['DENSITY'] = ldensity
-        list_doc['ICE']['SPECIFIC_SURFACE_AREA'] = ssa
+        inputs['ICE']['THICKNESS'] = lheight
+        inputs['ICE']['DENSITY'] = ldensity
+        inputs['ICE']['SPECIFIC_SURFACE_AREA'] = ssa
         if args.include_LWC_SNICAR:
-            list_doc['ICE']['LWC'] = lwater.tolist()
+            inputs['ICE']['LWC'] = lwater.tolist()
         else:
-            list_doc['ICE']['LWC'] = [0]*nlayers
-        list_doc['ICE']['GRAIN_SHAPE'] = shapes
-        list_doc['ICE']['LAYER_TYPE'] = [0]*nlayers
+            inputs['ICE']['LWC'] = [0]*nlayers
+        inputs['ICE']['GRAIN_SHAPE'] = shapes
+        inputs['ICE']['LAYER_TYPE'] = [0]*nlayers
 
         # filepath for ice albedo
         # list_doc['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
@@ -469,15 +481,11 @@ class Surface():
         time_UTC = timestamp - self.args.timezone
         altitude_angle = suncalc.get_position(time_UTC,lon,lat)['altitude']
         zenith = 180/np.pi * (np.pi/2 - altitude_angle) if altitude_angle > 0 else 89
-        list_doc['RTM']['SZA'] = int(zenith)
-        list_doc['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
-
-        # save SNICAR input file
-        with open(self.snicar_fn, 'w') as f:
-            yaml.dump(list_doc,f)
-        
+        inputs['RTM']['SZA'] = int(zenith)
+        inputs['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
+       
         # run get_albedo from SNICAR
-        outputs = snicarfx_wrapper.run_two_stream(self.snicar_fn)
+        outputs = self.SNICAR(inputs)
         spectral_weights = outputs.spectral_weights
         albedo = outputs.albedo
         args.wvs = outputs.wavelengths * 1e6
@@ -489,6 +497,16 @@ class Surface():
         vis_idx = np.where((args.wvs <= 0.75) & (args.wvs >= 0.4))[0]
         self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
         return albedo,spectral_weights
+    
+    def initialize_bioSNICAR(self):
+        with HiddenPrints():
+            from biosnicar import get_albedo
+            self.model = get_albedo.get
+
+        with open(self.snicar_fn, 'r') as f:
+            self.inputs = yaml.safe_load(f)
+        
+        return
     
     def run_bioSNICAR(self,layers,timestamp,
                    override_grainsize=False,override_LAPs=False):
@@ -520,11 +538,10 @@ class Surface():
         spectral_weights : np.ndarray
             Wights of each spectral band
         """
+        # check if we already validated inputs
+        if not self.snicar_initialized:
+            self.initialize_bioSNICAR()
         args = self.args 
-
-        with HiddenPrints():
-            from biosnicar import get_albedo
-        get_albedo.input_fp = self.snicar_fn
 
         # CONSTANTS
         AVG_GRAINSIZE = args.average_grainsize
@@ -586,33 +603,26 @@ class Surface():
             ldust4 = ldust1.copy()
             ldust5 = ldust1.copy()
 
-        # open and edit yaml input file for SNICAR
-        with open(self.snicar_fn) as f:
-            list_doc = yaml.safe_load(f)
+        # copy inputs
+        inputs = copy.deepcopy(self.inputs)
 
         # update changing layer variables
-        try:
-            list_doc['IMPURITIES']['BC']['CONC'] = lBC
-        except:
-            self.reset_SNICAR()
-            with open(self.snicar_fn) as f:
-                list_doc = yaml.safe_load(f)
-            list_doc['IMPURITIES']['BC']['CONC'] = lBC
-        list_doc['IMPURITIES']['OC']['CONC'] = lOC
-        list_doc['IMPURITIES']['DUST1']['CONC'] = ldust1
-        list_doc['IMPURITIES']['DUST2']['CONC'] = ldust2
-        list_doc['IMPURITIES']['DUST3']['CONC'] = ldust3
-        list_doc['IMPURITIES']['DUST4']['CONC'] = ldust4
-        list_doc['IMPURITIES']['DUST5']['CONC'] = ldust5
-        list_doc['ICE']['DZ'] = lheight
-        list_doc['ICE']['RHO'] = ldensity
-        list_doc['ICE']['RDS'] = lgrainsize
+        inputs['IMPURITIES']['BC']['CONC'] = lBC
+        inputs['IMPURITIES']['OC']['CONC'] = lOC
+        inputs['IMPURITIES']['DUST1']['CONC'] = ldust1
+        inputs['IMPURITIES']['DUST2']['CONC'] = ldust2
+        inputs['IMPURITIES']['DUST3']['CONC'] = ldust3
+        inputs['IMPURITIES']['DUST4']['CONC'] = ldust4
+        inputs['IMPURITIES']['DUST5']['CONC'] = ldust5
+        inputs['ICE']['DZ'] = lheight
+        inputs['ICE']['RHO'] = ldensity
+        inputs['ICE']['RDS'] = lgrainsize
         if args.include_LWC_SNICAR:
-            list_doc['ICE']['LAYER_TYPE'][0] = 4
-            list_doc['ICE']['LWC'] = lwater.tolist()
+            inputs['ICE']['LAYER_TYPE'][0] = 4
+            inputs['ICE']['LWC'] = lwater.tolist()
         else:
-            list_doc['ICE']['LAYER_TYPE'][0] = 0
-            list_doc['ICE']['LWC'] = [0]*nlayers
+            inputs['ICE']['LAYER_TYPE'][0] = 0
+            inputs['ICE']['LWC'] = [0]*nlayers
 
         # the following variables are constants for the n layers
         ice_variables = ['LAYER_TYPE','SHP','HEX_SIDE','HEX_LENGTH',
@@ -622,13 +632,13 @@ class Surface():
         shapes[(lwater > 0) | (lrefreeze > 0)] = 0
         aspect_ratios = np.ones(nlayers, dtype=int) * 0.01
         aspect_ratios[(lwater > 0) | (lrefreeze > 0)] = 0
-        list_doc['ICE']['SHP'] = shapes[idx].tolist()
-        list_doc['ICE']['AR'] = aspect_ratios[idx].tolist()
+        inputs['ICE']['SHP'] = shapes[idx].tolist()
+        inputs['ICE']['AR'] = aspect_ratios[idx].tolist()
         for var in ice_variables:
-            list_doc['ICE'][var] = [list_doc['ICE'][var][0]] * nlayers
+            inputs['ICE'][var] = [inputs['ICE'][var][0]] * nlayers
 
         # filepath for ice albedo
-        list_doc['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
+        inputs['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
 
         # solar zenith angle
         lat = self.climate.lat
@@ -636,16 +646,13 @@ class Surface():
         time_UTC = timestamp - self.args.timezone
         altitude_angle = suncalc.get_position(time_UTC,lon,lat)['altitude']
         zenith = 180/np.pi * (np.pi/2 - altitude_angle) if altitude_angle > 0 else 89
-        list_doc['RTM']['SOLZEN'] = int(zenith)
-        list_doc['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
-
-        # save SNICAR input file
-        with open(self.snicar_fn, 'w') as f:
-            yaml.dump(list_doc,f)
+        inputs['RTM']['SOLZEN'] = int(zenith)
+        inputs['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
         
         # run get_albedo from SNICAR
         with HiddenPrints():
-            albedo,spectral_weights = get_albedo.get('adding-doubling',plot=False,validate=False)
+            self.model.inputs = inputs
+            albedo,spectral_weights = self.model('adding-doubling',plot=False,validate=False)
 
         # find broadband albedo from spectral albedo
         self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
@@ -653,7 +660,7 @@ class Surface():
         # calculate visible albedo
         vis_idx = np.where((args.wvs <= 0.75) & (args.wvs >= 0.4))[0]
         self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
-        return albedo,spectral_weights
+        return albedo, spectral_weights
     
     def reset_SNICAR(self):
         """
@@ -701,7 +708,7 @@ class Surface():
         ALBEDO_SNOW = self.args.albedo_fresh_snow
 
         # reset max snowdepth yearly
-        if timestamp.month + timestamp.day + timestamp.hour < 1:
+        if timestamp.month == 1 + timestamp.day == 1 + timestamp.hour == 0:
             layers.max_snow = 0
 
         # check if max_snow has been exceeded
@@ -709,7 +716,10 @@ class Surface():
         layers.max_snow = max(current_snow, layers.max_snow)
         
         # scale surrounding albedo based on snowdepth
-        albedo_surr = np.interp(current_snow,
+        if layers.max_snow <= 0:
+            albedo_surr = ALBEDO_GROUND
+        else:
+            albedo_surr = np.interp(current_snow,
                                 np.array([0, layers.max_snow]),
                                 np.array([ALBEDO_GROUND,ALBEDO_SNOW]))
         self.albedo_surr = albedo_surr
