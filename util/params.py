@@ -244,6 +244,7 @@ frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow 
 frac_absrad_ice = 1         # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]
 extinct_coef_ice = 2.5      # Extinction coefficient for ice/firn [-]
+surf_emissivity = 1         # Emissivity of ice
 # <<<<<< Universal constants >>>>>>
 gravity = 9.81              # Gravity [m s-2]
 karman = 0.4                # von Karman's constant [-]

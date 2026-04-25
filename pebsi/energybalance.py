@@ -139,8 +139,8 @@ class energyBalance():
         # Store with surface fraction applied
         self.SWin = SWin
         self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
-        self.SWin *= FRAC_ABSRAD 
-        self.SWout *= FRAC_ABSRAD
+        self.SWin_surf = self.SWin * FRAC_ABSRAD 
+        self.SWout_surf = self.SWout * FRAC_ABSRAD
                     
         # LONGWAVE RADIATION (Lnet)
         LWin,LWout = self.get_LW(surftemp)
@@ -153,8 +153,8 @@ class energyBalance():
             NR = self.SWnet_surf + self.LWnet
             self.NR = NR
         else:
-            NR = self.NR_ds / self.dt
-            self.NR = self.NR_ds / self.dt
+            NR = self.NR_ds / self.dt - self.SWnet_penetrating
+            self.NR = self.NR_ds / self.dt - self.SWnet_penetrating
 
         # RAIN FLUX (Qp)
         Qp = self.get_rain(surftemp)
@@ -243,8 +243,7 @@ class energyBalance():
             SWin_diffuse = SWin_sky * f_diff * SKY_VIEW
 
             # correct for shade
-            time_str = str(self.timestamp).replace(str(self.timestamp.year),'2024')
-            time_2024 = pd.to_datetime(time_str)
+            time_2024 = self.timestamp.replace(year=self.timestamp.year)
             self.shade = bool(surface.shading_df.loc[time_2024,'shaded'])
 
             # determine overall SWin flux
@@ -269,7 +268,7 @@ class energyBalance():
             SWout = -self.SWout_ds/self.dt
             # store albedo
             if -SWout < SWin and SWin > 0:
-                surface.bba = -SWout / SWin
+                surface.bba = max(0, min(1, -SWout / SWin))
         return SWin,SWout
 
     def get_LW(self,surftemp):
@@ -290,11 +289,12 @@ class energyBalance():
         # CONSTANTS
         SIGMA_SB = args.sigma_SB
         CTOK = args.celsius_to_kelvin
+        EPS = args.surf_emissivity
 
         if self.nanLWout:
-            # calculate LWout frmo surftemp
+            # calculate LWout from surftemp
             surftempK = surftemp + CTOK
-            LWout = -SIGMA_SB*surftempK**4
+            LWout = -EPS*SIGMA_SB*surftempK**4
         else:
             # take LWout from data
             LWout = -self.LWout_ds/self.dt
@@ -302,8 +302,8 @@ class energyBalance():
         if self.nanLWin and self.nanNR:
             # WARNING: THIS IS UNTESTED
             # calculate LWin from air temperature
-            ezt = self.sat_vapor_pressure(self.tempC) / 100   # vapor pressure in hPa
-            Ecs = .23+ .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
+            ezt = self.sat_vapor_pressure(self.tempC) * self.rh   # vapor pressure in hPa
+            Ecs = .23 + .433*(ezt/self.tempK)**(1/8)  # clear-sky emissivity
             Ecl = 0.984               # cloud emissivity, Klok and Oerlemans, 2002
             Esky = Ecs*(1-self.tcc**2)+Ecl*self.tcc**2    # sky emissivity
             LWin = SIGMA_SB*(Esky*self.tempK**4)
