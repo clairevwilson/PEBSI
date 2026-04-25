@@ -497,9 +497,6 @@ class energyBalance():
         layers
             Class object from pebsi.layers
         """
-        # CONSTANTS
-        DUST_RATIO = self.args.ratio_DU3_DUtot
-        
         # switch runs have no LAPs
         if self.args.switch_LAPs == 0:
             self.bcdry = 0
@@ -510,7 +507,7 @@ class energyBalance():
         if layers.ltype[0] != 'ice':
             layers.lBC[0] += self.bcdry * self.dt
             layers.lOC[0] += self.ocdry * self.dt
-            layers.ldust[0] += self.dustdry * self.dt * DUST_RATIO
+            layers.ldust[0] += self.dustdry * self.dt
         return
     
     def get_roughness(self,days_since_snowfall,layers):

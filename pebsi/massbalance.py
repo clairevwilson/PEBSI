@@ -882,7 +882,7 @@ class massBalance():
         if rain_bool and args.switch_LAPs == 1: # Switch runs have no BC
             mBC[0] += enbal.bcwet * dt
             mOC[0] += enbal.ocwet * dt
-            mdust[0] += enbal.dustwet * args.ratio_DU3_DUtot * dt
+            mdust[0] += enbal.dustwet * dt
 
         # layer mass mixing ratio in kg kg-1
         cBC = mBC / (lw + lm)

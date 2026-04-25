@@ -559,6 +559,7 @@ class Climate():
     
     def apply_merra_dep_ratio(self):
         args = self.args
+        RATIO_DUST = args.ratio_DU3_DUtot
 
         reg = self.args.rgi_id[:2]
         fn_bc = args.merra2_laps_fn.format(sp='BC', r=reg)
@@ -575,6 +576,8 @@ class Climate():
         # apply to dry deposition
         self.cds['bcdry'] *= ratio_bc 
         self.cds['ocdry'] *= ratio_oc
+        self.cds['dustdry'] *= RATIO_DUST
+        self.cds['dustwet'] *= RATIO_DUST
         return
     
     def apply_ukesm_dep_ratio(self):
