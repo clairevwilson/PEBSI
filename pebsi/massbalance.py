@@ -549,12 +549,15 @@ class massBalance():
         
         # CONSTANTS
         HEAT_CAPACITY_ICE = args.Cp_ice
+        HEAT_CAPACITY_WATER = args.Cp_water
         LH_RF = args.Lh_rf
 
         # LAYERS IN
         ld = layers.ldepth.copy()
         lT = layers.ltemp.copy()
         lm = layers.lice.copy()
+        lw = layers.lwater.copy()
+        lmw = lm + lw
 
         # determine extinction coefficient from surface layer type
         if layers.ltype[0] == 'snow':
@@ -562,33 +565,42 @@ class massBalance():
         else:
             EXTINCT_COEF = args.extinct_coef_ice
 
+        # get layer boundaries
+        d_bottom = ld 
+        d_top = np.concatenate(([0], d_bottom[:-1]))
+
         # absorbed shortwave for each layer
         SWnet_pen = enbal.SWnet_penetrating
-        layerSW = SWnet_pen*np.exp(-EXTINCT_COEF*ld)
+        SW_at_top = SWnet_pen * np.exp(-EXTINCT_COEF * d_top)
+        SW_at_bottom = SWnet_pen * np.exp(-EXTINCT_COEF * d_bottom)
+        layerSW = SW_at_top - SW_at_bottom
         layerSW[layerSW < 1e-6] = 0 # cut off tiny amounts of energy
         layerSW[0] = 0 # surface layer handled separately
 
         # recalculate layer temperatures, excluding the top layer (calculated separately)
-        lT[1:] += layerSW[1:]*self.dt/(lm[1:]*HEAT_CAPACITY_ICE)
+        cp_eff = ((lm*HEAT_CAPACITY_ICE) + (lw*HEAT_CAPACITY_WATER)) / (lmw)
+        lT[1:] += layerSW[1:]*self.dt/(lmw[1:]*cp_eff[1:])
 
         # calculate melt from temperatures above 0
         layermelt = np.zeros(layers.nlayers)
         leftover_melt = 0
 
-        for layer, temp in enumerate(lT):
+        for layer in range (1, layers.nlayers):
+            temp = lT[layer]
+
             # convert leftover melt to energy [J m-2]
             leftover_energy = leftover_melt * LH_RF
 
             if temp > 0.:
                 # melting: calculate melt energy from layer temperature
-                sensible_energy = temp * lm[layer] * HEAT_CAPACITY_ICE
+                sensible_energy = temp * lmw[layer] * cp_eff[layer]
                 total_energy = sensible_energy + leftover_energy
                 melt = total_energy / LH_RF
                 # set layer temp to the melting point
                 lT[layer] = 0.
             else:
                 # calculate energy needed to warm the layer to melting point
-                required_energy = abs(temp) * lm[layer] * HEAT_CAPACITY_ICE
+                required_energy = abs(temp) * lmw[layer] * cp_eff[layer]
 
                 if leftover_energy >= required_energy:
                     # use leftover energy to warm to melting point and melt
@@ -597,7 +609,7 @@ class massBalance():
                     melt = leftover_energy / LH_RF
                 else:
                     # not enough energy to warm to melting point; warm partially
-                    lT[layer] += leftover_energy / (lm[layer] * HEAT_CAPACITY_ICE)
+                    lT[layer] += leftover_energy / (lmw[layer] * cp_eff[layer])
                     melt = 0
 
             # cap melt at available layer mass
