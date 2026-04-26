@@ -71,7 +71,7 @@ initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size
 initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content
 
 # =============================================== INTERNAL ===========================================================
-#       The following filepaths are internal to the model and must be relative to the current directory.
+#       The following filepaths are internal to the model and should be relative to the current directory.
 #                            Don't edit these unless you have good reason to.
 # ====================================================================================================================
 
@@ -82,7 +82,7 @@ site_fn = 'site_constants.csv'                              # Name for site cons
 shading_fn = 'data/by_glacier/{g}/shade/{g}{s}_shade.csv'   # Generalized shading filepath
 
 # SNICAR
-grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'    # Grain size evolution lookup table filepath
+grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
 snicarfx_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'    # SNICAR input filepath (SNICARfx)
 biosnicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'   # SNICAR input filepath (bioSNICAR)
 clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
@@ -122,9 +122,11 @@ lon = None                                  #$ -lon         Site longitude
 elevation = None                            #$ -elevation   Site elevation
 timezone = None                             #$ -timezone    Glacier timezone
 glac_name = None                            #$ -glac_name   Glacier name
-slope = None                                # Site slope
-aspect = None                               # Site aspect 
-sky_view = None                             # Site sky-view factor
+
+# TOPOGRAPHY: Recommended to let the shading model determine these from DEM
+slope = None                                # Site slope [deg]
+aspect = None                               # Site aspect [deg, 0=N]
+sky_view = None                             # Site sky-view factor [-]
 
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)

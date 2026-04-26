@@ -1,0 +1,30 @@
+# =========== PEBSI CONFIGURATION FILE ===========
+#
+# This configuration file is for the user to 
+# specify information about the simulation.
+# Any variables from params.py can be input here.
+# See params.py for variable descriptions.
+# 
+# ================================================
+#               SIMULATION METADATA
+# ================================================
+store_data: false
+debug: true
+output_fn: 'test_simulation'
+start_date: '2024-04-20'
+end_date: '2024-05-20'
+
+# ================================================
+#                SITE INFORMATION
+# ================================================
+rgi_id: '00.00000'
+site: 'center'
+glac_name: 'test'
+timezone: 0
+
+# ================================================
+#                CLIMATE OPTIONS
+# ================================================
+use_aws: true
+aws_fn: 'data/sample_aws.csv'
+aws_elev: 1500
