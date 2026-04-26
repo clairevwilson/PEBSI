@@ -265,7 +265,7 @@ def check_inputs(args):
         args.aws_fn = all_df.loc[rgi_id,'AWS_fn']
         args.use_aws = True
         if args.debug and args.glac_name == 'test':
-            print('Test glacier: using sample AWS data')
+            print('~ Test glacier: using sample AWS data')
 
     # specify other filepaths to args
     args.shading_fn = args.shading_fn.format(g=args.glac_name, s=args.site)
