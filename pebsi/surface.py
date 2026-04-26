@@ -484,8 +484,10 @@ class Surface():
         inputs['RTM']['SZA'] = int(zenith)
         inputs['RTM']['DIRECT'] = 0 if self.tcc > DIFFUSE_CLOUD_LIMIT else 1
        
-        # run get_albedo from SNICAR
+        # run SNICAR
         outputs = self.SNICAR(inputs)
+
+        # grab arrays from outputs
         spectral_weights = outputs.spectral_weights
         albedo = outputs.albedo
         args.wvs = outputs.wavelengths * 1e6
@@ -501,7 +503,7 @@ class Surface():
     def initialize_bioSNICAR(self):
         with HiddenPrints():
             from biosnicar import get_albedo
-            self.model = get_albedo.get
+            self.SNICAR = get_albedo.get
 
         with open(self.snicar_fn, 'r') as f:
             self.inputs = yaml.safe_load(f)
@@ -651,8 +653,7 @@ class Surface():
         
         # run get_albedo from SNICAR
         with HiddenPrints():
-            self.model.inputs = inputs
-            albedo,spectral_weights = self.model('adding-doubling',plot=False,validate=False)
+            albedo,spectral_weights = self.SNICAR(inputs)
 
         # find broadband albedo from spectral albedo
         self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
