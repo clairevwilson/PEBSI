@@ -28,15 +28,11 @@ def get_config(cmd_args):
     3. Overwrites the variables present in the command line (cmd_args).
     """
     args = Config()
+    valid = 'Please check pebsi/params.py for valid variable names.'
 
     # if config filename was specified, make sure use_config is True
     if cmd_args.config_fn is not None:
         cmd_args.use_config = True
-
-    # print debug statement
-    if cmd_args.debug:
-        print(f'~ Loading configs from {cmd_args.config_fn}')
-    valid = 'Please check pebsi/params.py for valid variable names.'
 
     # 1: add all prms default attributes to args
     for key in dir(prms):
@@ -73,12 +69,16 @@ def get_config(cmd_args):
         if value is not None and not isinstance(value, bool):
             setattr(args, key, value)
 
-        # qm_glac_name can be None (climate.py handles this)
+        # special case: qm_glac_name can be None (climate.py handles this)
         elif key == 'qm_glac_name':
             setattr(args, key, value)
         
         # if the value is a Boolean, only override if it's True
         elif isinstance(value, bool) and value is True:
             setattr(args, key, value)
+
+    # print debug statement
+    if args.debug and args.use_config:
+        print(f'~ Loaded configs from {args.config_fn}')
 
     return args
