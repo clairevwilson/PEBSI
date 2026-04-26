@@ -59,8 +59,8 @@ if 'trace' in socket.gethostname():
 else:
     base_fp = 'C:/Users/cvw30/Research/Output/'
     home_fp = 'C:/Users/cvw30/Research/'
-sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_17_ukesm_0.nc'
-all_df_fn = base_fp + f'ddf/UKESM_all_{args.surface}_{args.time_res}_df.csv' 
+sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_25_check_0.nc'
+all_df_fn = base_fp + f'ddf/all_{args.surface}_{args.time_res}_df.csv' # 
 temp_fn = base_fp + f'ddf/temp_GLACIERSITE_{args.surface}_{args.time_res}_df.csv'
 groups_fn = base_fp + f'ddf/glacier_groups.json'
 model_fn = base_fp + 'ddf/albedo_model.joblib'
@@ -79,11 +79,11 @@ site_dict = {'wolverine':['N','B','EC'],
                 }
 
 # define MERRA-2 coordinates 
-coord_dict = {'wolverine':'60.5_-148.7',
+coord_dict = {'wolverine':'60.5_-148.8',
                 'kahiltna':'63.0_-151.2',
                 'kennicott':'61.5_-143.1',
-                'taku':'58.5_-134.3',
-                'lemon_creek':'58.5_-134.3',
+                'taku':'58.5_-134.4',
+                'lemon_creek':'58.5_-134.4',
                 'gulkana':'63.5_-145.6'}
 
 # list potential distinctions to perform regression on

@@ -152,7 +152,7 @@ def run_model_parallel(list_inputs):
             massbal.output.add_basic_attrs(args,time_elapsed,climate)
             massbal.output.add_attrs(store_attrs)
         except Exception as e:
-            print(f'Simulation failed for {inputs[0].out}: {e}')
+            print(f'Simulation failed for {inputs[0].output_fn}: {e}')
             traceback.print_exc()
             continue
     return
