@@ -1108,3 +1108,21 @@ class DEM():
         # reproject to match the grid of the da_sample
         self.shp = self.shp.to_crs(da_sample.crs)
         self.dem = self.dem.rio.reproject_match(da_sample)
+
+class LAPs():
+    def __init__(self, site):
+        fn = home_fp + 'data/Nagorski/bcdust.csv'
+        df = pd.read_csv(fn, index_col=0)
+        df = df.loc[site]
+
+        self.surf_bc_june = df['Surface_BC_July']
+        self.surf_dust_june = df['Surface_dust_July']
+        return
+    
+    def get_model(self, ds):
+        date = pd.to_datetime('2024-06-01 00:00')
+        diff = pd.Timedelta(hours=12)
+        date_range = pd.date_range(date - diff, date + diff)
+        self.mod_bc_june = ds.sel(time=date_range, layer=0).layerBC.values
+        self.mod_dust_june = ds.sel(time=date_range, layer=0).layerdust.values
+        return
