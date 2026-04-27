@@ -136,7 +136,7 @@ def get_site_table(site_df, rgi_df, args):
     # ICE ALBEDO
     if args.albedo_ice == prms.albedo_ice:
         if 'a_ice' in site_df.columns and not np.isnan(site_df.loc[site,'a_ice']):
-            args.a_ice = site_df.loc[site,'a_ice']
+            args.albedo_ice = site_df.loc[site,'a_ice']
 
     # PRECIPITATION FACTOR
     if args.kp == prms.kp:

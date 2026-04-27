@@ -740,11 +740,12 @@ class massBalance():
         snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
         # check if there is an ice layer within the snow/firn
         if len(snow_firn_idx) > 0 and layers.ice_idx[0] < snow_firn_idx[-1]:
-            if layers.ice_idx[0] == 0 and len(layers.snow_idx) == 0: 
-                # surface ice layer with firn underneath: all water runs off
+            if layers.ice_idx[0] == 0: 
+                # surface ice layer: all melt/rain runs off
                 snow_firn_idx = []
             else:
-                # impermeable layer caused by densification/refreeze
+                # internal layer caused by densification/refreeze
+                # flow stops (runs off) at ice lens
                 snow_firn_idx = snow_firn_idx[:layers.ice_idx[0]]
 
         # initialize variables
@@ -788,13 +789,15 @@ class massBalance():
                 # set flow in equal to flow out of the previous layer
                 q_in = q_out
 
-                # irreducible water content depends on density
-                # if layers.ldensity[layer] > 500:
-                #     FRAC_IRREDUC = args.Sr_dense
-                # else:
-                #     FRAC_IRREDUC = args.Sr_light
-                water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
-
+                # irreducible water content depends on density?
+                if args.constant_irrwater:
+                    water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
+                else:
+                    if layers.ldensity[layer] > 500:
+                        FRAC_IRREDUC = args.Sr_dense
+                    else:
+                        FRAC_IRREDUC = args.Sr_light
+                        
                 # calculate flow out of layer i
                 if q_in < (water_irreduc - lw[layer]):
                     q_out = 0
@@ -859,13 +862,8 @@ class massBalance():
         args = self.args
 
         # CONSTANTS
-        PARTITION_COEF_BC = float(self.args.ksp_BC)
-        if self.args.ksp_BC != args.ksp_BC:
-            # if ksp_BC was specified in args, treat OC the same way
-            PARTITION_COEF_OC = float(self.args.ksp_BC)
-        else:
-            # otherwise use default ksp_OC
-            PARTITION_COEF_OC = args.ksp_OC
+        PARTITION_COEF_BC = args.ksp_BC
+        PARTITION_COEF_OC = args.ksp_OC
         PARTITION_COEF_DUST = args.ksp_dust
         dt = args.dt
 

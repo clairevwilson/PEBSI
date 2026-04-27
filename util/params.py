@@ -131,9 +131,15 @@ sky_view = None                             # Site sky-view factor [-]
 # REANALYSIS DATA
 reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 deposition_data = None                      # None or 'UKESM'
-ukesm_vn = 'tendency_of_atmosphere_mass_content_of_{sp}_dry_aerosol_particles_due_to_{t}_deposition'  # Name of var in UKESM data
 merra2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
+ukesm_vn = (                                # Name of var in UKESM data
+        'tendency_of_atmosphere_'
+        'mass_content_of_{sp}_dry_aerosol_'
+        'particles_due_to_{t}_deposition')   
+
+# BIAS CORRECTION
 bias_vars = ['temp']                        # Vars to correct by quantile mapping (only applied to reanalysis data)
+qm_glac_name = None                         # Name of glacier used to prepare quantile mapping
 
 # ====================================================================================================================
 #                                            MODEL PHYSICS OPTIONS
@@ -172,6 +178,7 @@ option_uniform_snow = False             # Uniform size for snow bins?
 constant_snowfall_density = False       # False or density [kg m-3]
 constant_freshgrainsize = False         # False or grain size [um] (Kuipers Munneke (2011): 54.5)
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
+constant_irrwater = True                # True or False to estimate from density (Sr_light and Sr_dense)
 
 # ALBEDO SWITCHES
 switch_snow = 1             # 0 to turn off fresh snow feedback; 1 to include it

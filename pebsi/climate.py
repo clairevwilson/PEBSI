@@ -519,7 +519,7 @@ class Climate():
                 self.cds[var].attrs['source'] = 'AWS'
             else:
                 # variable from reanalysis
-                self.cds[var].attrs['source'] = self.reanalysis 
+                self.cds[var].attrs['source'] = args.reanalysis
 
                 # carbon variables could come from a different dataset
                 if args.deposition_data and var in self.carbon_vars:
