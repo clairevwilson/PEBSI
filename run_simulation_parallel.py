@@ -17,35 +17,20 @@ import pandas as pd
 import run_simulation as sim
 import pebsi.massbalance as mb
 import util.params as prms
-if 'trace' in prms.machine:
-    prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
-prms.use_config = False     # don't need to use config file
+prms.use_config = True
+prms.config_fn = 'config_parallel.yaml'
 
 # Step if you're going to run this script more than once simultaneously
-n_runs_ahead = 0    
+n_runs_ahead = 0
+
+# Date for output filename
+run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 
 # Read command line args
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
-args = parser.parse_args()
-out_str = 'moredust'
-
-# # WIND RUNS
-# out_str = 'qmwind'
-# prms.bias_vars = ['temp','wind']
-
-# # UKESM RUNS
-# out_str = 'ukesm'
-# prms.deposition_data = 'UKESM'
-# prms.ukesm_fn = '../UKESM/dr401_GFED/'
-# args.start_date = '1997-04-01 00:00'
-# args.end_date = '2015-11-30 00:00'
-
-# Edit these
-args.start_date = '1997-04-01 00:00'
-args.end_date = '2025-09-01 00:00'
-args.use_aws = False
-args.dates_from_data = False
+cmd_args = parser.parse_args()
+out_str = 'dust50x'
 
 # Sites to run in parallel
 site_dict = {
@@ -57,16 +42,10 @@ site_dict = {
     '01.01390':['MG1','NWB1','TKG3'], # TAKU       
 }
 rgi_ids = list(site_dict.keys())
- 
-# Probably do not edit these
-args.store_data = False # True             # Ensures output is stored
-run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
-if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
 
 # Determine number of runs for each process
 n_processes = sum([len(site_dict[gn]) for gn in rgi_ids])
-args.n_processes = n_processes
+cmd_args.n_processes = n_processes
 
 def pack_vars():
     # Parse list for inputs to Pool function
@@ -75,7 +54,7 @@ def pack_vars():
     # Glacier loop
     for rgi_id in rgi_ids:
         # Copy args
-        args_glac = copy.deepcopy(args)
+        args_glac = copy.deepcopy(cmd_args)
 
         # Add glacier to args and get sites for this glacier
         args_glac.rgi_id = rgi_id
@@ -109,16 +88,12 @@ def pack_vars():
             # climate.cds['ocdry'] *= 0
             # climate.cds['bcwet'] *= 0
             # climate.cds['bcdry'] *= 0
-            climate.cds['dustwet'] *= 2
-            climate.cds['dustdry'] *= 2
-
-            # Set ksp
-            args_run.ksp_BC = 0.1
-            args_run.ksp_OC = 0.1
+            climate.cds['dustwet'] *= 50
+            climate.cds['dustdry'] *= 50
 
             # Store model parameters
-            store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': prms.Sr,
-                           'kp':args_run.kp, 'wet_C':args_run.wet_grain_C}
+            store_attrs = {'ksp_BC':args_run.ksp_BC, 'ksp_OC':args_run.ksp_OC, 'Sr': args_run.Sr,
+                           'kp':args_run.kp, 'wet_C':args_run.wet_grain_C, 'a_ice':args_run.albedo_ice}
 
             # Pack function ro execute in parallel
             packed_vars[run_no].append((args_run,climate,store_attrs))

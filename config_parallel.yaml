@@ -1,0 +1,19 @@
+start_date: '2020-04-01'
+end_date: '2025-09-01'
+use_aws: false
+store_data: true
+output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
+climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
+ksp_BC: 1
+ksp_OC: 1
+
+# # WIND RUNS
+# out_str = 'qmwind'
+# prms.bias_vars = ['temp','wind']
+
+# # UKESM RUNS
+# out_str = 'ukesm'
+# prms.deposition_data = 'UKESM'
+# prms.ukesm_fn = '../UKESM/dr401_GFED/'
+# args.start_date = '1997-04-01 00:00'
+# args.end_date = '2015-11-30 00:00'
