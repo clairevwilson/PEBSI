@@ -19,17 +19,22 @@ import pebsi.massbalance as mb
 import util.params as prms
 if 'trace' in prms.machine:
     prms.climate_fp = '/trace/group/rounce/cvwilson/climate_data/'
-prms.use_config = False
-n_runs_ahead = 0    # Step if you're going to run this script more than once simultaneously
+prms.use_config = False     # don't need to use config file
+
+# Step if you're going to run this script more than once simultaneously
+n_runs_ahead = 0    
 
 # Read command line args
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
 args = parser.parse_args()
-out_str = 'check'
+out_str = 'moredust'
+
+# # WIND RUNS
 # out_str = 'qmwind'
 # prms.bias_vars = ['temp','wind']
 
+# # UKESM RUNS
 # out_str = 'ukesm'
 # prms.deposition_data = 'UKESM'
 # prms.ukesm_fn = '../UKESM/dr401_GFED/'
@@ -42,26 +47,19 @@ args.end_date = '2025-09-01 00:00'
 args.use_aws = False
 args.dates_from_data = False
 
-# with open('project/best_datasets_grains.pkl','rb') as f:
-#     params = pickle.load(f)
-
-# sites to run in parallel
+# Sites to run in parallel
 site_dict = {
-    '01.22193':['K17b','K53',], # KAHILTNA     'KPS',
+    '01.22193':['K17b','K53',], # KAHILTNA
     '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
     '01.00570':['AU','B','D'], # GULKANA
     '01.09162':['N','B','EC'], # WOLVERINE   
     '01.01104':['C','B','D'], # LEMON CREEK
     '01.01390':['MG1','NWB1','TKG3'], # TAKU       
-    #  '02.06675':[], # ATHABASCA
-    #  '02.05098':[], # PEYTO
-    #  '02.17023':[], # SPERRY
-    #  '02.18778':[], # SOUTH CASCADE
 }
 rgi_ids = list(site_dict.keys())
  
-# Probably do not edit
-args.store_data = True             # Ensures output is stored
+# Probably do not edit these
+args.store_data = False # True             # Ensures output is stored
 run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 if 'trace' in prms.machine:
     prms.output_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
@@ -74,18 +72,24 @@ def pack_vars():
     # Parse list for inputs to Pool function
     packed_vars = [[] for _ in range(n_processes)]
     run_no = 0
+    # Glacier loop
     for rgi_id in rgi_ids:
+        # Copy args
         args_glac = copy.deepcopy(args)
+
+        # Add glacier to args and get sites for this glacier
         args_glac.rgi_id = rgi_id
         sites = site_dict[args_glac.rgi_id]
 
-        if rgi_id == '01.01390':
+        # Handle QM glacier for special cases
+        if rgi_id == '01.01390': # Taku
             args_glac.qm_glac_name = 'lemon_creek'
-        elif rgi_id == '01.15645':
+        elif rgi_id == '01.15645': # Kennicott
             args_glac.qm_glac_name = 'gulkana'
 
+        # Site loop
         for site in sites:
-            # Get current site args
+            # Copy args again and store site
             args_run = copy.deepcopy(args_glac)
             args_run.site = site
 
@@ -94,33 +98,32 @@ def pack_vars():
             glac = df_meta.loc[args_run.rgi_id,'name']
             args_run.output_fn = f'{glac}{site}_{run_date}_{out_str}_'
 
-            # AWS fn for albedo timeseries
-            # args_run.AWS_fn = f'../climate_data/AWS/albedo/{glac}{site}_S2albedo.csv'
-
-            # Set parameters from calibration
-            # if site not in params[glac]:
-            #     continue
-            args_run.ksp_BC = 0.1 # params[glac][site]['ksp_BC']
-            args_run.wet_grain_C = 4.22e-13 #  params[glac][site]['C1']
-            # args_run.kp = 1.5
-
             # Set task ID for SNICAR input file
             args_run.task_id = run_no + (n_runs_ahead+1)*n_processes
 
             # Store model inputs
             climate, args_run = sim.initialize_model(args_run)
+
+            # Manipulate climate if desired
             # climate.cds['ocwet'] *= 0
             # climate.cds['ocdry'] *= 0
             # climate.cds['bcwet'] *= 0
             # climate.cds['bcdry'] *= 0
+            climate.cds['dustwet'] *= 2
+            climate.cds['dustdry'] *= 2
+
+            # Set ksp
+            args_run.ksp_BC = 0.1
+            args_run.ksp_OC = 0.1
 
             # Store model parameters
             store_attrs = {'ksp_BC':args_run.ksp_BC, 'Sr': prms.Sr,
                            'kp':args_run.kp, 'wet_C':args_run.wet_grain_C}
 
+            # Pack function ro execute in parallel
             packed_vars[run_no].append((args_run,climate,store_attrs))
 
-            # Advance counter
+            # Advance counter for task ID
             run_no += 1
     return packed_vars
 
