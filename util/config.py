@@ -33,10 +33,20 @@ def get_config(cmd_args):
     # if config filename was specified, make sure use_config is True
     if cmd_args.config_fn is not None:
         cmd_args.use_config = True
+        args.config_fn = cmd_args.config_fn
 
     # 1: add all prms default attributes to args
     for key in dir(prms):
-        if not key.startswith('__'):  # ignore internal python stuff
+        # ignore internal python stuff
+        key_start = not key.startswith('__')
+        # check if we're on config_fn
+        config_var = key == 'config_fn'
+        # check if config_fn is specified
+        no_config = cmd_args.config_fn is None
+
+        if config_var and not no_config:
+            continue
+        elif key_start:
             val = getattr(prms, key)
             if isinstance(val, types.ModuleType):
                 continue
