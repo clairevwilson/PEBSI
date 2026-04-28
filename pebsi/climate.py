@@ -576,8 +576,8 @@ class Climate():
         # apply to dry deposition
         self.cds['bcdry'] *= ratio_bc 
         self.cds['ocdry'] *= ratio_oc
-        self.cds['dustdry'] *= RATIO_DUST
-        self.cds['dustwet'] *= RATIO_DUST
+        self.cds['dustdry'] *= RATIO_DUST * args.dust_factor
+        self.cds['dustwet'] *= RATIO_DUST * args.dust_factor
         return
     
     def apply_ukesm_dep_ratio(self):
