@@ -282,22 +282,18 @@ class Layers():
             ldust = np.ones(n)*DUST_FRESH*lheight 
         elif args.initialize_LAPs in ['interpolate']:
             # read in LAP data
-            lap_data = pd.read_csv(self.args.initial_LAP_fn,index_col=0)
+            lap_data = pd.read_csv(args.initial_LAP_fn,index_col=0)
 
-            # add boundaries for interpolation
-            lap_data.loc[0,'BC'] = BC_FRESH
-            lap_data.loc[0,'OC'] = OC_FRESH
-            lap_data.loc[0,'dust'] = DUST_FRESH
-            lap_data.loc[100,'BC'] = BC_FRESH
-            lap_data.loc[100,'OC'] = OC_FRESH
-            lap_data.loc[100,'dust'] = DUST_FRESH
+            # handle nans
             lap_data = lap_data.sort_index()
+            bc_data = lap_data['BC'].dropna()
+            oc_data = lap_data['OC'].dropna()
+            dust_data = lap_data['dust'].dropna()
 
             # interpolate concentration by depth
-            data_depth = lap_data.index.to_numpy()
-            cBC = np.interp(ldepth,data_depth,lap_data['BC'].values.flatten())
-            cOC = np.interp(ldepth,data_depth,lap_data['OC'].values.flatten())
-            cdust = np.interp(ldepth,data_depth,lap_data['dust'].values.flatten())
+            cBC = np.interp(ldepth, bc_data.index, bc_data)
+            cOC = np.interp(ldepth, oc_data.index, oc_data)
+            cdust = np.interp(ldepth, dust_data.index, dust_data)
 
             # calculate mass from concentration
             lBC = cBC * lheight
