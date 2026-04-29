@@ -21,3 +21,4 @@ pyyaml
 bump2version
 plotly
 jupyter
+joblib

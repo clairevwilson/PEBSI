@@ -66,6 +66,9 @@ initial_density_fn = 'data/sample_initial_density.csv'      # Initial density pr
 initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
 initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content
 
+# SNICAR EMULATOR
+emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator filename
+
 # =============================================== INTERNAL ===========================================================
 #       The following filepaths are internal to the model and should be relative to the current directory.
 #                            Don't edit these unless you have good reason to.
@@ -163,7 +166,7 @@ method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_cooling = 'minimize'             # 'minimize' (slow), 'iterative' (fast)
 method_ground = 'MolgHardy'             # 'MolgHardy'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
-method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested)
+method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested), 'emulator' (beta)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?

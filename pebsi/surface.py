@@ -41,6 +41,10 @@ class Surface():
             self.run_SNICAR = self.run_SNICARfx 
             self.snicar_base_fn = args.snicarfx_input_fn
             self.snicar_fn = args.snicarfx_input_fn
+        elif args.method_snicar in ['emulator']:
+            self.emulator = args.SNICAR_emulator 
+            self.snicar_fn = self.snicar_base_fn = ''
+            self.SNICAR_inputs = climate.df_features
         else:
             raise ConfigError('Invalid SNICAR method')
 
@@ -95,17 +99,18 @@ class Surface():
             self.snicar_fn = self.snicar_fn.replace('inputs',f'inputs_inuse')
 
         # check inputs file works
-        if not os.path.exists(self.snicar_fn):
-            # no input file: create one from inputs.yaml
-            self.reset_SNICAR()
-        try:
-            # check if SNICAR imports properly
-            with HiddenPrints():
-                from biosnicar import get_albedo
-                _,_ = get_albedo.get('adding-doubling',plot=False,validate=False)
-        except:
-            # problem in the SNICAR input file: create a new one
-            self.reset_SNICAR()
+        if args.method_snicar not in ['emulator']:
+            if not os.path.exists(self.snicar_fn):
+                # no input file: create one from inputs.yaml
+                self.reset_SNICAR()
+            try:
+                # check if SNICAR imports properly
+                with HiddenPrints():
+                    from biosnicar import get_albedo
+                    _,_ = get_albedo.get('adding-doubling',plot=False,validate=False)
+            except:
+                # problem in the SNICAR input file: create a new one
+                self.reset_SNICAR()
         self.snicar_initialized = False
 
         # need some initial value for cloud cover and annual minimum albedo
@@ -279,7 +284,14 @@ class Surface():
 
         # determine the method to get albedo from switches
         if self.stype == 'snow':
-            if args.switch_melt == 0:
+            # emulator overrides switches
+            if args.method_snicar in ['emulator']:
+                date = timestamp.replace(hour=0)
+                features = self.SNICAR_inputs.loc[date].to_frame().T
+                features.insert(2, 'days_since_acc', self.days_since_snowfall)
+                self.albedo = self.emulator.predict(features)
+                self.spectral_weights = np.ones(1)
+            elif args.switch_melt == 0:
                 if args.switch_LAPs == 0:
                     # SURFACE TYPE ONLY
                     self.albedo = self.albedo_dict[self.stype]

@@ -15,6 +15,7 @@ import xarray as xr
 import numpy as np
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
+import joblib
 
 class Config:
     def __init__(self):
@@ -24,6 +25,33 @@ class ConfigError(Exception):
     """Raised when an expected crash
     ends the simulation."""
     pass
+
+def configure_lookups(args):
+    # load grainsize lookup table
+    grainsize_fn = args.grainsize_fn.format(s=str(args.initSSA))
+    ds = xr.open_dataset(grainsize_fn).load()
+
+    # get dimensions
+    grain_size_dims = (ds.TVals.values, 
+                       ds.DTDZVals.values, 
+                       ds.DENSVals.values)
+    
+    # create interpolation functions for each lookup variable
+    args.interp_tau = RegularGridInterpolator(
+        grain_size_dims, ds.taumat.values, method='linear')
+    args.interp_kap = RegularGridInterpolator(
+        grain_size_dims, ds.kapmat.values, method='linear')
+    args.interp_dr0 = RegularGridInterpolator(
+        grain_size_dims, ds.dr0mat.values, method='linear')
+    
+    # store args.wvs as a numpy array
+    args.wvs = np.array(args.wvs)
+
+    # load ML algorithm for albedo
+    if args.method_snicar == 'emulator':
+        args.SNICAR_emulator = joblib.load(args.emulator_fn)
+    return args
+
 
 def get_config(cmd_args):
     """
@@ -92,21 +120,7 @@ def get_config(cmd_args):
         elif isinstance(value, bool) and value is True:
             setattr(args, key, value)
 
-    # load grainsize lookup table
-    grainsize_fn = args.grainsize_fn.format(s=str(args.initSSA))
-    ds = xr.open_dataset(grainsize_fn).load()
-    grain_size_dims = (ds.TVals.values, 
-                       ds.DTDZVals.values, 
-                       ds.DENSVals.values)
-    args.interp_tau = RegularGridInterpolator(
-        grain_size_dims, ds.taumat.values, method='linear')
-    args.interp_kap = RegularGridInterpolator(
-        grain_size_dims, ds.kapmat.values, method='linear')
-    args.interp_dr0 = RegularGridInterpolator(
-        grain_size_dims, ds.dr0mat.values, method='linear')
-    
-    # store args.wvs as a numpy array
-    args.wvs = np.array(args.wvs)
+    args = configure_lookups(args)
 
     # print debug statement
     if args.debug and args.use_config:

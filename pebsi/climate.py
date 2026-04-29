@@ -741,6 +741,43 @@ class Climate():
         self.cds[var].values = adjusted
         return
     
+    def get_emulator_inputs(self):
+        cds = self.cds
+        bc_ds = cds['bcwet'] + cds['bcdry']
+
+        # PDDs
+        positive_temp_sum = (cds['temp']
+                             .where(cds['temp']>0, other=0)
+                             .resample({'time': '1d'})
+                             .sum() / 24) # Celcius
+        
+        # rolling BC
+        bc_rolling = (bc_ds
+                       .resample(time='1d').sum()
+                       .rolling(time=5, min_periods=1).sum() * 3600) # kg m-2
+
+        # incoming shortwave
+        SWin = (cds['SWin']
+                .resample(time='1d')
+                .sum()) # J m-2
+        
+        # cumulative PDDs
+        water_year = xr.where(
+            positive_temp_sum['time.month'] >= 10, 
+            positive_temp_sum['time.year'] + 1, 
+            positive_temp_sum['time.year']
+        )
+        PDDs_cumsum = (positive_temp_sum.groupby(water_year).cumsum())
+
+        df_features = pd.DataFrame({
+            'PDD_cumsum':PDDs_cumsum.values,
+            'bc_5d_rolling':bc_rolling.values,
+            'SWin':SWin.values
+        }, index=SWin.time.values)
+        
+        self.df_features = df_features 
+        return
+    
     def create_rh2m_ds(self, fn):
         """
         Creates an RH2M (2 m relative humidity) 

@@ -378,6 +378,12 @@ def initialize_model(args):
     # adjust elevation-dependent variables
     climate.adjust_to_elevation()
 
+    # load data for emulator, if needed
+    if args.method_snicar == 'emulator':
+        print('! SNICAR emulator is in beta mode, only supports features:')
+        print('[ PDD_cumsum, bc_5d_rolling, days_since_acc, SWin ]')
+        climate.get_emulator_inputs()
+
     # ===== PRINT MODEL RUN INFO =====
     start = pd.to_datetime(args.start_date)
     end = pd.to_datetime(args.end_date)
