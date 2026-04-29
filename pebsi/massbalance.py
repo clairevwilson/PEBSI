@@ -470,18 +470,14 @@ class massBalance():
                 T[np.where(T < 223.15)[0]] = 223.15
                 T[np.where(T > 273.15)[0]] = 273.15
 
+                # create input matrix for interpolation
+                input_matrix = np.column_stack(
+                    (T.ravel(), dTdz.ravel(), p.ravel()))
+
                 # interpolate lookup table at the values of T,dTdz,p
-                ds_interp = args.grainsize_ds.interp(TVals=T.astype(float),
-                            DTDZVals=dTdz.astype(float),
-                            DENSVals=p.astype(float))
-                
-                # extract values
-                diag = np.zeros((n,n,n),dtype=bool)
-                for i in range(n):
-                    diag[i,i,i] = True
-                tau = ds_interp.taumat.to_numpy()[diag].astype(float)
-                kap = ds_interp.kapmat.to_numpy()[diag].astype(float)
-                dr0 = ds_interp.dr0mat.to_numpy()[diag].astype(float)
+                tau = args.interp_tau(input_matrix).reshape(T.shape)
+                kap = args.interp_kap(input_matrix).reshape(T.shape)
+                dr0 = args.interp_dr0(input_matrix).reshape(T.shape)
 
                 # calculate dry grain growth
                 drdrydt = []

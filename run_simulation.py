@@ -13,6 +13,7 @@ single point.
 import argparse
 import time
 import os
+import netCDF4
 # External libraries
 import numpy as np
 import xarray as xr

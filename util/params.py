@@ -19,11 +19,7 @@ variable is present in config.yaml.
 @author: clairevwilson
 """
 # Built-in libraries
-import os
 import socket
-# External libraries
-import numpy as np
-import xarray as xr
 
 # ====================================================================================================================
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
@@ -164,7 +160,7 @@ method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
 method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
-method_cooling = 'iterative'            # 'minimize' (slow), 'iterative' (fast)
+method_cooling = 'minimize'             # 'minimize' (slow), 'iterative' (fast)
 method_ground = 'MolgHardy'             # 'MolgHardy'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested)
@@ -192,14 +188,12 @@ switch_LAPs = 1             # 0 to turn off LAPs; 1 to turn on
 dt = 3600                   # Model timestep [s]
 daily_dt = 3600*24          # Seconds in a day [s]
 n_heat_steps = 5            # Number of times to run heat equation per dt [-]
+task_id = -1                #$ -task_id     Unique identifier for parallel simulations
 
 # ALBEDO BANDS
-wvs = np.round(np.arange(0.2,5,0.01),2) # 480 bands used by SNICAR
+wvs = [round(x/100., 2) for x in range(20, 500)]# 480 bands used by SNICAR
 band_indices = {}                       # dictionary for storing spectral albedo
-for i in np.arange(0,480):
-    band_indices['Band '+str(i)] = np.array([i])
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
-grainsize_ds = xr.open_dataset(grainsize_fn.format(s=str(initSSA))).load()
 
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS

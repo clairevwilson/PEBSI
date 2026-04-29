@@ -11,6 +11,11 @@ import yaml
 import types
 import util.params as prms
 
+import xarray as xr
+import numpy as np
+import xarray as xr
+from scipy.interpolate import RegularGridInterpolator
+
 class Config:
     def __init__(self):
         return
@@ -86,6 +91,22 @@ def get_config(cmd_args):
         # if the value is a Boolean, only override if it's True
         elif isinstance(value, bool) and value is True:
             setattr(args, key, value)
+
+    # load grainsize lookup table
+    grainsize_fn = args.grainsize_fn.format(s=str(args.initSSA))
+    ds = xr.open_dataset(grainsize_fn).load()
+    grain_size_dims = (ds.TVals.values, 
+                       ds.DTDZVals.values, 
+                       ds.DENSVals.values)
+    args.interp_tau = RegularGridInterpolator(
+        grain_size_dims, ds.taumat.values, method='linear')
+    args.interp_kap = RegularGridInterpolator(
+        grain_size_dims, ds.kapmat.values, method='linear')
+    args.interp_dr0 = RegularGridInterpolator(
+        grain_size_dims, ds.dr0mat.values, method='linear')
+    
+    # store args.wvs as a numpy array
+    args.wvs = np.array(args.wvs)
 
     # print debug statement
     if args.debug and args.use_config:
