@@ -34,12 +34,12 @@ out_str = 'dust50x'
 
 # Sites to run in parallel
 site_dict = {
-    '01.22193':['K17b','K53',], # KAHILTNA
-    '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
-    '01.00570':['AU','B','D'], # GULKANA
-    '01.09162':['N','B','EC'], # WOLVERINE   
-    '01.01104':['C','B','D'], # LEMON CREEK
-    '01.01390':['MG1','NWB1','TKG3'], # TAKU       
+    # '01.22193':['K17b','K53',], # KAHILTNA
+    # '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
+    '01.00570':['A','AU','B','D','T','Z'], # GULKANA
+    # '01.09162':['N','B','EC'], # WOLVERINE   
+    # '01.01104':['C','B','D'], # LEMON CREEK
+    # '01.01390':['Taku-1','NWB1','TKG3'], # TAKU       
 }
 rgi_ids = list(site_dict.keys())
 
@@ -88,8 +88,6 @@ def pack_vars():
             # climate.cds['ocdry'] *= 0
             # climate.cds['bcwet'] *= 0
             # climate.cds['bcdry'] *= 0
-            climate.cds['dustwet'] *= 50
-            climate.cds['dustdry'] *= 50
 
             # Store model parameters
             store_attrs = {'ksp_BC':args_run.ksp_BC, 'ksp_OC':args_run.ksp_OC, 'Sr': args_run.Sr,
