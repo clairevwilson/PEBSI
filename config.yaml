@@ -12,19 +12,20 @@ store_data: false
 debug: true
 output_fn: 'test_simulation'
 start_date: '2024-04-20'
-end_date: '2024-05-20'
+end_date: '2024-06-20'
+# method_snicar: 'emulator'
 
 # ================================================
 #                SITE INFORMATION
 # ================================================
-rgi_id: '00.00000'
-site: 'center'
-glac_name: 'test'
-timezone: 0
+rgi_id: '01.01104'
+site: 'Lemon-1'
+lat: 58.36547
+lon: -134.35807
 
 # ================================================
 #                CLIMATE OPTIONS
 # ================================================
-use_aws: true
-aws_fn: 'data/sample_aws.csv'
-aws_elev: 1500
+bias_vars: ['temp']
+output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
+climate_fp: '/trace/group/rounce/cvwilson/climate_data/'

@@ -1,4 +1,4 @@
-start_date: '2015-04-01'
+start_date: '2020-04-01'
 end_date: '2025-09-01'
 use_aws: false
 store_data: true
@@ -7,6 +7,7 @@ climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
 ksp_BC: 1
 ksp_OC: 1
 dust_factor: 50
+# method_snicar: 'emulator'
 
 # # WIND RUNS
 # out_str = 'qmwind'

@@ -89,8 +89,11 @@ class energyBalance():
         self.rh = 100 if self.rh > 100 else self.rh
         self.get_roughness(surface.days_since_snowfall,layers)
 
-        # adjust wind speed
+        # apply factors
         self.wind *= float(args.wind_factor)
+        if timestamp.day_of_year > args.snow_free_doy:
+            # self.dustwet *= args.dust_factor 
+            self.dustdry *= args.dust_factor
 
         # radiation terms
         self.measured_SWin = 'SWin' in climate.measured_vars

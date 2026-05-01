@@ -30,18 +30,20 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
 cmd_args = parser.parse_args()
-out_str = 'dust50x'
+out_str = 'drydust50x_nodoy'
 
 # Sites to run in parallel
 site_dict = {
-    # '01.22193':['K17b','K53',], # KAHILTNA
-    # '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
-    '01.00570':['A','AU','B','D','T','Z'], # GULKANA
-    # '01.09162':['N','B','EC'], # WOLVERINE   
-    # '01.01104':['C','B','D'], # LEMON CREEK
-    # '01.01390':['Taku-1','NWB1','TKG3'], # TAKU       
+    '01.22193':['K17b','K53',], # KAHILTNA
+    '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
+    '01.00570':['AU','B','D'], # ['A','AU','B','D','T','Z'], # GULKANA
+    '01.09162':['N','B','EC'], # WOLVERINE   
+    '01.01104':['C','B','D'], # LEMON CREEK
+    '01.01390':['Taku-1','NWB1','TKG3'], # TAKU       
 }
 rgi_ids = list(site_dict.keys())
+
+dust_doys = {'kahiltna':169, 'kennicott':151, 'gulkana':180, 'wolverine':177, 'lemon_creek':172, 'taku':175}
 
 # Determine number of runs for each process
 n_processes = sum([len(site_dict[gn]) for gn in rgi_ids])
@@ -84,10 +86,7 @@ def pack_vars():
             climate, args_run = sim.initialize_model(args_run)
 
             # Manipulate climate if desired
-            # climate.cds['ocwet'] *= 0
-            # climate.cds['ocdry'] *= 0
-            # climate.cds['bcwet'] *= 0
-            # climate.cds['bcdry'] *= 0
+            args_run.snow_free_doy = 0 # dust_doys[glac]
 
             # Store model parameters
             store_attrs = {'ksp_BC':args_run.ksp_BC, 'ksp_OC':args_run.ksp_OC, 'Sr': args_run.Sr,

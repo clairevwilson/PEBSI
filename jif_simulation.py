@@ -11,7 +11,11 @@ site_dict = {
     '01.01390': ['Taku-1'], # TAKU
     # '01.00704': ['Gilkey-2', 'Gilkey-3'], # GILKEY
     '01.00709': ['Mend-2', 'Mend-3'], # MENDENHALL
+    '01.01104': ['Lemon-1']
 }
+
+dust_doys = {'01.01104':172, '01.01390':175, '01.00709':172}
+
 
 def run_single_simulation(params):
     i, rgi_id, site, dust_factor, ksp_BC, base_fp = params
@@ -33,6 +37,7 @@ def run_single_simulation(params):
         'start_date':'2016-05-11 14:00',
         'end_date':'2016-07-19',
         'task_id':i,
+        'initial_snow_depth':10, 
 
         # Filepaths
         'climate_fp':climate_fp,
@@ -46,6 +51,7 @@ def run_single_simulation(params):
         # Parameters
         'ksp_BC':ksp_BC,
         'dust_factor':dust_factor,
+        'snow_free_doy':dust_doys[rgi_id]
     }
 
     # dump config to yaml
@@ -76,8 +82,8 @@ if __name__ == '__main__':
     # loop glaciers and sites
     for rgi_id in site_dict:
         for site in site_dict[rgi_id]:
-            for dust_factor in [1, 10, 20, 50, 100]:
-                for ksp_BC in [0.1, 0.5, 1]:
+            for dust_factor in [20, 50, 75, 100]:
+                for ksp_BC in [0.9]:
                     # tasks.append()
                     task = (i, rgi_id, site, dust_factor, ksp_BC, base_fp)
                     run_single_simulation(task)
