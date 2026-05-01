@@ -1154,7 +1154,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layerOC']:
             bounds = [-5,100]
         elif var in ['layerdust']:
-            bounds = [0,2]
+            bounds = [0,50]
         elif var in ['layerdensity']:
             bounds = [50,800] if plot_firn else [0,500]
         elif var in ['layerwater']:
