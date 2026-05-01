@@ -1,0 +1,190 @@
+BIOOPTICAL:
+  ABS_CFF_CALC: true
+  ABS_CFF_FILE: file.csv
+  ABS_CFF_LOAD_INVIVO: true
+  ABS_CFF_LOAD_RECONSTRUCTED: false
+  CELL_L: 20
+  CELL_R: 10
+  CELL_VOLUME: 1500
+  DIR_PCKG: Data/pigments/
+  DRY_DENSITY: 684
+  FILENAME_NETCDF: alg
+  GO: true
+  INFO_NETCDF: info
+  K_WATER_DIR: Data/OP_data/k_ice_480.csv
+  MIE: false
+  N_ALGAE: 1.4
+  PCKG_GA: false
+  PCKG_SA: false
+  PIGMENT_CONC:
+    Data/pigments/Photop_carotenoids.csv: 0
+    Data/pigments/Photos_carotenoids.csv: 0
+    Data/pigments/alloxanthin.csv: 0
+    Data/pigments/antheraxanthin.csv: 0
+    Data/pigments/chl-a.csv: 0
+    Data/pigments/chl-b.csv: 0
+    Data/pigments/lutein.csv: 0
+    Data/pigments/neoxanthin.csv: 0
+    Data/pigments/pheophytin.csv: 0
+    Data/pigments/ppg.csv: 0
+    Data/pigments/trans_astaxanthin.csv: 0
+    Data/pigments/trans_astaxanthin_ester.csv: 0
+    Data/pigments/violaxanthin.csv: 0
+    Data/pigments/zeaxanthin.csv: 0
+  PIGMENT_DIR: Data/pigments/
+  PLOT_K_ABS_CFF: false
+  PLOT_SSPS: true
+  REPORT_DIMS: false
+  SAVEFIG_SSPS: false
+  SAVE_NETCDF: false
+  SAVE_N_K_ABS_CFF: false
+  SAVE_PATH_FIG: Data/pigments/
+  SAVE_PATH_NETCDF: Data/OP_data/480band/lap/
+  SAVE_PLOT_K_ABS_CFF: false
+  UNIT: 0
+  WET_DENSITY: 1060
+CTRL:
+  POLY_ORDER: 3
+  SMOOTH: true
+  WINDOW_SIZE: 9
+ICE:
+  AR:
+  - 0
+  - 0
+  - 0
+  - 0
+  CDOM:
+  - 0
+  - 0
+  - 0
+  - 0
+  DZ:
+  - 0.25
+  - 0.25
+  - 0.25
+  - 0.25
+  HEX_LENGTH:
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  HEX_SIDE:
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  LAYER_TYPE:
+  - 0
+  - 0
+  - 0
+  - 0
+  RDS:
+  - 1500
+  - 1500
+  - 1500
+  - 1500
+  RF: 2
+  RHO:
+  - 444.4134065788091
+  - 441.7566094548383
+  - 444.8510051965938
+  - 446.1543656435209
+  SHP:
+  - 0
+  - 0
+  - 0
+  - 0
+  SHP_FCTR:
+  - 0
+  - 0
+  - 0
+  - 0
+  WATER_COATING:
+  - 0
+  - 0
+  - 0
+  - 0
+  LWC:
+  - 0
+  - 0
+  - 0
+  - 0
+  LWC_PCT_BBL: 0
+IMPURITIES:
+  BC:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 0.7
+    - 0.3
+    - 0.4
+    - 0.3
+    FILE: bc_ChCB_rn40_dns1270.nc
+    NAME: bc
+    UNIT: 0
+  DUST:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 700
+    - 700
+    - 900
+    - 900
+    FILE: dust_balkanski_central_size3.nc
+    NAME: dust
+    UNIT: 0
+PATHS:
+  BUBBLY_ICE: Data/OP_data/480band/bubbly_ice_files/
+  FLX_DIR: Data/OP_data/480band/fsds/
+  FN_ICE: Data/OP_data/480band/rfidx_ice.nc
+  FN_WATER: Data/OP_data/Refractive_Index_Liquid_Water_Segelstein_1981.csv
+  HEX_ICE: Data/OP_data/480band/ice_hexagonal_columns/
+  ILLUMINATION_FILE_STUBS:
+  - swnb_480bnd_mlw
+  - swnb_480bnd_mls
+  - swnb_480bnd_saw
+  - swnb_480bnd_sas
+  - swnb_480bnd_smm
+  - swnb_480bnd_hmn
+  - swnb_480bnd_trp
+  OP_DIR_STUBS:
+  - ice_Wrn84/ice_Wrn84_
+  - ice_Wrn08/ice_Wrn08_
+  - ice_Pic16/ice_Pic16_
+  RI_ICE: Data/OP_data/480band/
+  SFC: Data/OP_data/480band/r_sfc/blue_ice_spectrum_s10290721.csv
+  SPHERE_ICE: Data/OP_data/480band/ice_spherical_grains/
+  SPHERE_WATER: Data/OP_data/480band/water_spherical_grains/
+  WVL: Data/OP_data/wavelengths.csv
+PLOT:
+  FACECOLOR: white
+  FIG_SIZE: (8,6)
+  FONTSIZE: 20
+  GRID: false
+  GRIDCOLOR: '.8'
+  LINEWIDTH: 1.25
+  SAVE: false
+  SAVEPATH: ''
+  XTICK_BTM: true
+  XTICK_SIZE: 5
+  XTICK_WIDTH: 1
+  YTICK_LEFT: true
+  YTICK_SIZE: 5
+  YTICK_WIDTH: 1
+RTM:
+  APRX_TYP: 2
+  DELTA: true
+  DIRECT: 1
+  ILLUMINATION_FILE_STUBS:
+  - swnb_480bnd_mlw
+  - swnb_480bnd_mls
+  - swnb_480bnd_saw
+  - swnb_480bnd_sas
+  - swnb_480bnd_smm
+  - swnb_480bnd_hmn
+  - swnb_480bnd_trp
+  INCOMING: 0
+  NBR_WVL: 480
+  NIR_MAX_IDX: 480
+  SOLZEN: 50
+  VIS_MAX_IDX: 39
