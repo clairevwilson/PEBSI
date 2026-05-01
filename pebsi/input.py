@@ -35,7 +35,7 @@ dem_fn = '../data/dems/GLACIER_dem.tif'                     # Generalized DEM fi
 shading_fn = 'data/by_glacier/GLACIER/shade/GLACIERSITE_shade.csv'# Generalized shading filepath
 # CLIMATE
 bias_fn = 'data/bias_adjustment/METHOD_GLACIER_VAR.csv'     # Generalized bias adjustment filepath
-climate_fp = '../climate_data/'                             # Climate data filepath
+climate_fp = '/trace/group/rounce/cvwilson/climate_data/'                             # Climate data filepath
 cds_input_fn = 'GLACIERSITE_climate.nc'                     # Climate dataset filepath to load (see climate_out_fn)
 # OUTPUT
 output_fp = '../Output/'                                    # Output filepath

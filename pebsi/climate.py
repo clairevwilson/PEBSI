@@ -684,12 +684,14 @@ class Climate():
         file and variable names.
         """
         # determine filetag for MERRA2 lat/lon gridded files
-        flat = str(int(np.floor(self.lat/10)*10))
-        flon = str(int(np.floor(self.lon/10)*10))
+        ds_global = xr.open_dataset(prms.climate_fp + 'MERRA2/MERRA2constants.nc4')
+        ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
+        flat = f'{ds_closest.lat.values:.1f}'
+        flon = f'{ds_closest.lon.values:.1f}'
         tag = prms.MERRA2_filetag if prms.MERRA2_filetag else f'{flat}_{flon}'
         
         ####### FIRN THING ************
-        tag = self.args.glac_name + '_alltime'
+        # tag = self.args.glac_name + '_alltime'
 
         # update filenames for MERRA-2 (need grid lat/lon)
         self.reanalysis_fp = prms.climate_fp
@@ -727,22 +729,22 @@ class Climate():
             self.elev_vn = self.var_dict['elev']['vn']
 
             # Variable filenames
-            self.var_dict['temp']['fn'] = f'T2M/MERRA2_T2M_{tag}.nc'
-            self.var_dict['rh']['fn'] = f'RH2M/MERRA2_RH2M_{tag}.nc'
-            self.var_dict['sp']['fn'] = f'PS/MERRA2_PS_{tag}.nc'
-            self.var_dict['tcc']['fn'] = f'CLDTOT/MERRA2_CLDTOT_{tag}.nc'
-            self.var_dict['LWin']['fn'] = f'LWGAB/MERRA2_LWGAB_{tag}.nc'
-            self.var_dict['SWin']['fn'] = f'SWGDN/MERRA2_SWGDN_{tag}.nc'
-            self.var_dict['vwind']['fn'] = f'V2M/MERRA2_V2M_{tag}.nc'
-            self.var_dict['uwind']['fn'] = f'U2M/MERRA2_U2M_{tag}.nc'
-            self.var_dict['tp']['fn'] = f'PRECTOTCORR/MERRA2_PRECTOTCORR_{tag}.nc'
+            self.var_dict['temp']['fn'] = f'{tag}/T2M_{tag}.nc'
+            self.var_dict['rh']['fn'] = f'{tag}/RH2M_{tag}.nc'
+            self.var_dict['sp']['fn'] = f'{tag}/PS_{tag}.nc'
+            self.var_dict['tcc']['fn'] = f'{tag}/CLDTOT_{tag}.nc'
+            self.var_dict['LWin']['fn'] = f'{tag}/LWGAB_{tag}.nc'
+            self.var_dict['SWin']['fn'] = f'{tag}/SWGDN_{tag}.nc'
+            self.var_dict['vwind']['fn'] = f'{tag}/V2M_{tag}.nc'
+            self.var_dict['uwind']['fn'] = f'{tag}/U2M_{tag}.nc'
+            self.var_dict['tp']['fn'] = f'{tag}/PRECTOTCORR_{tag}.nc'
             self.var_dict['elev']['fn'] = f'MERRA2constants.nc4'
-            self.var_dict['bcwet']['fn'] = f'BCWT002/MERRA2_BCWT002_{tag}.nc'
-            self.var_dict['bcdry']['fn'] = f'BCDP002/MERRA2_BCDP002_{tag}.nc'
-            self.var_dict['ocwet']['fn'] = f'OCWT002/MERRA2_OCWT002_{tag}.nc'
-            self.var_dict['ocdry']['fn'] = f'OCDP002/MERRA2_OCDP002_{tag}.nc'
-            self.var_dict['dustwet']['fn'] = f'DUWT003/MERRA2_DUWT003_{tag}.nc'
-            self.var_dict['dustdry']['fn'] = f'DUDP003/MERRA2_DUDP003_{tag}.nc'
+            self.var_dict['bcwet']['fn'] = f'{tag}/BCWT002_{tag}.nc'
+            self.var_dict['bcdry']['fn'] = f'{tag}/BCDP002_{tag}.nc'
+            self.var_dict['ocwet']['fn'] = f'{tag}/OCWT002_{tag}.nc'
+            self.var_dict['ocdry']['fn'] = f'{tag}/OCDP002_{tag}.nc'
+            self.var_dict['dustwet']['fn'] = f'{tag}/DUWT003_{tag}.nc'
+            self.var_dict['dustdry']['fn'] = f'{tag}/DUDP003_{tag}.nc'
         elif prms.reanalysis == 'ERA5-hourly':
             self.reanalysis_fp += 'ERA5/ERA5_hourly/'
 
