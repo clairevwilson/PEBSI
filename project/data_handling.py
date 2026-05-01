@@ -3,6 +3,7 @@ import glob
 import xarray as xr
 import numpy as np
 import pandas as pd
+pd.options.mode.string_storage = "python"
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -558,12 +559,13 @@ class Albedo():
         self.ds = self.ds.squeeze('band')
 
         # get rid of duplicates
+
         ds_mean = self.ds.groupby("time").mean()
         s = self.ds["dtype"].to_series()
         dupes = s.index.duplicated(keep=False)
         s.loc[dupes] = "mean"
         dtype_da = xr.DataArray(
-            s.groupby(level="time").first().values,
+            s.groupby(level="time").first().values.astype(object),
             dims=["time"],
             coords={"time": s.groupby(level="time").first().index},
         )

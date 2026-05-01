@@ -59,11 +59,12 @@ if 'trace' in socket.gethostname():
 else:
     base_fp = 'C:/Users/cvw30/Research/Output/'
     home_fp = 'C:/Users/cvw30/Research/'
-sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_25_check_0.nc'
+sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_15_MO_0.nc'
 all_df_fn = base_fp + f'ddf/all_{args.surface}_{args.time_res}_df.csv' # 
 temp_fn = base_fp + f'ddf/temp_GLACIERSITE_{args.surface}_{args.time_res}_df.csv'
 groups_fn = base_fp + f'ddf/glacier_groups.json'
-model_fn = base_fp + 'ddf/albedo_model.joblib'
+# model_fn = base_fp + 'ddf/albedo_model.joblib'
+model_fn = '../data/albedo_emulator.joblib'
 
 # define colors for plotting
 colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
@@ -172,7 +173,7 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
             ds_bc = ds_bcd + ds_bcw
             ds_bc = ds_bc.drop_vars(['forecast_reference_time','level_height','model_level_number','sigma'])
 
-        for site in site_dict[glacier]: #  tqdm(site_dict[glacier], desc=f'{glacier} site loop', leave=False):
+        for site in tqdm(site_dict[glacier], desc=f'{glacier} site loop', leave=False):
             site_temp_fn = temp_fn.replace('GLACIER',glacier).replace('SITE', site)
             if os.path.exists(site_temp_fn):
                 df = pd.read_csv(site_temp_fn, index_col=0, parse_dates=True)
