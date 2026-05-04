@@ -391,8 +391,6 @@ class Climate():
         
         # load index into memory
         self.time_idx = self.cds.get_index('time')
-        self.get_idx = lambda t: self.time_idx.get_indexer(
-            [t], method='nearest')[0]
         
         # load data into np.arrays for fast indexing
         self.data = {var: self.cds[var].values for var in self.cds.data_vars}
