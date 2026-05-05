@@ -611,7 +611,7 @@ class Climate():
         based on a linear lapse rate
         """
         # CONSTANTS
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
 
         # get elevation of the original temperature data
         if 'temp' in self.args.bias_vars and 'temp' not in self.measured_vars:
@@ -649,7 +649,7 @@ class Climate():
         Corrects surface pressure according to barometric law
         """
         # CONSTANTS
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
         GRAVITY = self.args.gravity
         R_GAS = self.args.R_gas
         MM_AIR = self.args.molarmass_air
@@ -686,7 +686,7 @@ class Climate():
         """
         # CONSTANTS
         SIGMA_SB = self.args.sigma_SB
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
         SPH = self.args.seconds_per_hour
         CTOK = self.args.celsius_to_kelvin
 

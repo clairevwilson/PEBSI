@@ -1,12 +1,19 @@
-start_date: '2020-04-01'
+start_date: '2013-04-01'
 end_date: '2025-09-01'
 use_aws: false
-store_data: true
+store_data: false
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
 ksp_BC: 1
 ksp_OC: 1
-dust_factor: 50
+dust_factor: 20
+bias_vars: ['temp']
+
+# ratio_DU_bin1: 0.05
+# ratio_DU_bin2: 0.15
+# ratio_DU_bin3: 0.5
+# ratio_DU_bin4: 0.25
+# ratio_DU_bin5: 0.05
 # method_snicar: 'emulator'
 
 # # WIND RUNS

@@ -30,7 +30,7 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
 cmd_args = parser.parse_args()
-out_str = 'drydust50x_nodoy'
+out_str = 'test'
 
 # Sites to run in parallel
 site_dict = {
