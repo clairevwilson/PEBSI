@@ -377,6 +377,7 @@ def initialize_model(args):
 
     # adjust elevation-dependent variables
     climate.adjust_to_elevation()
+    climate.load()
 
     # load data for emulator, if needed
     if args.method_snicar == 'emulator':

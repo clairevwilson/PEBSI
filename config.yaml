@@ -11,8 +11,8 @@
 store_data: false
 debug: false
 output_fn: 'test_simulation'
-start_date: '2024-04-20'
-end_date: '2024-08-20'
+start_date: '2013-04-20'
+end_date: '2013-04-21'
 # method_snicar: 'emulator'
 ksp_BC: 1
 ksp_OC: 1
@@ -20,8 +20,8 @@ ksp_OC: 1
 # ================================================
 #                SITE INFORMATION
 # ================================================
-rgi_id: '01.01104'
-site: 'Lemon-1'
+rgi_id: '01.09162'
+site: 'EC'
 # lat: 58.36547
 # lon: -134.35807
 

@@ -392,13 +392,18 @@ class Climate():
         # load index into memory
         self.time_idx = self.cds.get_index('time')
         
-        # load data into np.arrays for fast indexing
-        self.data = {var: self.cds[var].values for var in self.cds.data_vars}
-        
         # done getting climate
         time_elapsed = time.time()-self.start_time
         if self.args.debug:
             print(f'~ Loaded climate dataset in {time_elapsed:.1f} seconds ~')
+        return
+    
+    def load(self):
+        """
+        Loads data in np.array format for fast indexing
+        """
+        # create dict of data
+        self.data = {var: self.cds[var].values for var in self.cds.data_vars}
         return
 
     def adjust_to_elevation(self, temp=True, precip=True, sp=True, LWin=True):

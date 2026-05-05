@@ -40,7 +40,7 @@ class massBalance():
             Class object frmo pebsi.climate
         """
         # CONSTANTS
-        PRECIP_FACTOR = float(args.kp)
+        PRECIP_FACTOR = args.kp
 
         # set up model time
         self.dt = args.dt
@@ -402,7 +402,7 @@ class massBalance():
         args = self.args
 
         # CONSTANTS
-        WET_C = float(self.args.wet_grain_C)
+        WET_C = self.args.wet_grain_C
         PI = np.pi
         RFZ_GRAINSIZE = args.rfz_grainsize
         FIRN_GRAINSIZE = args.firn_grainsize
@@ -1048,7 +1048,7 @@ class massBalance():
             c2 = args.Boone_c2
             c3 = args.Boone_c3
             c4 = args.Boone_c4
-            c5 = float(self.args.Boone_c5)
+            c5 = args.Boone_c5
 
             for layer in snowfirn_idx:
                 weight_above = GRAVITY*np.sum(lm[:layer]+lw[:layer])
