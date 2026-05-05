@@ -157,19 +157,28 @@ class MassBalance():
         dates = {}
         for year in years:
             dates[year] = []
-            spring_dates = df.loc[(df['Year'] == year), 'spring_date'].values
-            spring_date_mode = spring_dates[np.argmax(np.unique(spring_dates.astype(str), return_counts=True)[1])]
-            spring_date = spring_date_mode if type(spring_date_mode) != str else f'{year}-04-01'
+            raw_spring = df.loc[df['Year'] == year, 'spring_date'].values
+            clean_spring = raw_spring[~pd.isna(raw_spring)]
+
+            if clean_spring.size > 0:
+                s_vals, s_counts = np.unique(clean_spring.astype(str), return_counts=True)
+                spring_date_mode = s_vals[np.argmax(s_counts)]
+                spring_date = spring_date_mode if isinstance(spring_date_mode, str) else f'{year}-04-01'
+            else:
+                spring_date = f'{year}-04-01'
             
-            fall_dates =  df.loc[(df['Year'] == year), 'fall_date'].values
-            fall_date_mode = fall_dates[np.argmax(np.unique(fall_dates.astype(str), return_counts=True)[1])]
-            fall_date = fall_date_mode if type(fall_date_mode) != str else f'{year}-09-01'
+            raw_fall = df.loc[df['Year'] == year, 'fall_date'].values
+            clean_fall = raw_fall[~pd.isna(raw_fall)]
+            if clean_fall.size > 0:
+                vals, counts = np.unique(clean_fall.astype(str), return_counts=True)
+                fall_date_mode = vals[np.argmax(counts)]
+                fall_date = fall_date_mode if isinstance(fall_date_mode, str) else f'{year}-09-01'
+            else:
+                fall_date = f'{year}-09-01'
             dates[year].append(spring_date)
             dates[year].append(fall_date)
-
         # for site in df['site_name'].unique():
         #     print(site, df.loc[df['site_name'] == site, 'ba'].count())
-
         df = df.loc[df['site_name'] == self.site]
 
         # determine if there are sufficient seasonal data to compare summer/winter
@@ -189,7 +198,7 @@ class MassBalance():
                     if year-1 in dates:
                         annual_starts.append(dates[year - 1][1])
                     else:
-                        annual_starts.append(f'{year-1}-09-01')
+                        annual_starts.append(f'{year-1}/09/01')
                 else:
                     annual_starts.append(start) 
             annual_starts = pd.to_datetime(annual_starts)
@@ -215,10 +224,10 @@ class MassBalance():
                     first_last = df.loc[df['Year'] == year_0]
                     df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
                 elif year_0 in dates:
-                    # if that year is in the dictionary built previously
-                    first_last = df_mb.iloc[[0]].copy()
-                    first_last.iloc[0, :] = np.nan
-                    first_last.loc[first_last.index[0], 'fall_date'] = dates[year_0][1]
+
+                    first_last = pd.DataFrame(df_mb.iloc[[0]].values, columns=df_mb.columns)
+                    first_last.at[0, 'fall_date'] = dates[year_0][1]
+                    
                     df_last = pd.concat([first_last, df.iloc[index_data[1:] - 1]])
                 else:
                     # otherwise, need to guess
@@ -232,9 +241,9 @@ class MassBalance():
                     df_mb = df_mb.iloc[1:]
 
             # pull out winter ablation/summer accumulation
-            this_winter_abl = df_mb['winter_ablation'].values
-            past_summer_acc = df_last['summer_accumulation'].values
-            this_summer_acc = df_mb['summer_accumulation'].values
+            this_winter_abl = df_mb['winter_ablation'].values.astype(float)
+            past_summer_acc = df_last['summer_accumulation'].values.astype(float)
+            this_summer_acc = df_mb['summer_accumulation'].values.astype(float)
             past_summer_acc[np.isnan(past_summer_acc)] = 0
             this_summer_acc[np.isnan(this_summer_acc)] = 0
             this_winter_abl[np.isnan(this_winter_abl)] = 0
@@ -574,7 +583,7 @@ class Albedo():
         self.ds.attrs['crs'] = f'EPSG:{self.epsg}'
         return
 
-    def get_model_albedo(self, ds, months_range=list(range(4, 9))):
+    def get_model_albedo(self, ds, months_range=list(range(4, 9)), snow_only=False):
         valid_steps = np.where((self.time >= ds.time.values[0]) & 
                                  (self.time <= ds.time.values[-1]) &
                                  (pd.to_datetime(self.time).month.isin(months_range)))[0]
@@ -589,7 +598,22 @@ class Albedo():
         self.dtype = self.dtype[valid_steps]
         self.mod = ds.sel(time=self.time, method='nearest').albedo.values
         self.meas = self.data
+
+        if snow_only:
+            self.snow_only()
         return
+    
+    def snow_only(self):
+        snowline = SnowMelt(self.name, self.site, 'Descending')
+        df = snowline.sar_snow['max']
+
+        df.index = pd.to_datetime(df.index).normalize()
+        albedo_dates = pd.to_datetime(self.time).normalize()
+        idx_snow = df.reindex(albedo_dates).fillna(False).values.astype(bool)
+
+        self.time = self.time[idx_snow]
+        self.mod = self.mod[idx_snow]
+        self.meas = self.meas[idx_snow]
 
     def mae(self):
         return np.nanmean(np.abs(self.mod - self.meas))
