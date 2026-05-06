@@ -1195,22 +1195,18 @@ class massBalance():
 
             # check if dm causes negativity
             if layers.lwater[0] + dm < 0: 
-                layer = 0
-                while np.abs(dm) > 0 and layer < layers.nlayers:
-                    # calculate the maximum water loss possible for the current layer
-                    change = min(np.abs(dm), layers.lwater[layer])
-                    layers.lwater[layer] -= change
-                    
-                    # reduce the absolute magnitude of dm
-                    if dm < 0:
-                        dm += change  # increase dm towards 0 when negative
-                    else:
-                        dm -= change  # decrease dm towards 0 when positive
-                    layer += 1
+                # reset evaporation to 0 and accumulate actual mass lost
+                evaporation = 0
+                dm_to_process = np.abs(dm)
                 
-                if layer == layers.nlayers:
-                    # no water is left to handle the remaining dm
-                    evaporation += dm  # add the leftover dm to evaporation
+                layer = 0
+                while dm_to_process > args.mb_threshold and layer < layers.nlayers:
+                    change = min(dm_to_process, layers.lwater[layer])
+                    evaporation += change
+                    layers.lwater[layer] -= change
+                    dm_to_process -= change
+                    layer += 1
+                    
             else:
                 # add water to layer if it doesn't cause negativity
                 layers.lwater[0] += dm
@@ -1234,6 +1230,8 @@ class massBalance():
         ins = deposition + condensation
         outs = sublimation + evaporation + runoff
         change = np.sum(layers.lice + layers.lwater) - initial_mass
+        if np.abs(change - (ins-outs)) >= args.mb_threshold:
+            print(self.time, 'change', change, 'ins', ins, 'outs', outs)
         assert np.abs(change - (ins-outs)) < args.mb_threshold, f'phase change failed mass conservation in {self.output.out_fn}'
         return runoff
       
