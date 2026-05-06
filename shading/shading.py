@@ -209,6 +209,8 @@ class Shading():
             if get_direct:
                 df['dirirrslope'].astype(float).to_csv(self.irr_fp,
                                                 header=f'skyview={self.sky_view}')
+                
+        plt.close('all')
         return
 
     # =================== FUNCTIONS ===================
