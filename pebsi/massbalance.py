@@ -1617,6 +1617,10 @@ class Output():
         self.out_fn = args.output_fp + args.output_fn
         self.args = args
 
+        # create output folder if it doesn't exist
+        if not os.path.exists(args.output_fp):
+            os.mkdir(args.output_fp)
+
         # info needed to create the output file
         self.n_timesteps = len(time)
         zeros = np.zeros([self.n_timesteps,args.max_nlayers])
@@ -2041,6 +2045,8 @@ class Output():
                     if key not in skip_in_config:
                         if type(value) == list:
                             store = ', '.join(value)
+                        elif type(value) == bool:
+                            store = str(value)
                         else:
                             store = value
                         new_attrs[key] = store
