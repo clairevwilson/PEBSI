@@ -49,6 +49,8 @@ def get_args(parse=True):
     # SITE INFORMATION
     parser.add_argument('-id','--rgi_id', type=str, default=None,
                         help='RGI glacier ID')
+    parser.add_argument('-g','--glac_name', type=str, default=None,
+                        help='glacier name')
     parser.add_argument('-site', type=str, default=None,
                         help='site name')
     
@@ -206,8 +208,18 @@ def check_inputs(args):
     ==========
     args : config class
     """
-    # get rgi_id from args
-    rgi_id = args.rgi_id 
+    # open metadata file
+    all_df = pd.read_csv(args.metadata_fn,index_col=0,converters={0: str})
+
+    # if rgi_id was not specified but name was, find the RGI ID from metadata
+    if args.rgi_id == '00.00000' and args.glac_name != 'test':
+        name = args.glac_name
+        assert name in all_df['name'].values, f'Specify either RGI ID or add {name} to {args.metadata_fn}'
+        rgi_id = all_df.loc[all_df['name'] == args.glac_name].index.values[0]
+        args.rgi_id = rgi_id
+    else:
+        # get rgi_id from args
+        rgi_id = args.rgi_id 
 
     # open the RGI dataframe
     rgi_region = args.rgi_id.split('.')[0]
@@ -232,7 +244,6 @@ def check_inputs(args):
         rgi_df = pd.DataFrame([])
 
     # BASIC METADATA
-    all_df = pd.read_csv(args.metadata_fn,index_col=0,converters={0: str})
     if rgi_id not in all_df.index:
         # this RGI ID was not found in the metadata file
         if args.glac_name is None:
@@ -377,6 +388,7 @@ def initialize_model(args):
 
     # adjust elevation-dependent variables
     climate.adjust_to_elevation()
+    climate.load()
 
     # load data for emulator, if needed
     if args.method_snicar == 'emulator':
