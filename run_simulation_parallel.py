@@ -30,20 +30,20 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
 cmd_args = parser.parse_args()
-out_str = 'sar_test'
+out_str = 'gulkanawind'
 
 # Sites to run in parallel
 site_dict = {
-    # '01.22193':['K17b','K53',], # KAHILTNA
-    # '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
-    # '01.00570':['AU','B','D'], # ['A','AU','B','D','T','Z'], # GULKANA
-    # '01.09162':['N','B','EC'], # WOLVERINE   
-    # '01.01104':['C','B','D'], # LEMON CREEK
-    # '01.01390':['Taku-1','NWB1','TKG3'], # TAKU       
+    '01.22193':['K17b','K53',], # KAHILTNA
+    '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
+    '01.00570':['AU','B','D'], # ['A','AU','B','D','T','Z'], # GULKANA
+    '01.09162':['N','B','EC'], # WOLVERINE   
+    '01.01104':['C','B','D'], # LEMON CREEK
+    '01.01390':['Taku-1','NWB1','TKG3'], # TAKU       
 }
 
-all_elevs = list(range(500, 2000, 100)) + list(range(2000, 4400, 500))
-site_dict['01.15645'] = ['K'+str(elev) for elev in all_elevs]
+# all_elevs = list(range(500, 2000, 100)) + list(range(2000, 4400, 500))
+# site_dict['01.15645'] = ['K'+str(elev) for elev in all_elevs]
 rgi_ids = list(site_dict.keys())
 
 dust_doys = {'kahiltna':169, 'kennicott':151, 'gulkana':180, 'wolverine':177, 'lemon_creek':172, 'taku':175}

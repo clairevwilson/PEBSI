@@ -735,6 +735,9 @@ class Climate():
         # get quantile mapping .csv filename
         method = 'quantile_mapping'
         map_glac = self.mapping_glacier
+        if var == 'wind':
+            print('HARD CODED GULKANA WIND')
+            map_glac = 'gulkana'
         bias_fn = self.args.bias_fn.format(m=method, v=var, g=map_glac)
 
         # need to use file generated without a lapse rate for temperature
