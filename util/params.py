@@ -137,7 +137,7 @@ ukesm_vn = (                                # Name of var in UKESM data
         'particles_due_to_{t}_deposition')   
 
 # BIAS CORRECTION
-bias_vars = ['temp']                        # Vars to correct by quantile mapping (only applied to reanalysis data)
+bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
 qm_glac_name = None                         # Name of glacier used to prepare quantile mapping
 
 # ====================================================================================================================
@@ -204,9 +204,11 @@ initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 
 # <<<<<< Climate downscaling >>>>>>
 wind_factor = 1             # Wind factor [-]
 kp = 2.25                   # Precipitation factor [-]
+dust_factor = 1             # Dust factor [-]
+snow_free_doy = 100         # Julian day of year after which to apply dust_factor [-]
 precgrads = {} # 'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
 precgrad = 0                # Precipitation gradient with elevation [% m-1] 
-lapse_rate = -6.5            # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
+lapse_rate = -6.5           # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_ice = 0.47           # Ice albedo [-] 
 albedo_firn = 0.4           # Albedo of firn [-]
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
