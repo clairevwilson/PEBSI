@@ -28,7 +28,7 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 # processing the output runs from the model. 
 # Toggle process_runs = FALSE first to run simulations, 
 # then rerun with process_runs = TRUE
-process_runs = True
+process_runs = False
 # ===================================================
 
 # Load .csv with params for each site
@@ -43,7 +43,7 @@ args.enddate = '2025-06-01 00:00'
 args.store_data = True              # Ensures output is stored
 args.use_AWS = False
 if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+    prms.output_fp = '/trace/group/rounce/cvwilson/Output/paper2/'
 for site in sites:
     glacier = 'wolverine' if site == 'EC' else 'gulkana' if site in ['Z','T'] else 'kahiltna'
     if not os.path.exists(prms.output_fp + glacier + site + '_sensitivity'):
@@ -172,7 +172,7 @@ def pack_vars(args):
                     print(f'Beginning {args_run.out} with {mean_temp} temp, {sum_tp} tp')
 
                 else:
-                    out_fn = f'{glacier}{site}_sensitivity/{glacier}{site}_2025_10_06_{var_str}_0.nc'
+                    out_fn =  f'{glacier}{site}_sensitivity/{glacier}{site}_{run_date}_{var_str}_0.nc' # f'{glacier}{site}_sensitivity/{glacier}{site}_2025_10_06_{var_str}_0.nc'
                     packed_vars[set_no].append((out_fn, var_str, glacier, site))
 
                 # Check if moving to the next set of runs
@@ -217,7 +217,7 @@ def process_runs_parallel(list_inputs):
         out_fn, var_str, glacier, site = input
         ds = xr.open_dataset(prms.output_fp + out_fn)
         timeres='1d'
-        forcing_fn = f'/trace/group/rounce/cvwilson/Firn/Forcings/{glacier.lower()}{site}/{glacier.lower()}{site}_{timeres}_{var_str}_forcings.csv'
+        forcing_fn = f'/trace/group/rounce/cvwilson/Firn/Forcings/{glacier.lower()}{site}/{glacier.lower()}{site}_{timeres}_{var_str}_forcings_UPDATED.csv'
 
         # get sublimation from any negative vaporsolid mass fluxes in m w.e.
         ds['vaporsolid'][ds['vaporsolid'] > 0] = 0
