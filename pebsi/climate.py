@@ -389,10 +389,21 @@ class Climate():
             failed_str = ', '.join(failed)
             raise ConfigError(f'Climate missing data from {failed_str}')
         
+        # load index into memory
+        self.time_idx = self.cds.get_index('time')
+        
         # done getting climate
         time_elapsed = time.time()-self.start_time
         if self.args.debug:
             print(f'~ Loaded climate dataset in {time_elapsed:.1f} seconds ~')
+        return
+    
+    def load(self):
+        """
+        Loads data in np.array format for fast indexing
+        """
+        # create dict of data
+        self.data = {var: self.cds[var].values for var in self.cds.data_vars}
         return
 
     def adjust_to_elevation(self, temp=True, precip=True, sp=True, LWin=True):
@@ -605,7 +616,7 @@ class Climate():
         based on a linear lapse rate
         """
         # CONSTANTS
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
 
         # get elevation of the original temperature data
         if 'temp' in self.args.bias_vars and 'temp' not in self.measured_vars:
@@ -643,7 +654,7 @@ class Climate():
         Corrects surface pressure according to barometric law
         """
         # CONSTANTS
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
         GRAVITY = self.args.gravity
         R_GAS = self.args.R_gas
         MM_AIR = self.args.molarmass_air
@@ -680,7 +691,7 @@ class Climate():
         """
         # CONSTANTS
         SIGMA_SB = self.args.sigma_SB
-        LAPSE_RATE = float(self.args.lapse_rate) / 1000 # in K m-1
+        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
         SPH = self.args.seconds_per_hour
         CTOK = self.args.celsius_to_kelvin
 

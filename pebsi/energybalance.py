@@ -47,25 +47,26 @@ class energyBalance():
         CTOK = args.celsius_to_kelvin
 
         # unpack climate variables
-        climateds_now = climate.cds.sel(time=timestamp)
-        self.tempC = climateds_now['temp'].values
-        self.tp = climateds_now['tp'].values
-        self.sp = climateds_now['sp'].values
-        self.rh = climateds_now['rh'].values
-        self.wind = climateds_now['wind'].values
-        self.tcc = climateds_now['tcc'].values
-        self.SWin_ds = climateds_now['SWin'].values
-        self.SWout_ds = climateds_now['SWout'].values
-        self.albedo_ds = climateds_now['albedo'].values
-        self.LWin_ds = climateds_now['LWin'].values
-        self.LWout_ds = climateds_now['LWout'].values
-        self.NR_ds = climateds_now['NR'].values
-        self.bcdry = climateds_now['bcdry'].values
-        self.bcwet = climateds_now['bcwet'].values
-        self.ocdry = climateds_now['ocdry'].values
-        self.ocwet = climateds_now['ocwet'].values
-        self.dustdry = climateds_now['dustdry'].values
-        self.dustwet = climateds_now['dustwet'].values
+        time_idx = climate.time_idx.get_indexer(
+            [timestamp], method='nearest')[0]
+        self.tempC = climate.data['temp'][time_idx]
+        self.tp = climate.data['tp'][time_idx]
+        self.sp = climate.data['sp'][time_idx]
+        self.rh = climate.data['rh'][time_idx]
+        self.wind = climate.data['wind'][time_idx]
+        self.tcc = climate.data['tcc'][time_idx]
+        self.SWin_ds = climate.data['SWin'][time_idx]
+        self.SWout_ds = climate.data['SWout'][time_idx]
+        self.albedo_ds = climate.data['albedo'][time_idx]
+        self.LWin_ds = climate.data['LWin'][time_idx]
+        self.LWout_ds = climate.data['LWout'][time_idx]
+        self.NR_ds = climate.data['NR'][time_idx]
+        self.bcdry = climate.data['bcdry'][time_idx]
+        self.bcwet = climate.data['bcwet'][time_idx]
+        self.ocdry = climate.data['ocdry'][time_idx]
+        self.ocwet = climate.data['ocwet'][time_idx]
+        self.dustdry = climate.data['dustdry'][time_idx]
+        self.dustwet = climate.data['dustwet'][time_idx]
 
         # time
         self.timestamp = timestamp
@@ -73,9 +74,8 @@ class energyBalance():
         self.iters = 0
 
         # store previous timestep incoming shortwave
-        if timestamp != pd.to_datetime(climate.cds.time.values[0]):
-            last_stamp = timestamp - pd.Timedelta(seconds=self.dt)
-            self.last_SWin_ds = climate.cds.sel(time=last_stamp)['SWin'].values
+        if time_idx != 0:
+            self.last_SWin_ds = climate.data['SWin'][time_idx - 1]
         else:
             self.last_SWin_ds = self.SWin_ds
 
@@ -89,8 +89,10 @@ class energyBalance():
         self.rh = 100 if self.rh > 100 else self.rh
         self.get_roughness(surface.days_since_snowfall,layers)
 
-        # adjust wind speed
+        # apply factors
         self.wind *= float(args.wind_factor)
+        if timestamp.day_of_year > args.snow_free_doy:
+            self.dustdry *= args.dust_factor
 
         # radiation terms
         self.measured_SWin = 'SWin' in climate.measured_vars
