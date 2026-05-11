@@ -81,7 +81,7 @@ def get_args(parse=True):
                         help='glacier for quantile mapping climate data')
     
     # UTILITY
-    parser.add_argument('-task_id',default=-1,type=int,
+    parser.add_argument('-task_id',default=None,
                         help='unique task ID for this job')
     parser.add_argument('-f', '--fff', help='Dummy arg to fool Jupyter', default='1')
 
@@ -471,6 +471,9 @@ def run_model(climate,args,store_attrs=None):
     else:
         print('~ Success: data was not saved ~')
         out = None
+
+    # delete the temp files
+    config.delete_temp_files(args)
     
     # print the final mass balance
     if isinstance(out, xr.Dataset) and args.debug:

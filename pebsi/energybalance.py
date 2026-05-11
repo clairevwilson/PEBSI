@@ -49,7 +49,6 @@ class energyBalance():
         # unpack climate variables
         time_idx = climate.time_idx.get_indexer(
             [timestamp], method='nearest')[0]
-        # climateds_now = climate.cds.isel(time=time_idx)
         self.tempC = climate.data['temp'][time_idx]
         self.tp = climate.data['tp'][time_idx]
         self.sp = climate.data['sp'][time_idx]

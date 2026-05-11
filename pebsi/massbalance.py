@@ -1550,9 +1550,6 @@ class massBalance():
             if self.args.store_data:
                 self.output.store_data()
             print(f'Glacier fully melted on {self.time} in {self.args.output_fn}')
-
-            # delete temporary files
-            self.delete_temp_files()
             
             return True # no glacier remaining
         else:
@@ -1573,24 +1570,6 @@ class massBalance():
         # optionally store spectral albedo
         if self.args.store_bands:
             self.surface.albedo_df.to_csv(self.args.albedo_out_fn.format(s=self.args.site))
-        
-        # delete temporary files
-        self.delete_temp_files()
-        return
-    
-    def delete_temp_files(self):
-        """
-        Deletes any temporary files that were created
-        for parallel runs.
-        """
-        # delete inputs file
-        if os.path.exists(self.surface.snicar_fn):
-            if self.surface.snicar_fn.split('/')[-1] != 'inputs.yaml':
-                os.remove(self.surface.snicar_fn)
-
-        # delete ice spectrum file
-        if os.path.exists(self.surface.ice_spectrum_fn):
-            os.remove(self.surface.ice_spectrum_fn)
         return
 
     def iterable(self, iterable, **kwargs):
@@ -2001,48 +1980,52 @@ class Output():
         corr_str = ', '.join(corr_vars)
         corr_str = 'none' if corr_str == '' else corr_str
         
-        # store new attributes
+        # load the output dataset
         with xr.open_dataset(self.out_fn) as dataset:
             ds = dataset.load()
-            ds = ds.assign_attrs(glacier=args.glac_name,
-                                 id=args.rgi_id,
-                                 elevation=elev,
-                                 site=args.site,
-                                 from_AWS=AWS_str,
-                                 which_AWS=which_AWS,
-                                 from_reanalysis=re_str,
-                                 which_reanalysis=which_re,
-                                 bias_corrected=corr_str,
-                                 sim_start=str(args.start_date),
-                                 sim_end=str(args.end_date),
-                                 model_run_date=str(pd.Timestamp.today()),
-                                 time_elapsed=time_elapsed,
-                                 run_by=args.machine)
-            if args.task_id > -1:
-                ds = ds.assign_attrs(task_id=str(args.task_id))
 
-            # list inputs that would be duplicates or unnecessary
-            skip_in_config = ['store_data','progress_bar','debug',
-                            'dates_from_data','reanalysis',
-                            'bias_vars', 'aws_elev', 'output_fn',
-                            'glac_name', 'site', 'rgi_id',
-                            'start_date','end_date','machine']
+        # store basic attributes
+        ds = ds.assign_attrs(glacier=args.glac_name,
+                                id=args.rgi_id,
+                                elevation=elev,
+                                site=args.site,
+                                from_AWS=AWS_str,
+                                which_AWS=which_AWS,
+                                from_reanalysis=re_str,
+                                which_reanalysis=which_re,
+                                bias_corrected=corr_str,
+                                sim_start=str(args.start_date),
+                                sim_end=str(args.end_date),
+                                model_run_date=str(pd.Timestamp.today()),
+                                time_elapsed=time_elapsed,
+                                run_by=args.machine)
+        if args.task_id > -1:
+            ds = ds.assign_attrs(task_id=str(args.task_id))
 
-            # add args that were specified in config file
-            if args.use_config:
-                import yaml
-                with open(args.config_fn) as f:
-                    config_inputs = yaml.safe_load(f)
-        
-                    new_attrs = {}
-                    for key, value in config_inputs.items():
-                        if key not in skip_in_config:
-                            if type(value) == list:
-                                store = ', '.join(value)
-                            else:
-                                store = value
-                            new_attrs[key] = store
-                ds = ds.assign_attrs(**new_attrs)
+        # list variables from config that can be skipped
+        skip_in_config = ['store_data','progress_bar','debug',
+                        'dates_from_data','reanalysis',
+                        'bias_vars', 'aws_elev', 'output_fn',
+                        'glac_name', 'site', 'rgi_id',
+                        'start_date','end_date','machine']
+
+        # add args that were specified in config file
+        if args.use_config:
+            import yaml
+            with open(args.config_fn) as f:
+                config_inputs = yaml.safe_load(f)
+    
+                new_attrs = {}
+                for key, value in config_inputs.items():
+                    if key not in skip_in_config:
+                        if type(value) == list:
+                            store = ', '.join(value)
+                        elif type(value) == bool:
+                            store = str(value)
+                        else:
+                            store = value
+                        new_attrs[key] = store
+            ds = ds.assign_attrs(**new_attrs)
 
         # save NetCDF
         ds.to_netcdf(self.out_fn)
