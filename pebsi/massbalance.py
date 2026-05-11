@@ -446,21 +446,26 @@ class massBalance():
                     dTdz = (surftemp - layers.ltemp[1]) / layers.ldepth[1]
                     dTdz = np.array([dTdz])
 
-                # direction of temp gradient does not matter
-                dTdz = np.abs(dTdz)
+                try:
+                    # direction of temp gradient does not matter
+                    dTdz = np.abs(dTdz)
 
-                # force values to be within lookup table ranges
-                p[np.where(p < 50)[0]] = 50
-                p[np.where(p > 400)[0]] = 400
-                dTdz[np.where(dTdz > 300)[0]] = 300
-                T[np.where(T < 223.15)[0]] = 223.15
-                T[np.where(T > 273.15)[0]] = 273.15
+                    # force values to be within lookup table ranges
+                    p[np.where(p < 50)[0]] = 50
+                    p[np.where(p > 400)[0]] = 400
+                    dTdz[np.where(dTdz > 300)[0]] = 300
+                    T[np.where(T < 223.15)[0]] = 223.15
+                    T[np.where(T > 273.15)[0]] = 273.15
 
-                # interpolate lookup table at the values of T,dTdz,p
-                ds = prms.grainsize_ds.copy(deep=True)
-                ds = ds.interp(TVals=T.astype(float),
-                            DTDZVals=dTdz.astype(float),
-                            DENSVals=p.astype(float))
+                    # interpolate lookup table at the values of T,dTdz,p
+                    ds = prms.grainsize_ds.copy(deep=True)
+                    ds = ds.interp(TVals=T.astype(float),
+                                DTDZVals=dTdz.astype(float),
+                                DENSVals=p.astype(float))
+                except:
+                    print(self.args.site, dTdz.astype(float))
+                    print(ds)
+                    assert 1==0
                 
                 # extract values
                 diag = np.zeros((n,n,n),dtype=bool)
