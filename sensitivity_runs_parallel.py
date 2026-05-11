@@ -137,7 +137,7 @@ def pack_vars(args):
                     args_run = copy.deepcopy(args_site)
 
                     # Get output name
-                    run_date = '2025_10_21'
+                    run_date = '2026_05_11'
                     args_run.out = f'{glacier}{site}_sensitivity/{glacier}{site}_{run_date}_{var_str}_'
 
                     # Make climate adjustments
@@ -172,9 +172,8 @@ def pack_vars(args):
                     print(f'Beginning {args_run.out} with {mean_temp} temp, {sum_tp} tp')
 
                 else:
-                    n = 0 if var_str in ['tpx1','temp+0'] else 1
-                    run_date = '2025_10_21'
-                    out_fn =  f'{glacier}{site}_sensitivity/{glacier}{site}_{run_date}_{var_str}_{n}.nc' # f'{glacier}{site}_sensitivity/{glacier}{site}_2025_10_06_{var_str}_0.nc'
+                    run_date = '2026_05_11'
+                    out_fn =  f'{glacier}{site}_sensitivity/{glacier}{site}_{run_date}_{var_str}_0.nc' # f'{glacier}{site}_sensitivity/{glacier}{site}_2025_10_06_{var_str}_0.nc'
                     packed_vars[set_no].append((out_fn, var_str, glacier, site))
 
                 # Check if moving to the next set of runs
