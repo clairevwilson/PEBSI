@@ -30,7 +30,7 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 parser = sim.get_args(parse=False)
 parser.add_argument('-n','--n_simultaneous_processes',default=1)
 cmd_args = parser.parse_args()
-out_str = 'gulkanawind'
+out_str = 'base'
 
 # Sites to run in parallel
 site_dict = {
@@ -92,8 +92,7 @@ def pack_vars():
             args_run.snow_free_doy = 0 # dust_doys[glac]
 
             # Store model parameters
-            store_attrs = {'ksp_BC':args_run.ksp_BC, 'ksp_OC':args_run.ksp_OC, 'Sr': args_run.Sr,
-                           'kp':args_run.kp, 'wet_C':args_run.wet_grain_C, 'a_ice':args_run.albedo_ice}
+            store_attrs = {'kp':args_run.kp}
 
             # Pack function ro execute in parallel
             packed_vars[run_no].append((args_run,climate,store_attrs))

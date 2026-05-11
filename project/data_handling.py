@@ -65,6 +65,10 @@ class MassBalance():
             self.get_wgms_data(wgms_df)
         if self.name.replace('_','') in benchmark_glaciers or 'benchmark' in use:
             self.get_benchmark_data(benchmark_fp)
+
+        # get years
+        self.start_year = self.period_starts.year[0]
+        self.end_year = self.period_ends.year[-1]
         
         # ensure everything is in array format
         self.period_starts = np.array(pd.to_datetime(self.period_starts))
@@ -601,6 +605,29 @@ class Albedo():
 
         if snow_only:
             self.snow_only()
+        self.format = 'values'
+        return
+    
+    def get_deltas(self, method='first'):
+        """
+        choose method from 'first', 'max'
+        """
+        dates = self.time 
+
+        for year in np.unique(pd.to_datetime(dates).year):
+            idx = np.where(pd.to_datetime(dates).year == year)[0]
+            if method == 'first':
+                first_mod = self.mod[idx[0]]
+                first_meas = self.meas[idx[0]]
+                self.mod[idx] -= first_mod
+                self.meas[idx] -= first_meas
+
+            elif method == 'max':
+                max_mod = max(self.mod[idx])
+                max_meas = max(self.meas[idx])
+                self.mod[idx] -= max_mod 
+                self.meas[idx] -= max_meas 
+        self.format = 'deltas'
         return
     
     def snow_only(self):
@@ -768,9 +795,13 @@ class Albedo():
             else:
                 ax.scatter(self.meas[idx],mod,color=cmap(norm(year)), marker='.', label=str(year))
 
-        ax.plot([0, 1],[0,1],'k--')
-        ax.set_xlim(0.2, 0.9)
-        ax.set_ylim(0.2, 0.9)
+        if self.format =='values':
+            minval, maxval = (0.2, 0.9)
+        else:
+            minval, maxval = (-0.8, 0)
+        ax.plot([minval, maxval],[minval, maxval],'k--')
+        ax.set_xlim(minval, maxval)
+        ax.set_ylim(minval, maxval)
         ax.set_ylabel('Modeled albedo [-]')
         ax.set_xlabel('Observed albedo [-]')
         ax.tick_params(length=5)

@@ -1,13 +1,15 @@
 start_date: '2012-04-01'
-end_date: '2024-09-01'
+end_date: '2025-09-01'
 use_aws: false
 store_data: true
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
 ksp_BC: 1
-ksp_OC: 0.05
+ksp_OC: 1
 dust_factor: 20
-bias_vars: ['temp','wind']
+bias_vars: 
+  - temp
+# - wind
 constant_freshgrainsize: 54.5
 
 # ratio_DU_bin1: 0.0

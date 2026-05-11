@@ -29,6 +29,6 @@ aws_elev: 1500
 # ================================================
 #                CLIMATE OPTIONS
 # ================================================
-bias_vars: ['temp']
+bias_vars: []
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
