@@ -28,7 +28,7 @@ run_date = str(pd.Timestamp.today()).replace('-','_')[:10]
 # processing the output runs from the model. 
 # Toggle process_runs = FALSE first to run simulations, 
 # then rerun with process_runs = TRUE
-process_runs = True
+process_runs = False
 # ===================================================
 
 # Load .csv with params for each site
@@ -196,21 +196,24 @@ def run_model_parallel(list_inputs):
         start_time = time.time()
 
         # get a unique filename to store the output
-        args = sim.get_output_name(args, climate)
-        if os.path.exists(prms.output_fp+args.out):
-            os.remove(prms.output_fp+args.out)
+        try:
+            args = sim.get_output_name(args, climate)
+            if os.path.exists(prms.output_fp+args.out):
+                os.remove(prms.output_fp+args.out)
 
-        # Run the model
-        massbal = massBalance.massBalance(args,climate)
-        massbal.main()
+            # Run the model
+            massbal = massBalance.massBalance(args,climate)
+            massbal.main()
 
-        # Completed model run: end timer
-        time_elapsed = time.time() - start_time
+            # Completed model run: end timer
+            time_elapsed = time.time() - start_time
 
-        # Store output
-        massbal.output.add_vars()
-        massbal.output.add_basic_attrs(args,time_elapsed,climate)
-        massbal.output.add_attrs(store_attrs)
+            # Store output
+            massbal.output.add_vars()
+            massbal.output.add_basic_attrs(args,time_elapsed,climate)
+            massbal.output.add_attrs(store_attrs)
+        except Exception as e:
+            print('Failed on', args.site, e)
     return
 
 def process_runs_parallel(list_inputs):
