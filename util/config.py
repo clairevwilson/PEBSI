@@ -143,18 +143,19 @@ def get_config(cmd_args):
                 setattr(args, key, value)
 
     # 3: overwrite anything specified in the command line
+    args.cmd_args = []
     for key, value in vars(cmd_args).items():
-        # overwrite non-Boolean variables that are not None in command line
-        if value is not None and not isinstance(value, bool):
-            setattr(args, key, value)
-
-        # special case: qm_glac_name can be None (climate.py handles this)
-        elif key == 'qm_glac_name':
-            setattr(args, key, value)
-        
-        # if the value is a Boolean, only override if it's True
-        elif isinstance(value, bool) and value is True:
-            setattr(args, key, value)
+        # overwrite variables that are not None in command line
+        if value is not None:
+            if isinstance(value, bool):
+                # if the value is a Boolean, only override if it's True
+                if value:
+                    setattr(args, key, value)
+                    args.cmd_args.append(key)
+            else:
+                # strings, numbers, etc. 
+                setattr(args, key, value) 
+                args.cmd_args.append(key)         
 
     args = configure_lookups(args)
     args.ice_spectrum_fn = configure_SNICAR(args)
@@ -164,13 +165,3 @@ def get_config(cmd_args):
         print(f'~ Loaded configs from {args.config_fn}')
 
     return args
-
-def delete_temp_files(args):
-    """
-    Deletes any temporary files that were created
-    for parallel runs.
-    """
-    # delete ice spectrum file
-    if os.path.exists(args.ice_spectrum_fn):
-        os.remove(args.ice_spectrum_fn)
-    return

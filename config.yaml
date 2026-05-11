@@ -14,8 +14,6 @@ output_fn: 'test_simulation'
 start_date: '2013-04-20'
 end_date: '2013-04-21'
 # method_snicar: 'emulator'
-ksp_BC: 1
-ksp_OC: 1
 
 # ================================================
 #                SITE INFORMATION
@@ -29,6 +27,5 @@ aws_elev: 1500
 # ================================================
 #                CLIMATE OPTIONS
 # ================================================
-bias_vars: []
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'

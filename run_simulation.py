@@ -472,8 +472,8 @@ def run_model(climate,args,store_attrs=None):
         print('~ Success: data was not saved ~')
         out = None
 
-    # delete the temp files
-    config.delete_temp_files(args)
+    # delete any temporary files
+    model.output.delete_temp_files()
     
     # print the final mass balance
     if isinstance(out, xr.Dataset) and args.debug:
