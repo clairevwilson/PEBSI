@@ -587,13 +587,15 @@ class Surface():
             inputs['ICE']['LWC'] = [0]*nlayers
 
         # the following variables are constants for the n layers
-        ice_variables = ['LAYER_TYPE','SHP','HEX_SIDE','HEX_LENGTH',
-                         'SHP_FCTR','WATER_COATING','AR','CDOM']
+        ice_variables = ['LAYER_TYPE','HEX_SIDE','HEX_LENGTH',
+                         'SHP_FCTR','WATER_COATING','CDOM']
         # option to change shape in inputs
+        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
+        no_water = lwater[0] < porosity * FRAC_IRREDUC
         shapes = np.ones(nlayers, dtype=int) * 2
-        shapes[(lwater > 0) | (lrefreeze > 0)] = 0
+        shapes[(no_water) | (lrefreeze > 0)] = 0
         aspect_ratios = np.ones(nlayers, dtype=int) * 0.01
-        aspect_ratios[(lwater > 0) | (lrefreeze > 0)] = 0
+        aspect_ratios[(no_water) | (lrefreeze > 0)] = 0
         inputs['ICE']['SHP'] = shapes[idx].tolist()
         inputs['ICE']['AR'] = aspect_ratios[idx].tolist()
         for var in ice_variables:
