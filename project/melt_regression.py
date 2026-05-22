@@ -26,7 +26,7 @@ from data_handling import MassBalance
 # ===========================================================================================
 surface = 'snow'        # ice, snow or both
 hold_constant = None # ('SW_absorbed', 1.31211e-6)
-reprocess_dfs = False   # reprocess individual dataframes?
+reprocess_dfs = True    # reprocess individual dataframes?
 group = 'all'           # all, coastal, continental, accumulation, or ablation
 time_res = 'daily'      # daily or hourly
 penalty = None          # None, L1 or L2
@@ -59,7 +59,7 @@ if 'trace' in socket.gethostname():
 else:
     base_fp = 'C:/Users/cvw30/Research/Output/'
     home_fp = 'C:/Users/cvw30/Research/'
-sim_fn = base_fp + 'ddf/GLACIERSITE_2026_04_15_MO_0.nc'
+sim_fn = base_fp + 'ddf/GLACIERSITE_2026_05_12_base_1.nc'
 all_df_fn = base_fp + f'ddf/all_{args.surface}_{args.time_res}_df.csv' # 
 temp_fn = base_fp + f'ddf/temp_GLACIERSITE_{args.surface}_{args.time_res}_df.csv'
 groups_fn = base_fp + f'ddf/glacier_groups.json'
@@ -74,8 +74,8 @@ colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
 site_dict = {'wolverine':['N','B','EC'],
                 'kahiltna':['K53','K17b'],
                 'kennicott':['GTL','GTH','KC31'],
-                'lemon_creek':['C','D'], # 'B',
-                'taku':['NWB1','MG1','TKG3'],
+                'lemon_creek':['B','C','D'], # 
+                'taku':['NWB1','TKG3'], # 'MG1',
                 'gulkana':['AU','B','D']
                 }
 
@@ -186,7 +186,7 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
                     # must be daily then
                     time_res = '1d'
                     # surface_type = ds['layer_type'].isel(layer=0).resample(time=time_res).min()
-                    snow_depth = ds['layerheight'].where(ds['layertype'] < 2).sum(dim='layer').resample(time=time_res).min() # m
+                    snow_depth = ds['layerheight'].where(ds['layertype'] < 1).sum(dim='layer').resample(time=time_res).min() # m
                     melt = ds['melt'].resample({'time': time_res}).sum() * 1000 # m w.e.
                     positive_temp = ds['airtemp'].resample({'time': time_res}).mean().where(lambda x: x > 0, other=0) # C
                     positive_temp_sum = ds['airtemp'].where(ds['airtemp']>0, other=0).resample({'time': time_res}).sum() / 24 # C
@@ -236,7 +236,7 @@ if reprocess_dfs or not os.path.exists(all_df_fn):
                 # ds_out = ds_out.where(positive_temp > np.nanquantile(positive_temp.values, 0.2)) # avoids small PDDs in early summer
                 # ds_out = ds_out.where(melt > 0.1 * time_res_hours) # avoids small melt timesteps
                 if args.surface == 'snow':
-                    ds_out = ds_out.where(snow_depth > 0.05) # only days with snow or firn
+                    ds_out = ds_out.where(snow_depth > 0.05) # only days with snow
                 elif args.surface == 'ice':
                     ds_out = ds_out.where(snow_depth < 1e-8) # only days with ice 
                 # only include March through October
