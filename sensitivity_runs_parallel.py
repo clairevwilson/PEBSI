@@ -1,5 +1,6 @@
 # import main model functions
 import run_simulation as sim
+import pandas as pd
 # internal imports
 import yaml, os
 import itertools
@@ -11,70 +12,72 @@ base_fp = '/trace/group/rounce/cvwilson/'
 
 # glacier names and their associated sites
 site_dict = {
-    # 'kennicott':['GTH','KC31','GTL'], # KENNICOTT  
-    # 'kahiltna':['K17b','K53',], # KAHILTNA 
-    # 'gulkana':['AU','B','D'], # GULKANA
-    # 'wolverine':['N','B','EC'], # WOLVERINE   
-    # 'lemon_creek':['C','B','D'], # LEMON CREEK
-    # 'taku':['NWB1','TKG3'], # TAKU       
-    'gulkana':['T']
+    'wolverine':['EC'],
+    # 'kahiltna':['KPS','KQU',],
+    # 'gulkana':['T','Z'],
+    # 'gulkana':['T']
 }
 
 # parameters to calibrate
-# params = {'wind_factor':[1, 1.5, 2, 2.5, 3, 3.5]}
-params = {'kp':[1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5],
-    'lapse_rate':[-3.5, -4, -4.5, -5, -5.5, -6, -6.5, -7, -7.5, -8, -8.5, -9]}
-keys = list(params.keys())
-values = list(params.values())
+vars_dict = {
+             'temperature':[0, 0.5, 1, 2],
+             'precipitation':[1, 1.05, 1.1, 1.2],
+             }
+keys = list(vars_dict.keys())
+values = list(vars_dict.values())
+
+df_params = pd.read_csv('firn_params.csv', index_col=0)
 
 def initialize_simulation(input):
     global base_fp
-    i, glacier, site, param_keys, param_values = input
+    i, glacier, site, perturb_var, perturb_val = input
 
     # get file names
     config_fn = base_fp + f'configs/config_{i}.yaml'
     climate_fp = base_fp + 'climate_data/'
-    out_fp = base_fp + 'Output/paper2/recalibrate_T/'
-    params_str = '_'.join([p.replace('_','') + str(v) for p, v in zip(param_keys, param_values)])
-    out_fn = f'grid_{glacier}_{site}_{params_str}_'
+    out_fp = base_fp + f'Output/paper2/{glacier}{site}_sensitivity/'
+    if perturb_var == 'temperature':
+        param = 'temp_perturb'
+        param_str = 'temp+' + str(perturb_val)
+    elif perturb_var == 'precipitation':
+        param = 'tp_perturb'
+        param_str = 'tpx' + str(perturb_val)
+    out_fn = f'{glacier}{site}_{param_str}_redo2_'
 
-    # check what years the mass balance data covers
-    mb = MassBalance(glacier, site)
-    start_year = max(2000, mb.start_year) - 1 # start one year before for spinup
-    end_year = mb.end_year
-
-    # handle quantile mapping glacier for special cases
-    if glacier == 'taku':
-        qm_glac_name = 'lemon_creek'
-    elif glacier == 'kennicott':
-        qm_glac_name = 'gulkana'
+    # define bias vars
+    if glacier != 'kahiltna':
+        bias_vars = ['temp','wind','rh','SWin']
     else:
-        qm_glac_name = glacier
+        bias_vars = ['temp','wind','rh']
+
+    # extract calibrated params
+    kp = float(df_params.loc[site, 'kp'])
+    lapse_rate = float(df_params.loc[site, 'lr'])
     
     # create dict
     config_dict = {
         # Simulation info
         'store_data':True,
         'task_id':i,
-        'start_date':f'{start_year}-04-01',
-        'end_date':f'{end_year}-09-01',
-        'bias_vars':['temp','wind','SWin','rh'],
+        'start_date':'1980-04-01',
+        'end_date':'2025-09-01',
+        'bias_vars':bias_vars,
 
         # Glacier info
         'glac_name':glacier,
         'site':site,
-        'qm_glac_name':qm_glac_name,
-        'constant_freshgrainsize': 54.5,
 
         # Filepaths
         'climate_fp':climate_fp,
         'output_fn':out_fn,
         'output_fp':out_fp,
-    }
 
-    # add parameters to config
-    for param_key, param_value in zip(param_keys, param_values):
-        config_dict[param_key] = param_value
+        # Parameters
+        'kp': kp,
+        'lapse_rate':lapse_rate,
+        param: perturb_val,
+        'constant_freshgrainsize': 54.5
+    }
 
     # dump config to yaml
     with open(config_fn, 'w') as f:
@@ -114,14 +117,15 @@ if __name__ == '__main__':
     for glacier in site_dict:
         for site in site_dict[glacier]:
             # loop parameter combinations
-            for param_values in itertools.product(*values):
-                # initialize the model in series
-                initial_input = (i, glacier, site, keys, param_values)
-                sim_inputs = initialize_simulation(initial_input)
-                i += 1
+            for key in keys:
+                for val in vars_dict[key]:
+                    # initialize the model in series
+                    initial_input = (i, glacier, site, key, val)
+                    sim_inputs = initialize_simulation(initial_input)
+                    i += 1
 
-                # append the initialized climate and args
-                tasks.append(sim_inputs)
+                    # append the initialized climate and args
+                    tasks.append(sim_inputs)
 
     # execute the model in parallel
     with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
