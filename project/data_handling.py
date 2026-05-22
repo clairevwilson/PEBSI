@@ -213,6 +213,7 @@ class MassBalance():
             self.period_ends = annual_ends[no_nans]
             self.data = np.array(annual_data[no_nans])
             self.dataset = 'annual'
+            self.elev_annual = df.iloc[index_data]['elevation'].values[no_nans]
 
         else:
             # sufficient winter data to separate winter and summer periods
@@ -281,7 +282,7 @@ class MassBalance():
             self.elevation = df['elevation'].mean()
         return
     
-    def plot_mb(self, mod_label='Modeled'):
+    def plot_mb(self, mod_label='Modeled', savefig=False):
         self.colors = colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
               '#F77808','#298282','#999999','#FF89B0','#427801']
         
@@ -308,6 +309,8 @@ class MassBalance():
         ax.plot(np.nan, np.nan, color=colors[0], label=mod_label)
         ax.set_title(f'{self.name} {self.site} {self.dataset} mass balance')
         ax.legend()
+        if savefig:
+            plt.savefig(savefig, dpi=300, bbox_inches='tight')
         return fig, ax
 
 class SnowMelt():
@@ -504,7 +507,7 @@ class Albedo():
         # open dataframes
         metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
         glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
-        self.albedo_fp = base_fp + '../../rs/albedo/'
+        self.albedo_fp = base_fp + '../../rs/albedo/' # updated/
 
         # find the site location lat/lon
         self.site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')
@@ -531,7 +534,7 @@ class Albedo():
                 use_list = self.use
 
         # get filename for this glac_no
-        albedo_fns = [self.albedo_fp + f'{num}/{num}_{data}.nc' for data in use_list]
+        albedo_fns = [self.albedo_fp + f'{num}/{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
 
         # build dataset
         self.data = []
@@ -544,6 +547,11 @@ class Albedo():
             crs = ds.spatial_ref.attrs['crs_wkt']
             self.epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
 
+            # filter to the glacier extent
+            # self.mask = ds['dem_shadow_mask'].astype(bool)
+            # ds = ds.where(self.mask)
+
+            # convert coordinates
             ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True).to_dataset()
             ds['dtype'] = ('time', np.array([dtype]*len(ds.time.values)).flatten())    
             if self.ds is None:
@@ -572,7 +580,6 @@ class Albedo():
         self.ds = self.ds.squeeze('band')
 
         # get rid of duplicates
-
         ds_mean = self.ds.groupby("time").mean()
         s = self.ds["dtype"].to_series()
         dupes = s.index.duplicated(keep=False)
@@ -608,7 +615,7 @@ class Albedo():
         self.format = 'values'
         return
     
-    def get_deltas(self, method='first'):
+    def get_deltas(self, method='max'):
         """
         choose method from 'first', 'max'
         """
@@ -642,6 +649,22 @@ class Albedo():
         self.mod = self.mod[idx_snow]
         self.meas = self.meas[idx_snow]
 
+    def get_dates(self, dates):
+        # reshape dates and format
+        if len(dates) == 1:
+            dates = np.array([dates])
+        if len(dates.shape) == 1:
+            dates = np.array(dates).reshape(-1, 1)
+        
+        # find closest index in self.time to each date in dates
+        idx_closest = np.argmin(np.abs(dates - self.time), axis=1)
+        idx_closest = np.unique(idx_closest)
+
+        mod_idx = self.mod[idx_closest]
+        meas_idx = self.meas[idx_closest]
+        time_idx = self.time[idx_closest]
+        return time_idx, mod_idx, meas_idx
+
     def mae(self):
         return np.nanmean(np.abs(self.mod - self.meas))
     
@@ -666,10 +689,11 @@ class Albedo():
             time = pd.to_datetime(time)
             if full:
                 valid_count = ds['albedo'].notnull().sum(dim=('x','y'))
-                max_count = valid_count.max().values
+                max_count = self.mask.sum().values
 
                 # identify time steps that meet the requirement
                 good_times = valid_count / max_count >= full_threshold
+                assert good_times.sum() > 0, f'No {full_threshold*100}% full timesteps were found'
 
                 # extract the subset of times that pass the filter
                 filtered_times = ds.time.where(good_times, drop=True)
