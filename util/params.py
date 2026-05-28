@@ -140,6 +140,10 @@ ukesm_vn = (                                # Name of var in UKESM data
 bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
 qm_glac_name = None                         # Name of glacier used to prepare quantile mapping
 
+# PERTURBATIONS
+temp_perturb = 0                            # Additive factor to apply to model temperature
+tp_perturb = 1                              # Multiplicative factor to apply to precipitation
+
 # ====================================================================================================================
 #                                            MODEL PHYSICS OPTIONS
 # ====================================================================================================================
@@ -170,6 +174,7 @@ method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (unte
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
+option_accel_grains = False             # Accelerate wet grain metamorphosis?
 option_uniform_ice = False              # Uniform size for ice bins?
 option_uniform_snow = False             # Uniform size for snow bins?
 

@@ -1,243 +1,148 @@
-"""
-This script executes a grid search in parallel over
-multiple parameters. These parameters can be specified
-in the params dict below. It is set up to perform the
-search over two parameters for the first PEBSI publication
-(Boone c5 densification parameter and kp precipitation
-factor) but with minor edits more parameters can be added.
-
-@author: clairevwilson
-"""
-
-# Built-in libraries
-import os
-import time
-import copy
-import traceback
-import pickle
-from multiprocessing import Pool
-# External libraries
-import pandas as pd
-import xarray as xr
-# Internal libraries
+# import main model functions
 import run_simulation as sim
-import util.params as prms
-import pebsi.massbalance as mb
-from shop.processing.objectives import *
+# internal imports
+import yaml, os
+import itertools
+import pickle
+from concurrent.futures import ProcessPoolExecutor
+# data handling
+from project.data_handling import MassBalance
 
-# OPTIONS
-repeat_run = True   # True if restarting an already begun run
-# Define sets of parameters
-params = {'c5':[ 0.014,0.016,0.018,0.02,0.022,0.024], # grid search used in JoG paper
-          'kp':[1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]}
-param_1, param_2 = list(params.keys())
+base_fp = '/trace/group/rounce/cvwilson/'
 
-# Read command line args
-parser = sim.get_args(parse=False)
-parser.add_argument('-run_type', default='long', type=str)
-args = parser.parse_args()
-n_processes = args.n_simultaneous_processes
+# glacier names and their associated sites
+site_dict = {
+    # DDF
+    # 'kennicott':['GTH','KC31','GTL'], # KENNICOTT  
+    # 'kahiltna':['K17b','K53',], # KAHILTNA 
+    # 'gulkana':['AU','B','D'], # GULKANA
+    # 'wolverine':['N','B','EC'], # WOLVERINE   
+    # 'lemon_creek':['C','B','D'], # LEMON CREEK
+    # 'taku':['NWB1','TKG3'], # TAKU  
 
-# =============== PARALLELIZATION ===============
-# Determine number of runs for each process
-n_runs = 1
-for param in list(params.keys()):
-    n_runs *= len(params[param])
-print(f'Beginning {n_runs} model runs on {n_processes} CPUs')
+    # FIRN
+    'gulkana':['T', 'Z'],
+    'wolverine':['EC'],
+    'kahiltna':['KPS', 'KQU']
+}
 
-# Check if we need multiple (serial) runs per (parallel) set
-if n_runs <= n_processes:
-    n_runs_per_process = 1
-    n_process_with_extra = 0
-else:
-    n_runs_per_process = n_runs // n_processes  # Base number of runs per CPU
-    n_process_with_extra = n_runs % n_processes    # Number of CPUs with one extra run
+# parameters to calibrate
+params = {
+    'wind_factor':[0.5, 1, 1.5, 2, 2.5, 3, 3.5],
+    'lapse_rate':[-3, -6.5, -9]
+    # 'lapse_rate':[-3.5, -4, -4.5, -5, -5.5, -6, -6.5, -7, -7.5, -8, -8.5, -9],
+}
 
-# Parse list for inputs to Pool function
-packed_vars = [[] for _ in range(n_processes)]
-run_no = 0  # Counter for runs added to each set
-set_no = 0  # Index for the parallel process
+keys = list(params.keys())
+values = list(params.values())
 
-# =================== MODEL ARGS ===================
-# Store all variables
-args.store_data = True
-prms.store_vars = ['MB','layers','temp','EB']
+# open pre calibrated parameters dict
+with open('project/best_firn_params.pkl', 'rb') as f:
+    params_dict = pickle.load(f)
 
-# Get timing for 2024 or long run
-if args.run_type == '2024': # Short AWS run
-    args.use_AWS = True
-    prms.AWS_fn = '../climate_data/AWS/Processed/gulkana2024.csv'
-    prms.store_vars = ['MB','EB','layers','temp']
-    args.startdate = pd.to_datetime('2024-04-18 00:00:00')
-    args.enddate = pd.to_datetime('2024-08-20 00:00:00')
-else: # Long MERRA-2 run
-    args.use_AWS = False
-    prms.store_vars = ['MB','layers','temp','EB']
-    args.startdate = pd.to_datetime('2019-04-20 00:00:00')
-    args.enddate = pd.to_datetime('2025-08-20 00:00:00')
+def initialize_simulation(input):
+    global base_fp
+    i, glacier, site, param_keys, param_values = input
 
-# =================== QUANTILE MAPPING ===================
-# Find the coordinates of all the available weather stations
-all_available = ['gulkana','lemon_creek','wolverine']
-coords_available = {}
-vars_available = {}
-for glac in all_available:
-    glac_df = pd.read_csv(f'data/by_glacier/{glac}/site_constants.csv',index_col='site')
-    lat = glac_df.loc['center','lat']
-    lon = glac_df.loc['center','lon']
-    coords_available[glac] = (lat, lon)
-    vars_available[glac] = []
-    for fn in os.listdir('data/bias_adjustment/'):
-        if glac in fn:
-            var = fn.split(glac)[-1].split('_')[1].split('.')[0]
-            if var not in vars_available[glac]:
-                vars_available[glac].append(var)
+    # get file names
+    config_fn = base_fp + f'configs/config_{i}.yaml'
+    climate_fp = base_fp + 'climate_data/'
+    out_fp = base_fp + 'Output/paper2/recalibrate_' + site +'/'
+    params_str = '_'.join([p.replace('_','') + str(v) for p, v in zip(param_keys, param_values)])
+    out_fn = f'grid_{glacier}_{site}_{params_str}_hourlygrains_'
+    if os.path.exists(out_fp + out_fn+'0.nc'):
+        os.remove(out_fp + out_fn+'0.nc')
 
-# Find the coordinates of the site about to be run
-meta_df = pd.read_csv('data/glacier_metadata.csv',index_col=0,converters={0: str})
-run_glacier = meta_df.loc[args.glac_no]['name']
-site_df = pd.read_csv(f'data/by_glacier/{run_glacier}/site_constants.csv',index_col='site')
-run_lat, run_lon = (site_df.loc[args.site, 'lat'], site_df.loc[args.site, 'lon'])
+    # check what years the mass balance data covers
+    mb = MassBalance(glacier, site, min_n_winter=0)
+    start_year = max(2000, mb.start_year) - 1 # start one year before for spinup
+    end_year = mb.end_year
+    end_date = f'{end_year}-09-30' if glacier == 'kahiltna' else f'{end_year}-09-01'
 
-# Find the nearest available point to the run lat/lon
-pts = np.array(list(coords_available.values()))
-distances = np.hypot(pts[:, 0] - run_lat, pts[:,1] - run_lon)
-nearest_qm_glac = all_available[np.argmin(distances)]
+    # handle quantile mapping glacier for special cases
+    if glacier == 'taku':
+        qm_glac_name = 'lemon_creek'
+    elif glacier == 'kennicott':
+        qm_glac_name = 'gulkana'
+    else:
+        qm_glac_name = glacier 
 
-# Store in args
-args.qm_glac_name = nearest_qm_glac 
-# prms.bias_vars = vars_available[nearest_qm_glac]
-prms.bias_vars = ['temp']
+    bias_vars = ['temp','rh']
+    if glacier != 'kahiltna':
+        bias_vars.append('SWin')
+    
+    # create dict
+    config_dict = {
+        # Simulation info
+        'store_data':True,
+        'task_id':i,
+        'start_date':f'{start_year}-04-01',
+        'end_date':end_date,
+        'bias_vars':bias_vars,
 
-# =================== PRECIPITATION FACTOR ===================
-# Pre-determined precipitation factor
-kp = site_df.loc[args.site, 'kp']
-if np.isnan(kp):
-    kp = 2.5 # 1
+        # Glacier info
+        'glac_name':glacier,
+        'site':site,
+        'qm_glac_name':qm_glac_name,
+        'constant_freshgrainsize': 54.5,
 
-# =================== OUTPUT ===================
-# Create output directory
-if 'trace' in prms.machine:
-    prms.output_fp = '/trace/group/rounce/cvwilson/Output/'
+        # Filepaths
+        'climate_fp':climate_fp,
+        'output_fn':out_fn,
+        'output_fp':out_fp,
+    }
 
-# Create the folder to store the data
-date = str(pd.Timestamp.today()).replace('-','_')[5:10]
-n_today = 0
-out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
-while os.path.exists(prms.output_fp + out_fp):
-    n_today += 1
-    out_fp = f'{date}_{run_glacier}_{args.site}_{n_today}/'
-os.mkdir(prms.output_fp + out_fp)
+    # add parameters to config
+    for param_key, param_value in zip(param_keys, param_values):
+        config_dict[param_key] = param_value
 
-# ============== INITIALIZE LOOP ==============
-# Transform params to strings for comparison
-param_1, param_2 = list(params.keys())
-for key in params:
-    for v,value in enumerate(params[key]):
-        params[key][v] = str(value)
+    # dump config to yaml
+    with open(config_fn, 'w') as f:
+        yaml.dump(config_dict, f, sort_keys=False)
 
-# Storage for failed runs
-all_runs = []
-missing_fn = prms.output_fp + out_fp + 'missing.txt'
+    # read command-line args and specify this config file
+    args = sim.get_args()
+    args.config_fn = config_fn
+    args.use_config = True
 
-# =================== CORE ===================
-# Loop through parameters
-for p1 in params[param_1]:
-    for p2 in params[param_2]:
-        # Copy over args
-        args_run = copy.deepcopy(args)
+    # initialize the model
+    climate, args = sim.initialize_model(args)
+    return climate, args
 
-        # !!!!!!!!!!!!!!!!!!!!!!!
-        # USER MUST MANUALLY SET THESE PARAMETER NAMES
-        args_run.lapse_rate = -6.5
-        args_run.kp = p2
-        args_run.Boone_c5 = p1
+def run_single_simulation(input):
+    # unpack climate and args
+    climate, args = input 
 
-        # Set identifying output filename
-        args_run.out = out_fp + f'grid_{date}_set{set_no}_run{run_no}_'
-        all_runs.append((args_run.site, p1, p2, args_run.out))
-
-        # Get the climate
-        climate_run, args_run = sim.initialize_model(args_run)
-
-        # Handle BC fraction
-        # climate_run.cds['ocwet'] *= float(p1)
-        # climate_run.cds['bcwet'] *= float(p1)
-        # climate_run.cds['ocdry'] *= float(p1)
-        # climate_run.cds['bcdry'] *= float(p1)
-
-        # Specify attributes for output file
-        store_attrs = {'lapse_rate':args_run.lapse_rate, 'C1':args_run.wet_grain_C,
-                       'c5':args_run.Boone_c5,'kp':args_run.kp,
-                       'ksp_BC':args_run.ksp_BC,'wet':'F = np.exp(0.01*(layers.ldensity.copy()[idx] - 150))'}
-
-        # Set task ID for SNICAR input file
-        args_run.task_id = set_no
-        args_run.run_id = run_no
-
-        # Store model inputs
-        packed_vars[set_no].append((args_run,climate_run,store_attrs))
-
-        # Check if moving to the next set of runs
-        n_runs_set = n_runs_per_process + (1 if set_no < n_process_with_extra else 0)
-        if run_no == n_runs_set - 1:
-            set_no += 1
-            run_no = -1
-
-        # Advance counter
-        run_no += 1
-
-def run_model_parallel(list_inputs):
-    global outdict
-    # Loop through the variable sets
-    for inputs in list_inputs:
-        # Unpack inputs
-        args,climate,store_attrs = inputs
-
-        # Check if model run should be performed
-        if not os.path.exists(prms.output_fp + args.out + '0.nc'):
-            try:
-                # Start timer
-                start_time = time.time()
-
-                # Get unique filename
-                args = sim.get_output_name(args, climate)
-
-                # Initialize the mass balance / output
-                massbal = mb.massBalance(args,climate)
-
-                # Add attributes to output file in case it crashes
-                if args.store_data:
-                    massbal.output.add_attrs(store_attrs)
-
-                # Run the model
-                massbal.main()
-
-                # End timer
-                time_elapsed = time.time() - start_time
-
-                # Store output
-                massbal.output.add_vars()
-                massbal.output.add_basic_attrs(args,time_elapsed,climate)
-
-            except Exception as e:
-                print('An error occurred at site',args.site,'with',store_attrs,' ... removing',args.out)
-                traceback.print_exc()
-                os.remove(prms.output_fp + args.out + '0.nc')
+    try:
+        # run the model
+        sim.run_model(climate, args)
+    except Exception as e:
+        # print failure message if an error occurred
+        print(args.glac_name, args.site, f'failed with {e}')
+    finally:
+        # remove temp file even if failed 
+        if os.path.exists(args.config_fn):
+            os.remove(args.config_fn)
     return
 
-# =================== EXECUTE ===================
-# Run model in parallel
-with Pool(n_processes) as processes_pool:
-    processes_pool.map(run_model_parallel,packed_vars)
-    
-missing = []
-for run in all_runs:
-    fn = run[-1]
-    if not os.path.exists(prms.output_fp + fn + '0.nc'):
-        missing.append(run)
-n_missing = len(missing)
+if __name__ == '__main__':
+    # initialize storage for tasks
+    tasks = []
+    i = 0
 
-# Store missing as .txt
-np.savetxt(missing_fn,np.array(missing),fmt='%s',delimiter=',')
-print(f'Finished grid search at site {args.site} with {n_missing} failed: saved to {missing_fn}')
+    # loop glaciers and sites
+    for glacier in site_dict:
+        for site in site_dict[glacier]:
+            # loop parameter combinations
+            for param_values in itertools.product(*values):
+                # initialize the model in series
+                initial_input = (i, glacier, site, keys, param_values)
+                sim_inputs = initialize_simulation(initial_input)
+                i += 1
+
+                # append the initialized climate and args
+                tasks.append(sim_inputs)
+
+    # execute the model in parallel
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        executor.map(run_single_simulation, tasks)

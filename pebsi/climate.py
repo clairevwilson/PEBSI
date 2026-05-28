@@ -245,10 +245,10 @@ class Climate():
         
         # get reanalysis data geopotential
         z_fp = self.reanalysis_fp + self.var_dict['elev']['fn']
-        zds = xr.open_dataarray(z_fp)
-        zds = zds.sel({self.lat_vn:lat,self.lon_vn:lon},method='nearest')
-        zds = self.check_units('elev',zds)
-        self.reanalysis_elev = zds.isel(time=0).values.ravel()[0]
+        with xr.open_dataarray(z_fp) as zds:
+            zds = zds.sel({self.lat_vn:lat,self.lon_vn:lon},method='nearest')
+            zds = self.check_units('elev',zds)
+            self.reanalysis_elev = zds.isel(time=0).values.ravel()[0]
         
         # initiate variables
         all_data = {}
@@ -373,6 +373,9 @@ class Climate():
                 else:
                     self.apply_ukesm_dep_ratio()
 
+        # apply climatic perturbations
+        self.apply_perturbations()
+
         # check all variables are there
         failed = []
         for var in self.all_vars:
@@ -402,18 +405,25 @@ class Climate():
         """
         Loads data in np.array format for fast indexing
         """
+        print(f'{self.args.site} with mean LWin', self.cds.LWin.mean().values/3600, 'temp', self.cds.temp.mean().values, 'precip', self.cds.tp.sum().values, flush=True)
         # create dict of data
         self.data = {var: self.cds[var].values for var in self.cds.data_vars}
         return
+    
+    def apply_perturbations(self):
+        """
+        Applies additive temperature perturbation
+        or multiplicative precipitation perturbation.
+        """
+        self.cds['temp'].values += self.args.temp_perturb
+        self.cds['tp'].values *= self.args.tp_perturb
+        return
 
-    def adjust_to_elevation(self, temp=True, precip=True, sp=True, LWin=True):
+    def adjust_to_elevation(self):
         """
         Adjusts elevation-dependent climate variables 
         (temperature, precip, surface pressure, and
         incoming longwave radiation).
-        
-        Vars can be toggled using
-        temp / precip / sp / LWin = False
         """
         # Set copies of un-edited variables
         self.original_temp = self.cds.temp.copy(deep=True).values
@@ -422,20 +432,23 @@ class Climate():
         self.original_LWin = self.cds.LWin.copy(deep=True).values
 
         # TEMPERATURE: correct according to lapse rate
-        if temp:
-            self.temp_to_elevation()
+        self.temp_to_elevation()
             
         # PRECIP: correct according to precipitation gradient
-        if precip:
-            self.precip_to_elevation()
+        self.precip_to_elevation()
 
         # SURFACE PRESSURE: correct according to barometric law
-        if sp:
-            self.sp_to_elevation()
+        self.sp_to_elevation()
 
         # LONGWAVE: correct with elevation-dependent emissivity 
-        if LWin:
-            self.LWin_to_elevation()  
+        if self.args.temp_perturb > 0:
+            # account for perturbed air temperature
+            LAPSE_RATE = self.args.lapse_rate / 1000
+            elev_change = LAPSE_RATE*(self.reanalysis_elev - self.temp_elev)
+            temp_LW_elev = self.original_temp - self.args.temp_perturb + elev_change
+            self.LWin_to_elevation(temp_LW_elev)
+        else:
+            self.LWin_to_elevation()
         return
     
     def check_units(self,var,ds):
@@ -589,6 +602,10 @@ class Climate():
         self.cds['ocdry'] *= ratio_oc
         self.cds['dustdry'] *= RATIO_DUST
         self.cds['dustwet'] *= RATIO_DUST
+
+        # close datasets
+        ds_bc.close()
+        ds_oc.close()
         return
     
     def apply_ukesm_dep_ratio(self):
@@ -608,6 +625,9 @@ class Climate():
 
                 # apply to climate dataset
                 self.cds[species+deptype] *= ratio 
+
+                # close the dataset
+                ds_bc.close()
         return
 
     def temp_to_elevation(self):
@@ -624,7 +644,8 @@ class Climate():
             temp_elev = self.temp_elev
         else:
             temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.reanalysis_elev
-        new_temp = self.original_temp + LAPSE_RATE*(self.elev - temp_elev)
+        self.temp_elev = temp_elev
+        new_temp = self.original_temp + LAPSE_RATE*(self.elev - self.temp_elev)
 
         # update temperature in the cds
         self.cds.temp.values = new_temp.ravel()
@@ -685,9 +706,9 @@ class Climate():
         temperature and vapor pressure) and applying
         this difference to the MERRA-2 longwave data.
 
-        Temperature sensitivity runs require input temp 
-        at the MERRA-2 elevation. Base PEBSI does not use
-        arg temp_LW_elev
+        If the temperature has been perturbed, the
+        temperature fed here should be at the
+        elevation of the MERRA-2 grid cell.
         """
         # CONSTANTS
         SIGMA_SB = self.args.sigma_SB
@@ -832,6 +853,11 @@ class Climate():
                                            'long_name': '2-meter_relative_humidity'}
         )
 
+        # close datasets
+        ds_qv.close()
+        ds_temp.close()
+        ds_sp.close()
+
         # drop QV data and store the RH dataset
         ds_rh = ds_rh.drop_vars('QV2M')
         ds_rh.to_netcdf(fn)
@@ -911,8 +937,10 @@ class Climate():
         # determine filetag for MERRA2 lat/lon file
         eg_fn = args.merra2_eg_fn
         assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
-        ds_global = xr.open_dataset(eg_fn)
-        ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, method='nearest')
+
+        with xr.open_dataset(eg_fn) as ds_global:
+            ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, 
+                                       method='nearest').load()
         self.flat = f'{ds_closest.lat.values:.1f}'
         self.flon = f'{ds_closest.lon.values:.1f}'
         tag = args.merra2_filetag if args.merra2_filetag else f'{self.flat}_{self.flon}'

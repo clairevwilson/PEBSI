@@ -7,16 +7,15 @@ by the model.
 
 @author: clairevwilson
 """
-import yaml
+import yaml, os
 import types
 import util.params as prms
 
 import xarray as xr
 import numpy as np
+import pandas as pd
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
-import joblib
-
 class Config:
     def __init__(self):
         return
@@ -44,14 +43,51 @@ def configure_lookups(args):
     args.interp_dr0 = RegularGridInterpolator(
         grain_size_dims, ds.dr0mat.values, method='linear')
     
-    # store args.wvs as a numpy array
+    # convert args.wvs from list to numpy array
     args.wvs = np.array(args.wvs)
 
     # load ML algorithm for albedo
     if args.method_snicar == 'emulator':
+        import joblib
         args.SNICAR_emulator = joblib.load(args.emulator_fn)
     return args
 
+def configure_SNICAR(args):
+    # 1: INPUT FILE
+    # get filename of input file
+    if args.method_snicar == 'bioSNICAR':
+        base_fn = args.biosnicar_input_fn
+    elif args.method_snicar == 'SNICARfx':
+        base_fn = args.snicarfx_input_fn
+    else:
+        # nothing to initialize
+        return
+
+    # open the input and copy it to memory
+    with open(base_fn, 'r') as f:
+        input = yaml.safe_load(f)
+
+    # store the SNICAR input dict to args
+    args.snicar_inputs = input
+
+    # 2: COPY BACKGROUND ICE SPECTRUM FILE
+    df_clean_ice = pd.read_csv(args.clean_ice_fn,names=[''])
+
+    # find albedo of the base spectrum from the filename
+    albedo_string = args.clean_ice_fn.split('bba')[-1].split('.')[0]
+    bba = int(albedo_string) / (10 ** len(albedo_string))
+
+    # scale the new spectrum by the ice albedo
+    ice_point_spectrum = df_clean_ice * args.albedo_ice / bba
+
+    # create new name for ice spectrum
+    clean_ice_fn = args.clean_ice_fn.split('/')[-1]
+    ice_spectrum_fn = args.clean_ice_fn.replace(clean_ice_fn,f'ice_spectrum_{args.task_id}{args.site}.csv')
+
+    # store new spectrum (will be deleted after run completion)
+    df_spectrum = pd.DataFrame(ice_point_spectrum)
+    df_spectrum.to_csv(ice_spectrum_fn, index=False, header=False)
+    return ice_spectrum_fn
 
 def get_config(cmd_args):
     """
@@ -107,20 +143,22 @@ def get_config(cmd_args):
                 setattr(args, key, value)
 
     # 3: overwrite anything specified in the command line
+    args.cmd_args = []
     for key, value in vars(cmd_args).items():
-        # overwrite non-Boolean variables that are not None in command line
-        if value is not None and not isinstance(value, bool):
-            setattr(args, key, value)
-
-        # special case: qm_glac_name can be None (climate.py handles this)
-        elif key == 'qm_glac_name':
-            setattr(args, key, value)
-        
-        # if the value is a Boolean, only override if it's True
-        elif isinstance(value, bool) and value is True:
-            setattr(args, key, value)
+        # overwrite variables that are not None in command line
+        if value is not None:
+            if isinstance(value, bool):
+                # if the value is a Boolean, only override if it's True
+                if value:
+                    setattr(args, key, value)
+                    args.cmd_args.append(key)
+            else:
+                # strings, numbers, etc. 
+                setattr(args, key, value) 
+                args.cmd_args.append(key)         
 
     args = configure_lookups(args)
+    args.ice_spectrum_fn = configure_SNICAR(args)
 
     # print debug statement
     if args.debug and args.use_config:

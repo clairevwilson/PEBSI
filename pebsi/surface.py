@@ -35,15 +35,12 @@ class Surface():
         # get the SNICAR function from input
         if args.method_snicar in ['bioSNICAR']:
             self.run_SNICAR = self.run_bioSNICAR
-            self.snicar_base_fn = args.biosnicar_input_fn
-            self.snicar_fn = args.biosnicar_input_fn
+            self.initialize_bioSNICAR()
         elif args.method_snicar in ['SNICARfx']:
             self.run_SNICAR = self.run_SNICARfx 
-            self.snicar_base_fn = args.snicarfx_input_fn
-            self.snicar_fn = args.snicarfx_input_fn
+            self.initialize_SNICARfx()
         elif args.method_snicar in ['emulator']:
             self.emulator = args.SNICAR_emulator 
-            self.snicar_fn = self.snicar_base_fn = ''
             self.SNICAR_inputs = climate.df_features
         else:
             raise ConfigError('Invalid SNICAR method')
@@ -73,45 +70,6 @@ class Surface():
         if args.store_bands:
             bands = np.arange(0,480).astype(str)
             self.albedo_df = pd.DataFrame(np.zeros((0,480)),columns=bands)
-
-        # get the underlying ice spectrum
-        clean_ice = pd.read_csv(args.clean_ice_fn,names=[''])
-
-        # find albedo of the base spectrum from the filename
-        albedo_string = args.clean_ice_fn.split('bba')[-1].split('.')[0]
-        bba = int(albedo_string) / (10 ** len(albedo_string))
-
-        # scale the new spectrum by the ice albedo
-        ice_point_spectrum = clean_ice * args.albedo_ice / bba
-
-        # name file for ice spectrum
-        clean_ice_fn = args.clean_ice_fn.split('/')[-1]
-        self.ice_spectrum_fn = args.clean_ice_fn.replace(clean_ice_fn,f'ice_spectrum_{args.task_id}{args.site}.csv')
-
-        # store new spectrum (will be deleted after run completion)
-        df_spectrum = pd.DataFrame(ice_point_spectrum)
-        df_spectrum.to_csv(self.ice_spectrum_fn, index=False, header=False)
-
-        # parallel runs need separate input files to access
-        if args.task_id != -1:
-            self.snicar_fn = self.snicar_fn.replace('inputs',f'inputs_{args.task_id}{args.site}')
-        else:
-            self.snicar_fn = self.snicar_fn.replace('inputs',f'inputs_inuse')
-
-        # check inputs file works
-        if args.method_snicar not in ['emulator']:
-            if not os.path.exists(self.snicar_fn):
-                # no input file: create one from inputs.yaml
-                self.reset_SNICAR()
-            try:
-                # check if SNICAR imports properly
-                with HiddenPrints():
-                    from biosnicar import get_albedo
-                    _,_ = get_albedo.get('adding-doubling',plot=False,validate=False)
-            except:
-                # problem in the SNICAR input file: create a new one
-                self.reset_SNICAR()
-        self.snicar_initialized = False
 
         # need some initial value for cloud cover and annual minimum albedo
         self.tcc = 1
@@ -353,17 +311,15 @@ class Surface():
         from snicarfx.core.config_validator import Config
         
         # open the inputs file        
-        with open(self.snicar_fn, 'r') as f:
-            self.inputs = yaml.safe_load(f)
+        self.inputs = self.args.snicar_inputs
         self.SNICAR = snicarfx_wrapper.run_two_stream
-        self.snicar_initialized = True
 
         # verify the YAML using SNICAR functionality
         # this is the proper way of doing it but has issues:
         # crashes on units being None for LAPs
         #    >>> probably need to ask developer
         # as is, it works if you just open inputs and don't validate
-        # self.inputs = Config.validate_yaml_file(self.snicar_fn).model_dump()
+        # self.inputs = Config.validate_yaml_file(self.args.snicar_fn).model_dump()
         return 
     
     def run_SNICARfx(self,layers,timestamp,
@@ -396,9 +352,6 @@ class Surface():
         spectral_weights : np.ndarray
             Wights of each spectral band
         """
-        # check if we already validated inputs
-        if not self.snicar_initialized:
-            self.initialize_SNICARfx()
         args = self.args 
 
         # CONSTANTS
@@ -485,7 +438,7 @@ class Surface():
         inputs['ICE']['LAYER_TYPE'] = [0]*nlayers
 
         # filepath for ice albedo
-        # list_doc['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
+        # list_doc['PATHS']['SFC'] = self.args.ice_spectrum_fn.split('biosnicar-py/')[-1]
 
         # solar zenith angle
         lat = self.climate.lat
@@ -517,9 +470,7 @@ class Surface():
             from biosnicar import get_albedo
             self.SNICAR = get_albedo.get
 
-        with open(self.snicar_fn, 'r') as f:
-            self.inputs = yaml.safe_load(f)
-        
+        self.inputs = self.args.snicar_inputs
         return
     
     def run_bioSNICAR(self,layers,timestamp,
@@ -552,9 +503,6 @@ class Surface():
         spectral_weights : np.ndarray
             Wights of each spectral band
         """
-        # check if we already validated inputs
-        if not self.snicar_initialized:
-            self.initialize_bioSNICAR()
         args = self.args 
 
         # CONSTANTS
@@ -639,20 +587,22 @@ class Surface():
             inputs['ICE']['LWC'] = [0]*nlayers
 
         # the following variables are constants for the n layers
-        ice_variables = ['LAYER_TYPE','SHP','HEX_SIDE','HEX_LENGTH',
-                         'SHP_FCTR','WATER_COATING','AR','CDOM']
+        ice_variables = ['LAYER_TYPE','HEX_SIDE','HEX_LENGTH',
+                         'SHP_FCTR','WATER_COATING','CDOM']
         # option to change shape in inputs
+        porosity = 1 - layers.lice[0] / (lheight[0]*DENSITY_ICE)
+        no_water = lwater[0] < porosity * FRAC_IRREDUC
         shapes = np.ones(nlayers, dtype=int) * 2
-        shapes[(lwater > 0) | (lrefreeze > 0)] = 0
+        shapes[(no_water) | (lrefreeze > 0)] = 0
         aspect_ratios = np.ones(nlayers, dtype=int) * 0.01
-        aspect_ratios[(lwater > 0) | (lrefreeze > 0)] = 0
+        aspect_ratios[(no_water) | (lrefreeze > 0)] = 0
         inputs['ICE']['SHP'] = shapes[idx].tolist()
         inputs['ICE']['AR'] = aspect_ratios[idx].tolist()
         for var in ice_variables:
             inputs['ICE'][var] = [inputs['ICE'][var][0]] * nlayers
 
         # filepath for ice albedo
-        inputs['PATHS']['SFC'] = self.ice_spectrum_fn.split('biosnicar-py/')[-1]
+        inputs['PATHS']['SFC'] = self.args.ice_spectrum_fn.split('biosnicar-py/')[-1]
 
         # solar zenith angle
         lat = self.climate.lat
@@ -674,33 +624,6 @@ class Surface():
         vis_idx = np.where((args.wvs <= 0.75) & (args.wvs >= 0.4))[0]
         self.vis_a = np.sum(albedo[vis_idx] * spectral_weights[vis_idx]) / np.sum(spectral_weights[vis_idx])
         return albedo, spectral_weights
-    
-    def reset_SNICAR(self):
-        """
-        Checks if SNICAR inputs file is functional.
-        If not, generates a new one from a default
-        file which is never updated.
-
-        Parameters
-        ----------
-        fn : str
-            Filepath to the inputs.yaml file
-        """
-        base_filepath = os.path.join(os.getcwd(), self.snicar_base_fn)
-        id_filepath = os.path.join(os.getcwd(), self.snicar_fn)
-
-        # remove old file if it exists
-        if os.path.exists(id_filepath):
-            os.remove(id_filepath)
-
-        # open the base inputs file
-        with open(base_filepath, 'rb') as src_file:
-            file_contents = src_file.read()
-
-        # copy the base inputs file to fn
-        with open(id_filepath, 'wb') as dest_file:
-            dest_file.write(file_contents)
-        return
     
     def get_surr_albedo(self,layers,timestamp):
         """
