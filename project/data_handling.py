@@ -27,7 +27,7 @@ translate_rgi = {
                  }
 
 class MassBalance():
-    def __init__(self, name, site, use = ''):
+    def __init__(self, name, site, use = '', min_n_winter = 3):
         """ 
         Grabs the timeseries of data to
         compare a model run.
@@ -64,7 +64,7 @@ class MassBalance():
         if self.name.upper() in wgms_glaciers or 'wgms' in use:
             self.get_wgms_data(wgms_df)
         if self.name.replace('_','') in benchmark_glaciers or 'benchmark' in use:
-            self.get_benchmark_data(benchmark_fp)
+            self.get_benchmark_data(benchmark_fp, min_n_winter)
 
         # get years
         self.start_year = self.period_starts.year[0]
@@ -104,8 +104,8 @@ class MassBalance():
             self.idx_summer = range(switch_idx)
             self.idx_winter = range(switch_idx, len(self.period_starts))
 
-        self.mod = mod 
-        self.meas = meas
+        self.mod = np.array(mod)
+        self.meas = np.array(meas)
         assert len(mod) == len(meas)
         return
 
@@ -189,7 +189,9 @@ class MassBalance():
         n_winter_obs = df['bw'].count()
         if n_winter_obs < min_n_winter or 'annual' in self.use:
             # insufficient data to compare seasonal, so grab annual periods
-            index_data = np.where(~np.isnan(df['ba']))[0][1:]
+            index_data = np.where(~np.isnan(df['ba']))[0]
+            if len(index_data) > 1:
+                index_data = index_data[1:]
             check_starts = pd.to_datetime(df.iloc[index_data - 1]['fall_date'].values)
             annual_ends = pd.to_datetime(df.iloc[index_data]['fall_date'].values)
             annual_data = df.iloc[index_data]['ba'].values
@@ -297,13 +299,13 @@ class MassBalance():
             idx_summer = self.idx_summer 
             idx_winter = self.idx_winter
 
-            ax.plot(ends[idx_summer], mod[idx_summer], color=colors[4])
-            ax.plot(ends[idx_summer], meas[idx_summer], color='k', linestyle='--')
-            ax.plot(ends[idx_winter], mod[idx_winter], color=colors[0])
-            ax.plot(ends[idx_winter], meas[idx_winter], color='k', linestyle='--')
+            ax.plot(ends[idx_summer], mod[idx_summer], color=colors[4], marker='.')
+            ax.plot(ends[idx_summer], meas[idx_summer], color='k', linestyle='--', marker='.')
+            ax.plot(ends[idx_winter], mod[idx_winter], color=colors[0], marker='.')
+            ax.plot(ends[idx_winter], meas[idx_winter], color='k', linestyle='--', marker='.')
         else:
-            ax.plot(ends, mod, color=colors[0])
-            ax.plot(ends, meas, color='k', linestyle='--')
+            ax.plot(ends, mod, color=colors[0], marker='.')
+            ax.plot(ends, meas, color='k', linestyle='--', marker='.')
 
         ax.plot(np.nan, np.nan, color='k', linestyle='--', label='Measured')
         ax.plot(np.nan, np.nan, color=colors[0], label=mod_label)

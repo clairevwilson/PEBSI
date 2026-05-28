@@ -1,9 +1,11 @@
-# import main model functions
+# main model functions
 import run_simulation as sim
 import pandas as pd
+import array as xr
 # internal imports
 import yaml, os
 import itertools
+import pickle
 from concurrent.futures import ProcessPoolExecutor
 # data handling
 from project.data_handling import MassBalance
@@ -13,9 +15,8 @@ base_fp = '/trace/group/rounce/cvwilson/'
 # glacier names and their associated sites
 site_dict = {
     'wolverine':['EC'],
-    # 'kahiltna':['KPS','KQU',],
-    # 'gulkana':['T','Z'],
-    # 'gulkana':['T']
+    'kahiltna':['KPS','KQU',],
+    'gulkana':['T','Z'],
 }
 
 # parameters to calibrate
@@ -26,7 +27,9 @@ vars_dict = {
 keys = list(vars_dict.keys())
 values = list(vars_dict.values())
 
-df_params = pd.read_csv('firn_params.csv', index_col=0)
+# open calibrated parameters dict
+with open('project/best_firn_params.pkl', 'rb') as f:
+    params_dict = pickle.load(f)
 
 def initialize_simulation(input):
     global base_fp
@@ -42,17 +45,13 @@ def initialize_simulation(input):
     elif perturb_var == 'precipitation':
         param = 'tp_perturb'
         param_str = 'tpx' + str(perturb_val)
-    out_fn = f'{glacier}{site}_{param_str}_redo2_'
+    out_fn = f'{glacier}{site}_{param_str}_0528_'
 
     # define bias vars
     if glacier != 'kahiltna':
-        bias_vars = ['temp','wind','rh','SWin']
+        bias_vars = ['temp','rh','SWin']
     else:
-        bias_vars = ['temp','wind','rh']
-
-    # extract calibrated params
-    kp = float(df_params.loc[site, 'kp'])
-    lapse_rate = float(df_params.loc[site, 'lr'])
+        bias_vars = ['temp','SWin']
     
     # create dict
     config_dict = {
@@ -73,11 +72,13 @@ def initialize_simulation(input):
         'output_fp':out_fp,
 
         # Parameters
-        'kp': kp,
-        'lapse_rate':lapse_rate,
         param: perturb_val,
         'constant_freshgrainsize': 54.5
     }
+
+    # add calibrated parameters to config
+    for key in params_dict[glacier][site]:
+        config_dict[key] = params_dict[glacier][site][key]
 
     # dump config to yaml
     with open(config_fn, 'w') as f:
@@ -96,9 +97,11 @@ def run_single_simulation(input):
     # unpack climate and args
     climate, args = input 
 
+    success = False
     try:
         # run the model
-        sim.run_model(climate, args)
+        ds = sim.run_model(climate, args)
+        success = True
     except Exception as e:
         # print failure message if an error occurred
         print(args.glac_name, args.site, f'failed with {e}')
@@ -106,6 +109,34 @@ def run_single_simulation(input):
         # remove temp file even if failed 
         if os.path.exists(args.config_fn):
             os.remove(args.config_fn)
+
+    if success:
+        # process the dataset for CFM input
+        timeres='1d'
+        forcing_fp = '/trace/group/rounce/cvwilson/Firn/Forcings/'
+        forcing_fn = glacier.lower() + site + '/' + args.output_fn.replace('.nc','.csv')
+
+        # get sublimation from any negative vaporsolid mass fluxes in m w.e.
+        ds['vaporsolid'][ds['vaporsolid'] > 0] = 0
+        ds['sublim'] = ds['vaporsolid']
+
+        # change units of surftemp from C to K
+        ds['surftemp'] += 273.15
+
+        # resample to the specified resolution with sum (mass balance terms) and mean (surface temp)
+        ds_mb = ds[['melt','accum','rainfall','sublim']].resample(time=timeres).sum()
+        ds_mb *= 1000   # convert m w.e. to kg m-2
+        ds_notmb = ds[['surftemp']].resample(time=timeres).mean()
+
+        # merge datasets and rename
+        data_in = xr.merge([ds_mb, ds_notmb])
+        data_in = data_in.rename_vars({'melt':'SMELT', 'rainfall':'RAIN', 
+                                        'surftemp':'TS', 'accum':'BDOT',
+                                        'sublim':'SUBLIM'}) # , 'surfdens':'RHOS'
+
+        # store data as a .csv       
+        df = data_in[['BDOT','RAIN','TS','SMELT','SUBLIM']].to_dataframe()
+        df.to_csv(forcing_fp + forcing_fn)
     return
 
 if __name__ == '__main__':

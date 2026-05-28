@@ -103,8 +103,7 @@ class massBalance():
             enbal.get_dry_deposition(layers)
 
             # >>> UPDATE GRAIN SIZE <<<
-            if self.args.switch_melt == 2 and layers.nlayers > 2 and time.hour == 0:
-                self.get_grain_size()
+            self.get_grain_size()
 
             # >>> UPDATE DAILY PROPERTIES <<<
             if time.hour == 0:
@@ -408,7 +407,7 @@ class massBalance():
         FIRN_GRAINSIZE = args.firn_grainsize
         ICE_GRAINSIZE = args.ice_grainsize
         CTOK = args.celsius_to_kelvin
-        dt = args.daily_dt
+        dt = args.dt
 
         # get temperatures
         airtemp = enbal.tempC
@@ -498,9 +497,6 @@ class massBalance():
                 # apply a factor to increase grain growth at high density (f_liq is low)
                 F = np.exp(0.01*(layers.ldensity.copy()[idx]))
                 drwet = drwet * F
-            else:
-                # cap runaway wet metamorphosis
-                drwet[drwet > 50] = 50
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet
