@@ -17,6 +17,11 @@ from scipy.optimize import brentq
 import suncalc
 # Internal libraries
 from util.config import ConfigError
+try:
+    import cupy as cp
+    xp = cp 
+except:
+    xp = np
 
 # Make SNICAR find-able
 sys.path.append(os.getcwd()+'/biosnicar-py/')
@@ -27,10 +32,11 @@ class Surface():
     Tracks properties of the surface including
     surface temperature, type, and albedo.
     """ 
-    def __init__(self,layers,time,args,climate):
+    def __init__(self,core, layers):
         # add args and climate to surface class
-        self.args = args
-        self.climate = climate
+        self.args = args = core.args
+        self.climate = climate = core.climate
+        self.dates = climate.dates
 
         # get the SNICAR function from input
         if args.method_snicar in ['bioSNICAR']:
@@ -41,42 +47,36 @@ class Surface():
             self.initialize_SNICARfx()
         elif args.method_snicar in ['emulator']:
             self.emulator = args.SNICAR_emulator 
-            self.SNICAR_inputs = climate.df_features
+            self.SWin_emulator = climate.SW_emulator_input
+            self.PDD_emulator = climate.PDD_emulator_input 
+            self.BC_emulator = climate.BC_emulator_input
         else:
             raise ConfigError('Invalid SNICAR method')
 
         # initialize surface properties
-        self.stemp = args.surftemp_guess
-        self.days_since_snowfall = 0
-        self.snow_timestamp = time[0]
-        self.stype = layers.ltype[0]
+        # all placeholders: will be updated in first timestep
+        N_POINTS = core.sd.n
+        self.days_since_snowfall = xp.zeros(N_POINTS)
+        self.snow_timestamp = xp.zeros(N_POINTS)
+        self.stemp = xp.full(N_POINTS, args.surftemp_guess)
+        self.stype = layers.ltype[:, 0]
+        self.albedo_surr = xp.full(N_POINTS, args.albedo_fresh_snow)
+        self.tcc = xp.ones(N_POINTS)
+        self.min_annual_albedo = xp.ones(N_POINTS)
 
         # set initial albedo based on surface type
         self.albedo_dict = {'snow':args.albedo_fresh_snow,
                             'firn':args.albedo_firn,
                             'ice':args.albedo_ice}
-        self.bba = self.albedo_dict[self.stype]
-        self.vis_a = self.bba # visible albedo is only used for output comparison
+        self.bba = xp.full(N_POINTS, self.albedo_dict[self.stype[0]])
+        self.vis_a = self.bba
+
         # when albedo is a scalar, make spectral_weights a scalar of 1
-        self.albedo = [self.bba]
-        self.spectral_weights = np.ones(1)
-
-        # get shading df and initialize surrounding albedo
-        self.shading_df = pd.read_csv(args.shading_fn,index_col=0)
-        self.shading_df.index = pd.to_datetime(self.shading_df.index)
-        self.albedo_surr = args.albedo_fresh_snow
-
-        # output spectral albedo dataframe
-        if args.store_bands:
-            bands = np.arange(0,480).astype(str)
-            self.albedo_df = pd.DataFrame(np.zeros((0,480)),columns=bands)
-
-        # need some initial value for cloud cover and annual minimum albedo
-        self.tcc = 1
-        self.min_annual_albedo = 1
+        self.albedo = xp.full(N_POINTS, self.bba)
+        self.spectral_weights = xp.ones(N_POINTS)
         return
     
-    def daily_updates(self,layers,timestamp):
+    def daily_updates(self,layers,ti):
         """
         Updates daily-evolving surface properties (grain
         size, surface type and days since snowfall)
@@ -92,9 +92,10 @@ class Surface():
         timestamp : pd.Datetime
             Current timestep
         """
-        self.stype = layers.ltype[0]
-        self.days_since_snowfall = (timestamp - self.snow_timestamp)/pd.Timedelta(days=1)
-        self.get_surr_albedo(layers,timestamp)
+        self.stype = layers.ltype[:, 0]
+        dt_to_day = self.args.daily_dt / self.args.dt
+        self.days_since_snowfall = (ti - self.snow_timestamp) / dt_to_day
+        self.get_surr_albedo(layers, self.dates[ti])
         return
     
     def get_surftemp(self,enbal,layers):

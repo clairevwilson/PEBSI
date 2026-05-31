@@ -20,6 +20,11 @@ from pebsi.layers import Layers
 from pebsi.surface import Surface
 from util.output import Output
 np.set_printoptions(suppress=True)
+try:
+    import cupy as cp
+    xp = cp 
+except:
+    xp = np
 
 class massBalance():
     """
@@ -28,43 +33,45 @@ class massBalance():
     class handles all mass balance equations and 
     terms.
     """
-    def __init__(self,args,climate):
+    def __init__(self, core):
         """
         Initializes the layers and surface classes 
         and model time for the mass balance scheme.
 
         Parameters
         ==========
-        args : command-line arguments
-        climate
-            Class object frmo pebsi.climate
+        core : object
+            PEBSI class object from gpu_simulation
         """
-        # CONSTANTS
-        PRECIP_FACTOR = args.kp
-
-        # set up model time
+        # initialize physics and storage classes
+        args = self.args = core.args
+        climate = self.climate = core.climate 
+        self.sd = core.sd
+        self.output = core.output 
+        self.layers = Layers(core)
+        self.surface = Surface(core, self.layers)
+        
+        # set up temporal and spatial attributes
         self.dt = args.dt
-        self.days_since_snowfall = 0
-        self.time_list = climate.dates
-        self.firn_converted = False
-        self.ice_exposed = False
+        self.time_list = climate.dates 
+        self.N_TIME = len(self.time_list)
+        self.N_POINTS = self.sd.n
 
-        # initialize climate, layers and surface classes
-        self.args = args
-        self.climate = climate
-        self.layers = Layers(climate,args)
-        self.surface = Surface(self.layers,self.time_list,args,climate)
+        # initialize variables (N_POINTS)
+        self.firn_converted = xp.zeros(self.N_POINTS)
+        self.ice_exposed = xp.zeros(self.N_POINTS)  
+        self.days_since_snowfall = xp.zeros(self.N_POINTS)  
+
+        # create timer for simulation progress bar
         self.timer = ProgressTimer(total_steps=len(self.time_list))
 
-        # initialize output class
-        self.output = Output(self.time_list,args)
-
         # initialize mass balance check variables
-        self.previous_mass = np.sum(self.layers.lice + self.layers.lwater)
-        self.lice_before = np.sum(self.layers.lice)
-        self.lwater_before = np.sum(self.layers.lwater)
+        self.previous_mass = xp.sum(self.layers.lice + self.layers.lwater, axis=1)
+        self.lice_before = xp.sum(self.layers.lice, axis=1)
+        self.lwater_before = xp.sum(self.layers.lwater, axis=1)
 
         # update climate variables with args parameters
+        PRECIP_FACTOR = args.kp
         self.climate.cds.tp.values *= PRECIP_FACTOR
         return
     
@@ -83,14 +90,13 @@ class massBalance():
         DENSITY_WATER = args.density_water
 
         # ===== ENTER TIME LOOP =====
-        for time in self.iterable(self.time_list, desc='Main loop'):
+        for time_idx, time in enumerate(self.iterable(self.time_list, desc='Main loop')):
             # >>> INITIALIZE TIMESTEP <<<
-            self.time = time
+            self.time, self.ti = time, time_idx
             self.timer.update()
 
             # initialize the energy balance to unpack climate data for this timestep
-            enbal = energyBalance(self,time)
-            self.enbal = enbal
+            self.enbal = enbal = energyBalance(self, time_idx)
 
             # get rain and snowfall amounts [kg m-2]
             rainfall,snowfall = self.get_precip()
@@ -108,7 +114,7 @@ class massBalance():
             # >>> UPDATE DAILY PROPERTIES <<<
             if time.hour == 0:
                 # surrounding albedo, surface type, days since snowfall
-                surface.daily_updates(layers,time)
+                surface.daily_updates(layers, time_idx)
                 self.days_since_snowfall = surface.days_since_snowfall
 
             if time.hour in args.albedo_TOD and enbal.nanalbedo:
@@ -169,8 +175,6 @@ class massBalance():
             # if ice is first exposed, re-size ice layers
             if len(layers.snow_idx) + len(layers.firn_idx) < 1 and not self.ice_exposed:
                 self.ice_exposed = True 
-                if args.option_uniform_ice:
-                    layers.resize_ice()
 
             # if start of calendar year, reset annual trackers
             if time.day_of_year == 1 and time.hour == 0:
@@ -317,7 +321,7 @@ class massBalance():
             new_dust = enbal.dustwet * enbal.dt
             
             # update new snow timestamp
-            self.surface.snow_timestamp = self.time
+            self.surface.snow_timestamp = self.ti
 
         # check switch for LAPs
         if int(args.switch_LAPs) != 1:

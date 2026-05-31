@@ -18,6 +18,12 @@ import xarray as xr
 # Internal libraries
 from util.config import ConfigError
 
+try:
+    import cupy as cp 
+    xp = cp
+except:
+    xp = np
+
 class Climate():
     """
     Climate-related functions which build the 
@@ -31,7 +37,7 @@ class Climate():
     If use_aws = False, only reanalysis data will 
     be used.
     """
-    def __init__(self,args):
+    def __init__(self, args, sd):
         """
         Initializes glacier information and creates
         the dataset where climate data will be stored.
@@ -46,245 +52,184 @@ class Climate():
         # load args and run information
         self.args = args
         self.dates = pd.date_range(args.start_date,args.end_date,freq='h')
-        self.dates_UTC = self.dates - args.timezone
 
-        # specify glacier and time information
-        self.lat = args.lat
-        self.lon = args.lon
-        self.n_time = len(self.dates)
-        self.elev = args.elevation
+        # handle timezones
+        tz = sd.tz_n.get() if hasattr(sd.tz_n, 'get') else sd.tz_n
+        if len(xp.unique(tz)) == 1:
+            # if all glaciers are in the same timezone, dates_UTC can be 1D
+            self.dates_UTC = self.dates - pd.to_timedelta(int(tz[0]), unit='h')
+        else:
+            # else, need dates_UTC to be a 2D array (points, time)
+            timedelta_col = pd.to_timedelta(tz, unit='h')[:, xp.newaxis]
+            self.dates_UTC = self.dates[xp.newaxis, :] - timedelta_col
+
+        # specify spatial and temporal information
+        self.sd = sd
+        self.n_t = len(self.dates)
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
                             'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
         self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
-        # find median elevation of the glacier from RGI for precip gradient
-        rgi_region = args.rgi_id.split('.')[0]
-        if int(rgi_region) > 0:
-            for fn in os.listdir(args.rgi_fp):
-                # open the attributes .csv for the correct region
-                if fn[:2] == rgi_region and fn[-3:] == 'csv':
-                    rgi_df = pd.read_csv(args.rgi_fp + fn)
-                    rgi_df.index = [f.split('-')[-1] for f in rgi_df['RGIId']]
-            self.median_elev = rgi_df.loc[args.rgi_id,'Zmed']
-        else:
-            self.median_elev = self.elev
+        # define wind reference height [m]
+        args.wind_ref_height = 10 if args.climate_source in ['ERA5-hourly'] else 2
 
-        # grab the name of the glacier of quantile mapping data
-        if str(args.qm_glac_name) != 'None':
-            self.mapping_glacier = args.qm_glac_name
-            if args.debug:
-                print('Using quantile mapping from', self.mapping_glacier)
-        else:
-            self.mapping_glacier = args.glac_name
-        
-        # find elevation of temperature data
-        if 'temp' in args.bias_vars and int(rgi_region) > 0:
-            qm_print = f'Add {self.mapping_glacier} AWS elev to station_elevation or specify in config file'
-            check = self.mapping_glacier in args.station_elevation or args.aws_elev is not None
-            assert check, qm_print  
-            if args.aws_elev is not None:
-                self.temp_elev = args.aws_elev 
-            else:              
-                self.temp_elev = args.station_elevation[self.mapping_glacier]
-        elif int(rgi_region) == 0:
-            self.temp_elev = self.median_elev
-            self.aws_elev = self.temp_elev
-
-        # check if storing the cds
-        self.store_cds = args.store_climate 
-
-        # get data from existing .nc or from AWS/MERRA-2
-        if str(bool(args.input_cds)) != 'False':
-            # open data from existing .nc
-            cds_input_fn = args.cds_input_fn.format(g=args.glac_name, s=args.site)
-            fn_data = args.climate_fp + cds_input_fn
-            if not os.path.exists(fn_data):
-                print(f'Climate data not found: getting new cds and saving to {fn_data}')
-                self.store_cds = True
-                self.cds_output_fn = fn_data
-            else:
-                # load data and tell the model to skip getting climate
-                self.loaded_climate = True
-                cds = xr.open_dataset(fn_data)
-
-                # replace dates with dates from cds
-                args.start_date = pd.to_datetime(cds.time.values[0])
-                args.end_date = pd.to_datetime(cds.time.values[-1])
-                self.dates = pd.date_range(args.start_date,args.end_date,freq='h')
-                self.dates_UTC = self.dates - args.timezone
-                self.n_time = len(self.dates)
-                self.cds = cds
-
-                # check which variables are stored as measured in cds
-                self.measured_vars = [v for v in cds.variables if 'measured' in cds[v].attrs]
-                return
-
-        # did not load dataset so need to make it
-        self.loaded_climate = False
+        # DECIDE HOW TO HANDLE QUANTILE MAPPING ******
+        qm_fns = os.listdir(args.bias_fp)
+        # # grab the name of the glacier of quantile mapping data
+        # if str(args.qm_glac_name) != 'None':
+        #     self.mapping_glacier = args.qm_glac_name
+        #     if args.debug:
+        #         print('Using quantile mapping from', self.mapping_glacier)
+        # else:
+        #     self.mapping_glacier = args.glac_name
+        # 
+        # # find elevation of temperature data
+        # if 'temp' in args.bias_vars and int(rgi_region) > 0:
+        #     qm_print = f'Add {self.mapping_glacier} AWS elev to station_elevation or specify in config file'
+        #     check = self.mapping_glacier in args.station_elevation or args.aws_elev is not None
+        #     assert check, qm_print  
+        #     if args.aws_elev is not None:
+        #         self.temp_elev = args.aws_elev 
+        #     else:              
+        #         self.temp_elev = args.station_elevation[self.mapping_glacier]
+        # elif int(rgi_region) == 0:
+        #     self.temp_elev = self.median_elev
+        #     self.aws_elev = self.temp_elev
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()
         if not self.args.use_aws:
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
-
-        # create empty dataset
-        nans = np.ones(self.n_time)*np.nan
-        self.cds = xr.Dataset(data_vars = dict(
-                SWin = (['time'],nans,{'units':'J m-2'}),
-                SWout = (['time'],nans,{'units':'J m-2'}),
-                albedo = (['time'],nans,{'units':'-'}),
-                LWin = (['time'],nans,{'units':'J m-2'}),
-                LWout = (['time'],nans,{'units':'J m-2'}),
-                NR = (['time'],nans,{'units':'J m-2'}),
-                tcc = (['time'],nans,{'units':'-'}),
-                rh = (['time'],nans,{'units':'%'}),
-                uwind = (['time'],nans,{'units':'m s-1'}),
-                vwind = (['time'],nans,{'units':'m s-1'}),
-                wind = (['time'],nans,{'units':'m s-1'}),
-                winddir = (['time'],nans,{'units':'o'}),
-                bcdry = (['time'],nans,{'units':'kg m-2 s-1'}),
-                bcwet = (['time'],nans,{'units':'kg m-2 s-1'}),
-                ocdry = (['time'],nans,{'units':'kg m-2 s-1'}),
-                ocwet = (['time'],nans,{'units':'kg m-2 s-1'}),
-                dustdry = (['time'],nans,{'units':'kg m-2 s-1'}),
-                dustwet = (['time'],nans,{'units':'kg m-2 s-1'}),
-                temp = (['time'],nans,{'units':'C'}),
-                tp = (['time'],nans,{'units':'m'}),
-                sp = (['time'],nans,{'units':'Pa'})
-                ),
-                coords = dict(time=(['time'],self.dates)))
-            
+        # ***** DECIDE HOW TO HANDLE AWS DATA????
         return
     
-    def get_aws(self,fp):
-        """
-        Loads available AWS data and determines which
-        variables need come from reanalysis data.
+    # def get_aws(self,fp):
+    #     """
+    #     Loads available AWS data and determines which
+    #     variables need come from reanalysis data.
 
-        Parameters
-        ==========
-        fp : str
-            Filepath to the AWS dataset
-        """
-        # load data
-        df = pd.read_csv(fp,index_col=0)
-        df = df.set_index(pd.to_datetime(df.index))
+    #     Parameters
+    #     ==========
+    #     fp : str
+    #         Filepath to the AWS dataset
+    #     """
+    #     # load data
+    #     df = pd.read_csv(fp,index_col=0)
+    #     df = df.set_index(pd.to_datetime(df.index))
 
-        # check dates of data match input dates
-        data_start = pd.to_datetime(df.index.to_numpy()[0])
-        data_end = pd.to_datetime(df.index.to_numpy()[-1])
-        assert self.dates[0] >= data_start, f'Check input dates: start date before range of AWS data ({data_start})'
-        assert self.dates[len(self.dates)-1] <= data_end, f'Check input dates: end date after range of AWS data ({data_end})'
+    #     # check dates of data match input dates
+    #     data_start = pd.to_datetime(df.index.to_numpy()[0])
+    #     data_end = pd.to_datetime(df.index.to_numpy()[-1])
+    #     assert self.dates[0] >= data_start, f'Check input dates: start date before range of AWS data ({data_start})'
+    #     assert self.dates[len(self.dates)-1] <= data_end, f'Check input dates: end date after range of AWS data ({data_end})'
         
-        # reindex in case of MERRA-2 half-hour timesteps
-        new_index = pd.DatetimeIndex(self.dates)
-        index_joined = df.index.join(new_index, how='outer')
-        df = df.reindex(index=index_joined).interpolate().reindex(new_index)
+    #     # reindex in case of MERRA-2 half-hour timesteps
+    #     new_index = pd.DatetimeIndex(self.dates)
+    #     index_joined = df.index.join(new_index, how='outer')
+    #     df = df.reindex(index=index_joined).interpolate().reindex(new_index)
 
-        # get AWS elevation
-        if self.args.aws_elev is not None:
-            self.aws_elev = self.args.aws_elev
+    #     # get AWS elevation
+    #     if self.args.aws_elev is not None:
+    #         self.aws_elev = self.args.aws_elev
 
-        # get the available variables
-        all_aws_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
-                        'NR','LWin','LWout','bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
-        aws_vars = df.columns
-        self.measured_vars = list(set(all_aws_vars) & set(aws_vars))
+    #     # get the available variables
+    #     all_aws_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
+    #                     'NR','LWin','LWout','bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
+    #     aws_vars = df.columns
+    #     self.measured_vars = list(set(all_aws_vars) & set(aws_vars))
 
-        # check if wind direction can be calculated
-        uwind_measured = 'uwind' in aws_vars
-        vwind_measured = 'vwind' in aws_vars
-        if uwind_measured ^ vwind_measured:
-            self.wind_direction = False
-            # print('! Wind speed was input as a scalar. Wind shading is not handled')
-        else:
-            self.wind_direction = True
+    #     # check if wind direction can be calculated
+    #     uwind_measured = 'uwind' in aws_vars
+    #     vwind_measured = 'vwind' in aws_vars
+    #     if uwind_measured ^ vwind_measured:
+    #         self.wind_direction = False
+    #         # print('! Wind speed was input as a scalar. Wind shading is not handled')
+    #     else:
+    #         self.wind_direction = True
         
-        # extract and store data
-        for var in self.measured_vars:
-            self.cds[var].values = df[var].astype(float)
+    #     # extract and store data
+    #     for var in self.measured_vars:
+    #         self.cds[var].values = df[var].astype(float)
 
-        # determine which data variables are still needed from reanalysis
-        need_vars = [e for e in self.all_vars if e not in aws_vars]
+    #     # determine which data variables are still needed from reanalysis
+    #     need_vars = [e for e in self.all_vars if e not in aws_vars]
 
-        # if net radiation was measured, don't need LWin
-        if 'NR' in self.measured_vars:
-            need_vars.remove('LWin')
+    #     # if net radiation was measured, don't need LWin
+    #     if 'NR' in self.measured_vars:
+    #         need_vars.remove('LWin')
 
-        # if wind was input as a scalar, don't need the other direction of wind
-        if not self.wind_direction:
-            if uwind_measured:
-                self.cds['vwind'].values = np.zeros(self.n_time)
-                need_vars.remove('vwind')
-            elif vwind_measured:
-                self.cds['uwind'].values = np.zeros(self.n_time)
-                need_vars.remove('uwind')
-        self.need_vars = need_vars
-        return need_vars
+    #     # if wind was input as a scalar, don't need the other direction of wind
+    #     if not self.wind_direction:
+    #         if uwind_measured:
+    #             self.cds['vwind'].values = np.zeros(self.n_time)
+    #             need_vars.remove('vwind')
+    #         elif vwind_measured:
+    #             self.cds['uwind'].values = np.zeros(self.n_time)
+    #             need_vars.remove('uwind')
+    #     self.need_vars = need_vars
+    #     return need_vars
     
-    def get_reanalysis(self,vars):
+    def get_data(self):
         """
         Fetches reanalysis climate data variables.
-
-        Parameters
-        ==========
-        vars : list-like
-            Variables to be fetched from reanalysis data
         """
         # load time and point data
         dates = self.dates_UTC
-        lat = self.lat
-        lon = self.lon
-        args = self.args
+        sd = self.sd
         
         # interpolate data if time was input on the hour instead of half-hour
-        self.interpolate = dates[0].minute != 30 and args.reanalysis == 'MERRA2'
-        
-        # get reanalysis data geopotential
-        z_fp = self.reanalysis_fp + self.var_dict['elev']['fn']
-        with xr.open_dataarray(z_fp) as zds:
-            zds = zds.sel({self.lat_vn:lat,self.lon_vn:lon},method='nearest')
-            zds = self.check_units('elev',zds)
-            self.reanalysis_elev = zds.isel(time=0).values.ravel()[0]
-        
-        # initiate variables
-        all_data = {}
-        # loop through vars
-        for var in vars:
-            # gather data for each var and add to all_data
-            fn = self.reanalysis_fp + self.var_dict[var]['fn']
-            all_data = self.get_var_data(fn,var,all_data)
+        self.interpolate = dates[0].minute != 30 and self.args.climate_source == 'MERRA2'
 
-        # store data
-        for var in vars:
-            self.cds[var].values = all_data[var].ravel()
+        # get lat/lon DataArrays for indexing spatial data
+        self.point_lats = xr.DataArray(sd.lat_n, dims='point')
+        self.point_lons = xr.DataArray(sd.lon_n, dims='point')
+        
+        # get GCM data geopotential
+        z_fp = self.GCM_fp + self.var_dict['elev']['fn']
+        with xr.open_dataarray(z_fp) as zds:
+            zds = zds.sel({self.lat_vn: self.point_lats, 
+                           self.lon_vn: self.point_lons},method='nearest')
+            zds = self.check_units('elev',zds)
+            self.sd.gcm_elev_n = zds.isel(time=0).values
+        
+        # loop through vars
+        for var in self.need_vars:
+            # gather data for each var and add to all_data
+            region = str(self.args.rgi_region).zfill(2)
+            fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
+            self.get_var_data(fn, var)
         return
     
-    def get_var_data(self, fn, var, result_dict):
+    def get_var_data(self, fn, var):
         # get dates
         dates = self.dates_UTC
         args = self.args
 
         # special check for RH: must be calculated from QV
         if var == 'rh' and not os.path.exists(fn):
-            assert args.reanalysis == 'MERRA2', 'RH conversion is only set up for MERRA2'
+            assert args.climate_source == 'MERRA2', 'RH conversion is only set up for MERRA2'
             self.create_rh2m_ds(fn)
+
+        # special check for deposition variables
         dep_var = 'dry' in var or 'wet' in var
 
-        # open and check units of climate data
-        ds = xr.open_dataset(fn, decode_timedelta=False)
+        # open the dataset for this variable
+        if 'zarr' in fn:
+            ds = xr.open_zarr(fn, decode_timedelta=False, consolidated=False)
+        else:
+            ds = xr.open_dataset(fn, decode_timedelta=False)
 
         # get variable names and lat/lon resolution
         vn = self.var_dict[var]['vn'] 
-        lat_vn, lon_vn = [self.lat_vn,self.lon_vn]
-        lat_res, lon_res = [args.merra_lat_res, args.merra_lon_res]
+        lat_vn, lon_vn = (self.lat_vn, self.lon_vn)
+        lat_res, lon_res = (args.merra_lat_res, args.merra_lon_res)
 
         # light-absorbing particles need special treatment
         if dep_var:
-            if args.reanalysis == 'ERA5-hourly':
+            if args.climate_source == 'ERA5-hourly':
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
@@ -300,7 +245,8 @@ class Climate():
 
         # index by lat and lon and select variable
         if ds.coords[lat_vn].values.size > 1:
-            ds = ds.sel({lat_vn:self.lat,lon_vn:self.lon}, method='nearest')[vn]
+            ds = ds.sel({lat_vn:self.point_lats,
+                         lon_vn:self.point_lons}, method='nearest')[vn]
         else:
             ds = ds[vn]
 
@@ -315,7 +261,7 @@ class Climate():
         if var != 'elev':
             assert dates[0] >= pd.to_datetime(ds.time.values[0]), f'Check input times and {var} data'
             assert dates[-1] <= pd.to_datetime(ds.time.values[-1]), f'Check input times and {var} data'
-            if not dep_var and args.reanalysis == 'ERA5-hourly':
+            if not dep_var and args.climate_source == 'ERA5-hourly':
                 ds = ds.interp(time=dates)
             elif self.interpolate:
                 ds = ds.interp(time=dates)
@@ -323,15 +269,13 @@ class Climate():
                 ds = ds.sel(time=dates)
         
         # make sure the correct grid cell was accessed
-        assert np.abs(ds.coords[lat_vn].values - float(self.lat)) <= lat_res, 'Wrong grid cell was accessed'
-        assert np.abs(ds.coords[lon_vn].values - float(self.lon)) <= lon_res, 'Wrong grid cell was accessed'
+        assert xp.all(xp.abs(ds.coords[lat_vn].values - self.sd.lat_n) <= lat_res), 'Wrong grid cell was accessed'
+        assert xp.all(xp.abs(ds.coords[lon_vn].values - self.sd.lon_n) <= lon_res), 'Wrong grid cell was accessed'
 
         # store result
-        result_dict[var] = ds.values.ravel()
+        setattr(self, var + '_nt', xp.array(ds.transpose('point','time').values))
         ds.close()
-
-        # return the result dict
-        return result_dict
+        return
     
     def check_ds(self):
         """
@@ -343,44 +287,41 @@ class Climate():
         args = self.args
 
         # calculate wind speed and direction from u and v components
-        # ***WINDMAPPER GOES HERE***
-        uwind = self.cds['uwind'].values
-        vwind = self.cds['vwind'].values
-        wind = np.sqrt(np.power(uwind,2)+np.power(vwind,2))
-        winddir = np.arctan2(-uwind,-vwind) * 180 / np.pi
-        self.cds['wind'].values = wind
-        self.cds['winddir'].values = winddir
+        uwind = self.uwind_nt
+        vwind = self.vwind_nt
+        wind = xp.sqrt(xp.power(uwind,2)+xp.power(vwind,2))
+        winddir = xp.arctan2(-uwind,-vwind) * 180 / xp.pi
+        self.wind_nt = wind
+        self.winddir_nt = winddir
 
-        if not self.loaded_climate:
-            if args.reanalysis == 'MERRA2':
-                # correct MERRA-2 variables in inputs list
-                self.bias_vars = [v for v in self.args.bias_vars if v not in self.measured_vars]
-                if self.args.debug and len(self.bias_vars) > 0:
-                    print('~ Applying quantile mapping for:',self.bias_vars)
-                for var in self.bias_vars:
-                    from_MERRA = True if not self.args.use_aws else var in self.need_vars
-                    if from_MERRA:
-                        self.bias_adjust_qm(var)
-            
-            # adjust MERRA-2 deposition by reduction coefficient
-            if args.reanalysis == 'MERRA2' and args.adjust_deposition:
-                self.adjust_dep()
-
-            # apply coefficient to deposition
-            if 'bcdry' in self.need_vars:
-                if not args.deposition_data: 
-                    self.apply_merra_dep_ratio()
-                else:
-                    self.apply_ukesm_dep_ratio()
+        # ****** FIGURE OUT QM
+        # if args.climate_source == 'MERRA2':
+        #     # correct MERRA-2 variables in bias_vars list
+        #     self.bias_vars = [v for v in self.args.bias_vars if v not in self.measured_vars]
+        #     if self.args.debug and len(self.bias_vars) > 0:
+        #         print('~ Applying quantile mapping for:',self.bias_vars)
+        #     for var in self.bias_vars:
+        #         from_MERRA = True if not self.args.use_aws else var in self.need_vars
+        #         if from_MERRA:
+        #             self.bias_adjust_qm(var)
+        
+        # apply coefficients to adjust deposition
+        if not args.deposition_data:
+            # MERRA-2 representative bin --> total deposition
+            self.apply_merra_dep_ratio()
+        else:
+            # UKESM --> MERRA-2
+            self.apply_ukesm_dep_ratio()
 
         # apply climatic perturbations
         self.apply_perturbations()
 
-        # check all variables are there
+        # check all variables are full
         failed = []
+        shape = (self.sd.n, self.n_t)
         for var in self.all_vars:
-            data = self.cds[var].values
-            if np.any(np.isnan(data)):
+            data = getattr(self, var + '_nt')
+            if np.any(np.isnan(data)) or data.shape != shape:
                 failed.append(var)
 
         # can input net radiation instead of incoming LW radiation
@@ -390,10 +331,7 @@ class Climate():
         # print any missing data
         if len(failed) > 0:
             failed_str = ', '.join(failed)
-            raise ConfigError(f'Climate missing data from {failed_str}')
-        
-        # load index into memory
-        self.time_idx = self.cds.get_index('time')
+            raise ConfigError(f'Climate is missing data from {failed_str}')
         
         # done getting climate
         time_elapsed = time.time()-self.start_time
@@ -401,22 +339,13 @@ class Climate():
             print(f'~ Loaded climate dataset in {time_elapsed:.1f} seconds ~')
         return
     
-    def load(self):
-        """
-        Loads data in np.array format for fast indexing
-        """
-        print(f'{self.args.site} with mean LWin', self.cds.LWin.mean().values/3600, 'temp', self.cds.temp.mean().values, 'precip', self.cds.tp.sum().values, flush=True)
-        # create dict of data
-        self.data = {var: self.cds[var].values for var in self.cds.data_vars}
-        return
-    
     def apply_perturbations(self):
         """
         Applies additive temperature perturbation
         or multiplicative precipitation perturbation.
         """
-        self.cds['temp'].values += self.args.temp_perturb
-        self.cds['tp'].values *= self.args.tp_perturb
+        self.temp_nt += self.args.temp_perturb
+        self.tp_nt *= self.args.tp_perturb
         return
 
     def adjust_to_elevation(self):
@@ -426,10 +355,10 @@ class Climate():
         incoming longwave radiation).
         """
         # Set copies of un-edited variables
-        self.original_temp = self.cds.temp.copy(deep=True).values
-        self.original_tp = self.cds.tp.copy(deep=True).values
-        self.original_sp = self.cds.sp.copy(deep=True).values
-        self.original_LWin = self.cds.LWin.copy(deep=True).values
+        self.original_temp = self.temp_nt
+        self.original_tp = self.tp_nt
+        self.original_sp = self.sp_nt
+        self.original_LWin = self.LWin_nt
 
         # TEMPERATURE: correct according to lapse rate
         self.temp_to_elevation()
@@ -444,7 +373,7 @@ class Climate():
         if self.args.temp_perturb > 0:
             # account for perturbed air temperature
             LAPSE_RATE = self.args.lapse_rate / 1000
-            elev_change = LAPSE_RATE*(self.reanalysis_elev - self.temp_elev)
+            elev_change = LAPSE_RATE*(self.sd.gcm_elev_n - self.temp_elev)
             temp_LW_elev = self.original_temp - self.args.temp_perturb + elev_change
             self.LWin_to_elevation(temp_LW_elev)
         else:
@@ -526,82 +455,60 @@ class Climate():
                 raise ConfigError('Unit mismatch')
         return ds
 
-    def store(self):
-        args = self.args
+    # UNUSED: from Coleman's work
+    # def adjust_dep(self):
+    #     """
+    #     Updates deposition based on preprocessed 
+    #     reduction coefficients
+    #     """
 
-        # set output filename for storing .nc
-        if args.cds_output_fn == 'default':
-            cds_fn = self.args.output_fn.replace('.nc','_climate.nc')
-            self.cds_output_fn = args.climate_fp + cds_fn
-        else:
-            self.cds_output_fn = args.climate_fp + args.cds_output_fn
-
-        # store the data source of each variable
-        for var in self.cds.variables:
-            if var in self.measured_vars:
-                # variable from AWS
-                self.cds[var].attrs['source'] = 'AWS'
-            else:
-                # variable from reanalysis
-                self.cds[var].attrs['source'] = args.reanalysis
-
-                # carbon variables could come from a different dataset
-                if args.deposition_data and var in self.carbon_vars:
-                    self.cds[var].attrs['source'] = args.deposition_data
-        
-        # store cds
-        self.cds.to_netcdf(self.cds_output_fn)
-        print(f'Climate dataset saved to {self.cds_output_fn}')
-        return
-
-    def adjust_dep(self):
-        """
-        Updates deposition based on preprocessed 
-        reduction coefficients
-        """
-        print('***Hard-coded MERRA-2 to UK-ESM filepath for deposition adjustment***')
-        fn = self.reanalysis_fp + 'merra2_to_ukesm_conversion_map_MERRAgrid.nc'
-        ds_f = xr.open_dataarray(fn)
-        ds_f = ds_f.sel({self.lat_vn:self.lat,self.lon_vn:self.lon},method='nearest')
-        f = ds_f.mean('time').values.ravel()[0]
-        # To do time-moving monthly factors:
-        # for date in ds_f.time.values:
-        #     # select the reduction coefficient of the current month
-        #     f = ds_f.sel(time=date).values[0]
-        #     # index the climate dataset by the month and year
-        #     month = pd.to_datetime(date).month
-        #     year = pd.to_datetime(date).year
-        #     idx_month = np.where(self.cds.coords['time'].dt.month.values == month)[0]
-        #     idx_year = np.where(self.cds.coords['time'].dt.year.values == year)[0]
-        #     idx = list(set(idx_month)&set(idx_year))
-        #     # update dry and wet BC deposition
-        #     self.cds['bcdry'][{'time':idx}] = self.cds['bcdry'][{'time':idx}] * f
-        #     self.cds['bcwet'][{'time':idx}] = self.cds['bcwet'][{'time':idx}] * f
-        self.cds['bcdry'].values *= f
-        self.cds['bcwet'].values *= f
-        return
+    #     print('***Hard-coded MERRA-2 to UK-ESM filepath for deposition adjustment***')
+    #     fn = self.GCM_fp + 'merra2_to_ukesm_conversion_map_MERRAgrid.nc'
+    #     ds_f = xr.open_dataarray(fn)
+    #     ds_f = ds_f.sel({self.lat_vn:self.lat,self.lon_vn:self.lon},method='nearest')
+    #     f = ds_f.mean('time').values.ravel()[0]
+    #     # To do time-moving monthly factors:
+    #     # for date in ds_f.time.values:
+    #     #     # select the reduction coefficient of the current month
+    #     #     f = ds_f.sel(time=date).values[0]
+    #     #     # index the climate dataset by the month and year
+    #     #     month = pd.to_datetime(date).month
+    #     #     year = pd.to_datetime(date).year
+    #     #     idx_month = np.where(self.cds.coords['time'].dt.month.values == month)[0]
+    #     #     idx_year = np.where(self.cds.coords['time'].dt.year.values == year)[0]
+    #     #     idx = list(set(idx_month)&set(idx_year))
+    #     #     # update dry and wet BC deposition
+    #     #     self.cds['bcdry'][{'time':idx}] = self.cds['bcdry'][{'time':idx}] * f
+    #     #     self.cds['bcwet'][{'time':idx}] = self.cds['bcwet'][{'time':idx}] * f
+    #     self.bcdry_nt *= f
+    #     self.bcwet_nt *= f
+    #     return
     
     def apply_merra_dep_ratio(self):
         args = self.args
         RATIO_DUST = args.ratio_DU3_DUtot
 
-        reg = self.args.rgi_id[:2]
-        fn_bc = args.merra2_laps_fn.format(sp='BC', r=reg)
-        fn_oc = args.merra2_laps_fn.format(sp='OC', r=reg)
+        region = str(self.args.rgi_region).zfill(2)
+        fn_bc = args.merra2_laps_fn.format(sp='BC', r=region)
+        fn_oc = args.merra2_laps_fn.format(sp='OC', r=region)
 
         # open ratio dataset
         ds_bc = xr.open_dataset(args.climate_fp + fn_bc)
         ds_oc = xr.open_dataset(args.climate_fp + fn_oc)
 
         # select ratio at the correct lat/lon
-        ratio_bc = ds_bc['ratio'].sel(lat=self.flat, lon=self.flon, method='nearest').values
-        ratio_oc = ds_oc['ratio'].sel(lat=self.flat, lon=self.flon, method='nearest').values
+        ratio_bc = (ds_bc['ratio'].sel(lat=self.point_lats, 
+                                      lon=self.point_lons, 
+                                      method='nearest')).values.reshape(-1, 1)
+        ratio_oc = ds_oc['ratio'].sel(lat=self.point_lats, 
+                                      lon=self.point_lons, 
+                                      method='nearest').values.reshape(-1, 1)
 
         # apply to dry deposition
-        self.cds['bcdry'] *= ratio_bc 
-        self.cds['ocdry'] *= ratio_oc
-        self.cds['dustdry'] *= RATIO_DUST
-        self.cds['dustwet'] *= RATIO_DUST
+        self.bcdry_nt *= ratio_bc
+        self.ocdry_nt *= ratio_oc
+        self.dustdry_nt *= RATIO_DUST
+        self.dustwet_nt *= RATIO_DUST
 
         # close datasets
         ds_bc.close()
@@ -621,7 +528,8 @@ class Climate():
                 ds_bc = xr.open_dataarray(args.climate_fp + fn)
 
                 # select ratio at the correct lat/lon
-                ratio = ds_bc.sel(lat=self.flat, lon=self.flon, method='nearest').values
+                ratio = ds_bc.sel(lat=self.point_lats, 
+                                  lon=self.point_lons, method='nearest').values
 
                 # apply to climate dataset
                 self.cds[species+deptype] *= ratio 
@@ -643,12 +551,17 @@ class Climate():
             # if temperature was a bias-corrected variable, use pre-set temp_elev
             temp_elev = self.temp_elev
         else:
-            temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.reanalysis_elev
-        self.temp_elev = temp_elev
-        new_temp = self.original_temp + LAPSE_RATE*(self.elev - self.temp_elev)
+            temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.sd.gcm_elev_n
+
+        # format temp and point elev as (, n) arrays
+        self.temp_elev = temp_elev[:, xp.newaxis]
+        point_elev = self.sd.elev_n[:, xp.newaxis]
+
+        # apply lapse rate
+        new_temp = self.original_temp + LAPSE_RATE*(point_elev - self.temp_elev)
 
         # update temperature in the cds
-        self.cds.temp.values = new_temp.ravel()
+        self.temp_nt = new_temp
         return
 
     def precip_to_elevation(self):
@@ -662,12 +575,15 @@ class Climate():
         else:
             PREC_GRAD = self.args.precgrad
 
-        # get elevation of the precipitation data
-        tp_elev = self.median_elev
-        new_tp = self.original_tp*(1+PREC_GRAD*(self.elev-tp_elev))
+        # format tp and point elev as (, n) arrays
+        tp_elev = self.sd.median_elev_n[:, xp.newaxis]
+        point_elev = self.sd.elev_n[:, xp.newaxis]
+
+        # apply precipitation gradient
+        new_tp = self.original_tp*(1+PREC_GRAD*(point_elev-tp_elev))
 
         # update precip in the cds
-        self.cds.tp.values = new_tp.ravel()
+        self.tp_nt = new_tp
         return
 
     def sp_to_elevation(self):
@@ -682,19 +598,23 @@ class Climate():
         CTOK = self.args.celsius_to_kelvin
         
         # get elevation of surface pressure data
-        sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.reanalysis_elev
+        sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.sd.gcm_elev_n
+
+        # format sp and point elev as (, n) arrays
+        sp_elev = sp_elev[:, xp.newaxis]
+        point_elev = self.sd.elev_n[:, xp.newaxis]
 
         # adjust temperature from elevation of the site to elevation of the sp data
-        new_temp = self.cds.temp.values
-        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - self.elev) + CTOK
+        new_temp = self.temp_nt.copy()
+        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - point_elev) + CTOK
 
         # calculate new surface pressure with barometric law
         exponent = -GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE)
         ratio = ((new_temp + CTOK) / temp_sp_elev) ** (exponent)
         new_sp = self.original_sp * ratio
 
-        # update surface pressure in the cds
-        self.cds.sp.values = new_sp.ravel()
+        # update surface pressure array
+        self.sp_nt = xp.array(new_sp)
         return
 
     def LWin_to_elevation(self, temp_LW_elev=False):
@@ -717,11 +637,13 @@ class Climate():
         CTOK = self.args.celsius_to_kelvin
 
         # get temperature and RH data at the site and data location
-        rh = self.cds.rh.values             # RH assumed constant with elevation
-        temp_site = self.cds.temp.values    # Temperature already updated to self.elev
-        LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.reanalysis_elev
+        rh = self.rh_nt                     # RH assumed constant with elevation
+        temp_site = self.temp_nt            # Temperature already updated to self.elev
+
+        # get elevation of longwave data
+        LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.sd.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.elev)
+            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.sd.elev_n)[:, xp.newaxis]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK
@@ -740,7 +662,7 @@ class Climate():
         new_LWin = self.original_LWin + delta_LW
 
         # Update surface pressure in the cds
-        self.cds.LWin.values = new_LWin.ravel()
+        self.LWin_nt = new_LWin
         return
     
     def bias_adjust_qm(self,var):
@@ -766,16 +688,31 @@ class Climate():
         bias_df = pd.read_csv(bias_fn)
         
         # interpolate values according to quantile mapping
-        values = self.cds[var].values
-        adjusted = np.interp(values, bias_df['sorted'], bias_df['mapping'])
+        values = getattr(self, var)
+        adjusted = xp.interp(values, bias_df['sorted'], bias_df['mapping'])
 
         # update values
-        self.cds[var].values = adjusted
+        setattr(self, var, xp.array(adjusted))
         return
     
     def get_emulator_inputs(self):
-        cds = self.cds
-        bc_ds = cds['bcwet'] + cds['bcdry']
+        """
+        Loads the SNICAR emulator inputs.
+        """
+        # sum dry and wet deposition
+        bctot = self.bcwet_nt + self.bcdry_nt
+
+        cds = xr.Dataset(
+            data_vars={
+                'bc': (['point', 'time'], bctot),
+                'temp': (['point', 'time'], self.temp_nt),
+                'SWin': (['point', 'time'], self.SWin_nt)
+            },
+            coords={
+                'time': self.dates,
+                'point': range(self.sd.n)
+            }
+        )
 
         # PDDs
         positive_temp_sum = (cds['temp']
@@ -784,7 +721,7 @@ class Climate():
                              .sum() / 24) # Celcius
         
         # rolling BC
-        bc_rolling = (bc_ds
+        bc_rolling = (cds['bc']
                        .resample(time='1d').sum()
                        .rolling(time=5, min_periods=1).sum() * 3600) # kg m-2
 
@@ -801,21 +738,15 @@ class Climate():
         )
         PDDs_cumsum = (positive_temp_sum.groupby(water_year).cumsum())
 
-        df_features = pd.DataFrame({
-            'PDD_cumsum':PDDs_cumsum.values,
-            'bc_5d_rolling':bc_rolling.values,
-            'SWin':SWin.values
-        }, index=SWin.time.values)
-        
-        self.df_features = df_features 
+        self.SW_emulator_input = xp.array(SWin.values)
+        self.PDD_emulator_input = xp.array(PDDs_cumsum.values)
+        self.BC_emulator_input = xp.array(bc_rolling.values)
         return
     
     def create_rh2m_ds(self, fn):
         """
-        Creates an RH2M (2 m relative humidity) 
-        dataset from specific humidity, air 
-        temperature, and surface pressure datasets
-        from MERRA-2.
+        Calculates 2-m relative humidity from
+        specific humidity (set up for MERRA-2)
 
         Parameters
         ==========
@@ -839,7 +770,7 @@ class Climate():
         esat = self.sat_vapor_pressure(ds_temp[temp_vn].values - CTOK)
 
         # saturation and actual specific humidity vapor pressure
-        ws = 0.622*esat / (ds_sp[sp_vn].values - esat)
+        ws = 0.622 * esat / (ds_sp[sp_vn].values - esat)
         w = ds_qv[qv_vn].values / (1 - ds_qv[qv_vn].values)
 
         # relative humidity as a percentage of saturation humidity
@@ -847,11 +778,11 @@ class Climate():
 
         # create copy dataset and fill with RH data
         ds_rh = ds_qv.copy(deep=True)
-        ds_rh['RH2M'] = xr.DataArray(rh, dims=['time'],
-                                    coords={'time': ds_rh['time'].values},
-                                    attrs={'units':'%', 
-                                           'long_name': '2-meter_relative_humidity'}
-        )
+        ds_rh['RH2M'] = (ds_qv[qv_vn].dims, rh)
+        ds_rh['RH2M'].attrs = {
+            'units': '%', 
+            'long_name': '2-meter_relative_humidity'
+        }
 
         # close datasets
         ds_qv.close()
@@ -860,7 +791,20 @@ class Climate():
 
         # drop QV data and store the RH dataset
         ds_rh = ds_rh.drop_vars('QV2M')
-        ds_rh.to_netcdf(fn)
+
+        # clear encoding
+        ds_rh.encoding = {}
+        for var in ds_rh.variables: ds_rh[var].encoding = {}
+
+        for var in ds_rh.variables:
+            print(var, ds_rh[var].attrs)
+        if 'zarr' in fn:
+            import zarr
+            ds_rh.to_zarr(fn, mode='w', consolidated=False)
+            store = zarr.DirectoryStore(fn)
+            zarr.consolidate_metadata(store)
+        else:
+            ds_rh.to_netcdf(fn)
         if self.args.debug:
             print(f'RH dataset created at {fn}')
         return
@@ -925,7 +869,7 @@ class Climate():
         vap : float
             Vapor pressure [Pa]
         """
-        return 243.04*np.log(vap/610.94)/(17.625-np.log(vap/610.94))
+        return 243.04*xp.log(vap/610.94)/(17.625-xp.log(vap/610.94))
 
     def get_vardict(self):
         """
@@ -934,19 +878,8 @@ class Climate():
         """
         args = self.args 
 
-        # determine filetag for MERRA2 lat/lon file
-        eg_fn = args.merra2_eg_fn
-        assert os.path.exists(eg_fn), f'Store global geopotential file to {eg_fn}'
-
-        with xr.open_dataset(eg_fn) as ds_global:
-            ds_closest = ds_global.sel(lat=self.lat, lon=self.lon, 
-                                       method='nearest').load()
-        self.flat = f'{ds_closest.lat.values:.1f}'
-        self.flon = f'{ds_closest.lon.values:.1f}'
-        tag = args.merra2_filetag if args.merra2_filetag else f'{self.flat}_{self.flon}'
-
         # update filenames for MERRA-2 (need grid lat/lon)
-        self.reanalysis_fp = args.climate_fp
+        self.GCM_fp = args.climate_fp
         self.var_dict = {'temp':{'fn':[],'vn':[]},
             'rh':{'fn':[],'vn':[]},'sp':{'fn':[],'vn':[]},
             'tp':{'fn':[],'vn':[]},'tcc':{'fn':[],'vn':[]},
@@ -957,8 +890,8 @@ class Climate():
             'dustdry':{'fn':[],'vn':[]},'dustwet':{'fn':[],'vn':[]},
             'elev':{'fn':[],'vn':[]},'time':{'fn':'','vn':''},
             'lat':{'fn':'','vn':''}, 'lon':{'fn':'','vn':''}}
-        if args.reanalysis == 'MERRA2':
-            self.reanalysis_fp += 'MERRA2/'
+        if args.climate_source == 'MERRA2':
+            self.GCM_fp += 'MERRA2/'
             self.var_dict['temp']['vn'] = 'T2M'
             self.var_dict['rh']['vn'] = 'RH2M'
             self.var_dict['sp']['vn'] = 'PS'
@@ -981,24 +914,24 @@ class Climate():
             self.elev_vn = self.var_dict['elev']['vn']
 
             # Variable filenames
-            self.var_dict['temp']['fn'] = f'{tag}/T2M_{tag}.nc'
-            self.var_dict['rh']['fn'] = f'{tag}/RH2M_{tag}.nc'
-            self.var_dict['sp']['fn'] = f'{tag}/PS_{tag}.nc'
-            self.var_dict['tcc']['fn'] = f'{tag}/CLDTOT_{tag}.nc'
-            self.var_dict['LWin']['fn'] = f'{tag}/LWGAB_{tag}.nc'
-            self.var_dict['SWin']['fn'] = f'{tag}/SWGDN_{tag}.nc'
-            self.var_dict['vwind']['fn'] = f'{tag}/V2M_{tag}.nc'
-            self.var_dict['uwind']['fn'] = f'{tag}/U2M_{tag}.nc'
-            self.var_dict['tp']['fn'] = f'{tag}/PRECTOTCORR_{tag}.nc'
-            self.var_dict['elev']['fn'] = f'MERRA2constants.nc4'
-            self.var_dict['bcwet']['fn'] = f'{tag}/BCWT002_{tag}.nc'
-            self.var_dict['bcdry']['fn'] = f'{tag}/BCDP002_{tag}.nc'
-            self.var_dict['ocwet']['fn'] = f'{tag}/OCWT002_{tag}.nc'
-            self.var_dict['ocdry']['fn'] = f'{tag}/OCDP002_{tag}.nc'
-            self.var_dict['dustwet']['fn'] = f'{tag}/DUWT003_{tag}.nc'
-            self.var_dict['dustdry']['fn'] = f'{tag}/DUDP003_{tag}.nc'
-        elif args.reanalysis == 'ERA5-hourly':
-            self.reanalysis_fp += 'ERA5/ERA5_hourly/'
+            self.var_dict['temp']['fn'] = 'T2M/T2M_reg{r}.zarr'
+            self.var_dict['rh']['fn'] = 'RH2M/RH2M_reg{r}.zarr'
+            self.var_dict['sp']['fn'] = 'PS/PS_reg{r}.zarr'
+            self.var_dict['tcc']['fn'] = 'CLDTOT/CLDTOT_reg{r}.zarr'
+            self.var_dict['LWin']['fn'] = 'LWGAB/LWGAB_reg{r}.zarr'
+            self.var_dict['SWin']['fn'] = 'SWGDN/SWGDN_reg{r}.zarr'
+            self.var_dict['vwind']['fn'] = 'V2M/V2M_reg{r}.zarr'
+            self.var_dict['uwind']['fn'] = 'U2M/U2M_reg{r}.zarr'
+            self.var_dict['tp']['fn'] = 'PRECTOTCORR/PRECTOTCORR_reg{r}.zarr'
+            self.var_dict['elev']['fn'] = 'MERRA2_constants.nc'
+            self.var_dict['bcwet']['fn'] = 'BCWT002/BCWT002_reg{r}.zarr'
+            self.var_dict['bcdry']['fn'] = 'BCDP002/BCDP002_reg{r}.zarr'
+            self.var_dict['ocwet']['fn'] = 'OCWT002/OCWT002_reg{r}.zarr'
+            self.var_dict['ocdry']['fn'] = 'OCDP002/OCDP002_reg{r}.zarr'
+            self.var_dict['dustwet']['fn'] = 'DUWT003/DUWT003_reg{r}.zarr'
+            self.var_dict['dustdry']['fn'] = 'DUDP003/DUDP003_reg{r}.zarr'
+        elif args.climate_source == 'ERA5-hourly':
+            self.GCM_fp += 'ERA5/ERA5_hourly/'
 
             # Variable names for energy balance
             self.var_dict['temp']['vn'] = 't2m'

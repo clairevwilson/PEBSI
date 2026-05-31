@@ -13,6 +13,11 @@ import numpy as np
 import suncalc
 # Internal libraries
 from util.config import ConfigError
+try:
+    import cupy as cp
+    xp = cp 
+except:
+    xp = np
 
 class energyBalance():
     """
@@ -22,7 +27,7 @@ class energyBalance():
     so it stores the climate data and surface fluxes 
     for a single timestep.
     """ 
-    def __init__(self,massbal,timestamp):
+    def __init__(self, massbal, ti):
         """
         Loads in the climate data at a given timestep 
         to use in the surface energy balance.
@@ -38,69 +43,65 @@ class energyBalance():
         """
         # pull other classes from mass balance class
         climate = massbal.climate
-        args = massbal.args
+        self.args = args = massbal.args
         layers = massbal.layers
         surface = massbal.surface
 
         # CONSTANTS
         SPH = args.seconds_per_hour
         CTOK = args.celsius_to_kelvin
+        self.N_POINTS = massbal.N_POINTS
 
         # unpack climate variables
-        time_idx = climate.time_idx.get_indexer(
-            [timestamp], method='nearest')[0]
-        self.tempC = climate.data['temp'][time_idx]
-        self.tp = climate.data['tp'][time_idx]
-        self.sp = climate.data['sp'][time_idx]
-        self.rh = climate.data['rh'][time_idx]
-        self.wind = climate.data['wind'][time_idx]
-        self.tcc = climate.data['tcc'][time_idx]
-        self.SWin_ds = climate.data['SWin'][time_idx]
-        self.SWout_ds = climate.data['SWout'][time_idx]
-        self.albedo_ds = climate.data['albedo'][time_idx]
-        self.LWin_ds = climate.data['LWin'][time_idx]
-        self.LWout_ds = climate.data['LWout'][time_idx]
-        self.NR_ds = climate.data['NR'][time_idx]
-        self.bcdry = climate.data['bcdry'][time_idx]
-        self.bcwet = climate.data['bcwet'][time_idx]
-        self.ocdry = climate.data['ocdry'][time_idx]
-        self.ocwet = climate.data['ocwet'][time_idx]
-        self.dustdry = climate.data['dustdry'][time_idx]
-        self.dustwet = climate.data['dustwet'][time_idx]
+        self.tempC = getattr(climate, 'temp_nt')[:, ti]
+        self.tp = getattr(climate, 'tp_nt')[:, ti]
+        self.sp = getattr(climate, 'sp_nt')[:, ti]
+        self.rh = getattr(climate, 'rh_nt')[:, ti]
+        self.wind = getattr(climate, 'wind_nt')[:, ti]
+        self.tcc = getattr(climate, 'tcc_nt')[:, ti]
+        self.SWin_ds = getattr(climate, 'SWin_nt')[:, ti]
+        self.SWout_ds = getattr(climate, 'SWout_nt')[:, ti]
+        self.albedo_ds = getattr(climate, 'albedo_nt')[:, ti]
+        self.LWin_ds = getattr(climate, 'LWin_nt')[:, ti]
+        self.LWout_ds = getattr(climate, 'LWout_nt')[:, ti]
+        self.NR_ds = getattr(climate, 'NR_nt')[:, ti]
+        self.bcdry = getattr(climate, 'bcdry_nt')[:, ti]
+        self.bcwet = getattr(climate, 'bcwet_nt')[:, ti]
+        self.ocdry = getattr(climate, 'ocdry_nt')[:, ti]
+        self.ocwet = getattr(climate, 'ocwet_nt')[:, ti]
+        self.dustdry = getattr(climate, 'dustdry_nt')[:, ti]
+        self.dustwet = getattr(climate, 'dustwet_nt')[:, ti]
 
         # time
-        self.timestamp = timestamp
+        self.timestamp = climate.dates[ti]
+        self.ti = ti
         self.dt = args.dt
         self.iters = 0
 
         # store previous timestep incoming shortwave
-        if time_idx != 0:
-            self.last_SWin_ds = climate.data['SWin'][time_idx - 1]
+        if ti != 0:
+            self.last_SWin_ds = climate.data['SWin'][ti - 1]
         else:
             self.last_SWin_ds = self.SWin_ds
-
-        # main variables
-        self.climateds = climate.cds
-        self.args = args
 
         # define additional useful values
         self.tempK = self.tempC + CTOK
         self.prec =  self.tp / SPH     # tp is hourly total precip, prec is the rate in m/s
-        self.rh = 100 if self.rh > 100 else self.rh
-        self.get_roughness(surface.days_since_snowfall,layers)
+        self.rh[self.rh > 100] = 100
+        self.get_roughness(surface.days_since_snowfall, layers)
 
         # apply factors
-        self.wind *= float(args.wind_factor)
-        if timestamp.day_of_year > args.snow_free_doy:
+        self.wind *= args.wind_factor
+        if self.timestamp.day_of_year > args.snow_free_doy:
             self.dustdry *= args.dust_factor
 
         # radiation terms
         self.measured_SWin = 'SWin' in climate.measured_vars
-        self.nanLWin = True if np.isnan(self.LWin_ds) else False
-        self.nanSWout = True if np.isnan(self.SWout_ds) else False
-        self.nanLWout = True if np.isnan(self.LWout_ds) else False
-        self.nanNR = True if np.isnan(self.NR_ds) else False
-        self.nanalbedo = True if np.isnan(self.albedo_ds) else False
+        self.nanLWin = True if xp.any(xp.isnan(self.LWin_ds)) else False
+        self.nanSWout = True if xp.any(xp.isnan(self.SWout_ds)) else False
+        self.nanLWout = True if xp.any(xp.isnan(self.LWout_ds)) else False
+        self.nanNR = True if xp.any(xp.isnan(self.NR_ds)) else False
+        self.nanalbedo = True if xp.any(xp.isnan(self.albedo_ds)) else False
         return
 
     def surface_EB(self,surftemp,surface):
@@ -124,21 +125,22 @@ class energyBalance():
         Qm : float OR np.ndarray
             Returns the sum of heat fluxes
         """
-        # SHORTWAVE RADIATION  (Snet)
-        SWin,SWout = self.get_SW(surface)
+        # SHORTWAVE RADIATION
+        SWin, SWout = self.get_SW(surface)
 
         # Handle penetrating shortwave separately
         if self.args.option_SWpen:
-            if surface.stype in ['snow']:
-                FRAC_ABSRAD = self.args.frac_absrad_snow
-            else:
-                FRAC_ABSRAD = self.args.frac_absrad_ice
+            SNOW_ABSRAD = self.args.frac_absrad_snow 
+            ICE_ABSRAD = self.args.frac_absrad_ice
+            frac_absrad = xp.zeros(self.N_POINTS)
+            frac_absrad[surface.stype == 'snow'] = SNOW_ABSRAD
+            frac_absrad[surface.stype != 'snow'] = ICE_ABSRAD
         else:
             FRAC_ABSRAD = 1
         self.SWnet_surf = (SWin + SWout) * FRAC_ABSRAD
         self.SWnet_penetrating = (SWin + SWout) * (1 - FRAC_ABSRAD)
 
-        # Store with surface fraction applied
+        # store with surface fraction applied
         self.SWin = SWin
         self.SWout = SWout[0] if '__iter__' in dir(SWout) else SWout
         self.SWin_surf = self.SWin * FRAC_ABSRAD 
@@ -159,17 +161,14 @@ class energyBalance():
             self.NR = self.NR_ds / self.dt - self.SWnet_penetrating
 
         # RAIN FLUX (Qp)
-        Qp = self.get_rain(surftemp)
-        self.rain = Qp[0] if '__iter__' in dir(Qp) else Qp
+        self.rain = Qp = self.get_rain(surftemp)
 
         # GROUND FLUX (Qg)
-        Qg = self.get_ground(surftemp)
-        self.ground = Qg[0] if '__iter__' in dir(Qg) else Qg
+        self.ground = Qg = self.get_ground(surftemp)
 
         # TURBULENT FLUXES (Qs and Ql)
         Qs, Ql = self.get_turbulent(surftemp)
-        self.sens = Qs[0] if '__iter__' in dir(Qs) else Qs
-        self.lat = Ql[0] if '__iter__' in dir(Ql) else Ql
+        self.sens, self.lat = Qs, Ql
 
         # OUTPUTS
         Qm = NR + Qp + Qs + Ql + Qg
@@ -177,6 +176,7 @@ class energyBalance():
         # keep track of iterations
         self.iters += 1
 
+        print(Qm)
         return Qm
     
     def get_SW(self,surface):

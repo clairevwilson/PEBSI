@@ -15,6 +15,12 @@ import pandas as pd
 import xarray as xr
 # Internal libraries
 from util.config import ConfigError
+# Handle GPU vs CPU
+try:
+    import cupy as cp
+    xp = cp 
+except:
+    xp = np
 
 class Layers():
     """
@@ -22,7 +28,7 @@ class Layers():
 
     All mass terms are stored in kg m-2.
     """
-    def __init__(self,climate,args):
+    def __init__(self,core):
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
@@ -34,59 +40,42 @@ class Layers():
         args : command line arguments
         """
         # INPUTS
-        self.climate = climate 
-        self.args = args
+        self.climate = core.climate 
+        self.args = args = core.args
+        self.N_POINTS = N_POINTS = core.sd.n
+        self.N_LAYERS = N_LAYERS = args.max_nlayers
+        self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
-        dz_snow = args.initial_snow_depth
-        dz_firn = args.initial_firn_depth
-        dz_ice = args.initial_ice_depth
+        dz_snow = xp.full(N_POINTS, args.initial_snow_depth)
+        # *** rough approximation of where there should be firn
+        dz_firn = xp.zeros(N_POINTS)
+        dz_firn[core.sd.elev_n > core.sd.median_elev_n] = args.initial_firn_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
-        lheight,ldepth,ltype,nlayers = self.make_layers(dz_snow,dz_firn,dz_ice)
-        self.nlayers = nlayers              # NUMBER OF LAYERS
-        self.ltype = ltype                  # LAYER TYPE (snow, firn, or ice)
-        self.lheight = lheight              # LAYER HEIGHT (dz) [m]
-        self.ldepth = ldepth                # LAYER DEPTH (midlayer) [m]
+        self.make_layers(dz_snow,dz_firn)
 
-        # initialize layer temperature, density, water content
-        ltemp,ldensity,lwater,lgrainsize = self.initialize_layers(dz_snow,dz_firn)
-        self.ltemp = ltemp                  # LAYER TEMPERATURE [C]
-        self.ldensity = ldensity            # LAYER DENSITY [kg m-3]
-        self.lice = ldensity*lheight        # LAYER ICE (SOLID) MASS [kg m-2]
-        self.lwater = lwater                # LAYER WATER (LIQUID) MASS [kg m-2]
-        self.lgrainsize = lgrainsize        # LAYER GRAIN SIZE [um]
+        # initialize layer temperature, density, water and refreeze content
+        self.initialize_layers(dz_snow,dz_firn)
 
         # initialize LAPs (black carbon, organic carbon, and dust)
-        if args.switch_LAPs == 1:
-            lBC,lOC,ldust = self.initialize_LAPs()
-        else:
-            lBC = np.zeros(self.nlayers)
-            lOC = np.zeros(self.nlayers)
-            ldust = np.zeros(self.nlayers)
-        self.lBC = lBC                      # LAYER BLACK CARBON MASS [kg m-2]
-        self.lOC = lOC                      # LAYER ORGANIC CARBON MASS [kg m-2]
-        self.ldust = ldust                  # LAYER DUST MASS [kg m-2]
-       
-        # refreeze content
-        self.drefreeze = np.zeros_like(self.ltemp)   # LAYER MASS OF REFREEZE ADDED THIS TIMESTEP [kg m-2]
-        self.lrefreeze = np.zeros_like(self.ltemp)   # LAYER MASS OF REFREEZE [kg m-2]
+        self.initialize_LAPs()
 
-        # layer age
-        self.lage = self.initialize_age()            # LAYER AGE [timestamp]
+        # initialize layer ages
+        self.initialize_age()
 
-        # initialize bucket for 'delayed snow' and running max snow mass
-        self.delayed_snow = 0
-        self.max_snow = np.sum(self.lice[self.snow_idx])
-
-        # initialize minimum albedos associated with each firn layer
-        self.firn_albedos = {}
+        # delayed snowfall
+        self.delayed_snow = xp.zeros(N_POINTS)
+        # running maximum snow mass (reset each year)
+        self.max_snow = np.sum(self.lice * self.snow_mask, axis=1)
+        # minimum albedo per year
+        self.firn_albedos = xp.zeros(N_POINTS + 1)
         
         if args.debug:
-            print(f'~ {self.nlayers} layers initialized ~')
+            print(f'~ {N_LAYERS} layers initialized ~')
         return 
     
-    def make_layers(self,snow_height,firn_height,ice_height):
+    def make_layers(self,snow_height,firn_height):
         """
         Initializes layer depths based on an exponential
         growth function with prescribed rate of growth 
@@ -109,6 +98,8 @@ class Layers():
             Layers types (snow, firn, ice)
         """
         args = self.args
+        N_POINTS = self.N_POINTS 
+        N_LAYERS = self.N_LAYERS
 
         # CONSTANTS
         DZ_TOP = args.dz_toplayer
@@ -116,68 +107,77 @@ class Layers():
         DZ_ICE = args.dz_icelayer
         LAYER_GROWTH = args.layer_growth
 
-        # initialize variables to get looped
-        lheight = []
-        ltype = []
-        current_depth = 0
-        layer = 0
+        # initialize variables to get filled
+        lheight = xp.zeros(self.shape)
+        ltype = xp.zeros(self.shape, dtype=xp.int32)
 
-        # make exponentially growing snow layers
-        while current_depth < snow_height:
-            if args.option_uniform_snow:
-                lheight.append(DZ_SNOW)
-            else:
-                lheight.append(DZ_TOP * np.exp(layer*LAYER_GROWTH))
-            ltype.append('snow')
-            layer += 1
-            current_depth = np.sum(lheight)
-        if snow_height > 0:
-            lheight[-1] = lheight[-1] - (current_depth-snow_height)
-            # can end up with a small bottom layer: merge it
-            if lheight[-1] < lheight[-2] / 2:
-                lheight[-2] += lheight[-1]
-                lheight = lheight[:-1]
-                ltype = ltype[:-1]
-                layer -= 1
+        # define the exponential curve for indexing reference
+        layer_indices = xp.arange(N_LAYERS)
+
+        # are snow layers a constant size?
+        if args.option_uniform_snow:
+            curve_snow = xp.full(N_LAYERS, DZ_SNOW)
+        else:
+            curve_snow = DZ_TOP * xp.exp(layer_indices * LAYER_GROWTH)
+
+        # are ice layers a constant size?
+        if args.option_uniform_ice:
+            curve_ice = xp.full(N_LAYERS, DZ_ICE)
+        else:
+            curve_ice = DZ_TOP * xp.exp(layer_indices * LAYER_GROWTH)
     
-        # add firn layers
-        if firn_height > 0.75:
-            n_firn_layers = int(round(firn_height,0))
-            lheight.extend([firn_height/n_firn_layers]*n_firn_layers)
-            ltype.extend(['firn']*n_firn_layers)
-        elif firn_height > 0:
-            lheight.extend([firn_height])
-            ltype.extend(['firn'])
+        # create layers for each point
+        for i in range(N_POINTS):
+            snow_pt = snow_height[i]
+            firn_pt = firn_height[i]
 
-        # add ice layers
-        current_depth = 0
-        while current_depth < ice_height:
-            if args.option_uniform_ice:
-                lheight.append(DZ_ICE)
-            else:
-                lheight.append(DZ_TOP * np.exp(layer*LAYER_GROWTH))
-            ltype.append('ice')
-            layer += 1
-            ice_idx = np.where(np.array(ltype)=='ice')[0]
-            current_depth = np.sum(np.array(lheight)[ice_idx])
-        lheight[-1] = lheight[-1] - (current_depth-ice_height)
-        
-        # get depth of layers (distance from surface to midpoint of layer) [m]
-        nlayers = len(lheight)
-        if 'layers' in args.store_vars:
-            assert nlayers <= args.max_nlayers, f'Need >= {nlayers} in args.max_nlayers'
-        ldepth = [np.sum(lheight[:i+1])-(lheight[i]/2) for i in range(nlayers)]
+            curr_lyr = 0
+            accum_depth = 0.0
 
-        # make into arrays
-        lheight = np.array(lheight)
-        ldepth = np.array(ldepth)
-        ltype = np.array(ltype)
+            # allocate snow layers
+            while accum_depth < snow_pt and curr_lyr < N_LAYERS:
+                # determine height from layer index
+                h = curve_snow[curr_lyr]
+                if accum_depth + h > snow_pt:
+                    h = snow_pt - accum_depth # Trim the last snow layer
+                
+                lheight[i, curr_lyr] = h
+                ltype[i, curr_lyr] = 0
+                accum_depth += h
+                curr_lyr += 1
+
+            # allocate firn layers
+            if firn_pt > 0:
+                # make firn layers of a constant height, approx 1 m
+                n_firn = int(round(float(firn_pt), 0)) if firn_pt > 0.75 else 1
+                h_firn = firn_pt / n_firn
+                
+                for _ in range(n_firn):
+                    if curr_lyr >= N_LAYERS: break
+                    lheight[i, curr_lyr] = h_firn
+                    ltype[i, curr_lyr] = 1 # 1 = Firn
+                    curr_lyr += 1
+
+            # add ice layers until all layers are full with a thickness cap
+            curve_ice_clipped = xp.minimum(curve_ice, args.dz_icelayer)
+            lheight[i] = xp.where(xp.arange(N_LAYERS) >= curr_lyr, 
+                                  curve_ice_clipped, lheight[i])
+            ltype[i] = xp.where(xp.arange(N_LAYERS) >= curr_lyr, 2, ltype[i])
+
+        # calculate midpoint heights
+        cum_height = xp.cumsum(lheight, axis=1)
+        ldepth = cum_height - (lheight / 2.0)
+
+        # store to self
+        self.ltype = xp.array(ltype)            # LAYER TYPE (0, 1, or 2) [-]
+        self.lheight = xp.array(lheight)        # LAYER HEIGHT (dz) [m]
+        self.ldepth = xp.array(ldepth)          # LAYER DEPTH (midlayer) [m]
 
         # assign indices
-        self.snow_idx = np.where(ltype=='snow')[0]
-        self.firn_idx = np.where(ltype=='firn')[0]
-        self.ice_idx = np.where(ltype=='ice')[0]
-        return np.array(lheight), np.array(ldepth), np.array(ltype), nlayers
+        self.snow_mask = ltype==0       # type 0 = snow
+        self.firn_mask = ltype==1       # type 1 = firn
+        self.ice_mask = ltype==2        # type 2 = ice
+        return
 
     def initialize_layers(self,snow_height,firn_height):
         """
@@ -198,9 +198,9 @@ class Layers():
             and grain size [um]
         """
         args = self.args
-        snow_idx = self.snow_idx
-        firn_idx = self.firn_idx
-        ice_idx = self.ice_idx
+        snow_mask = self.snow_mask
+        firn_mask = self.firn_mask
+        ice_mask = self.ice_mask
 
         # read in depth profiles
         temp_data = pd.read_csv(self.args.initial_temp_fn)
@@ -209,54 +209,84 @@ class Layers():
 
         # TEMPERATURE [C]
         if args.initialize_temp == 'interpolate':
-            ltemp = np.interp(self.ldepth,temp_data['depth'],temp_data['temp'])
+            ltemp = xp.interp(
+                self.ldepth.ravel(),
+                temp_data['depth'],
+                temp_data['temp']
+            ).reshape(self.shape)
         elif args.initialize_temp == 'ripe':
-            ltemp = np.ones(self.nlayers)*0
+            ltemp = xp.zeros(self.shape)
         else:
             raise ConfigError('Invalid configuration: initialize_temp')
         
         # GRAIN SIZE [um]
-        lgrainsize = np.interp(self.ldepth,grainsize_data['depth'],
-                               grainsize_data['grainsize'])
-        lgrainsize[self.ltype == 'firn'] = args.firn_grainsize
-        lgrainsize[self.ltype == 'ice'] = args.ice_grainsize
+        lgrainsize = xp.interp(
+            self.ldepth.ravel(),
+            grainsize_data['depth'],
+            grainsize_data['grainsize']
+        ).reshape(self.shape)
+        lgrainsize[self.ltype == 1] = args.firn_grainsize
+        lgrainsize[self.ltype == 2] = args.ice_grainsize
 
         # DENSITY [kg m-3]
         if args.initialize_density == 'interpolate':
             # SNOW layers initialized by interpolation
-            ldensity = np.interp(self.ldepth[snow_idx],
-                                density_data['depth'],density_data['density'])
-            if len(firn_idx) > 0:
-                # calculate firn density slope from snow --> ice
-                if snow_height > 0 and firn_height > 0:
-                    pslope = (args.density_ice - ldensity[-1]) / (
-                        self.ldepth[ice_idx[0]]-self.ldepth[snow_idx[-1]])
-                # no snow: set boundary tp constant density_firn
-                elif firn_height > 0:
-                    pslope = (args.density_ice - args.density_firn)/(firn_height)
+            ldensity = xp.interp(
+                self.ldepth.ravel(),
+                density_data['depth'],
+                density_data['density']
+            ).reshape(self.shape)
+
+            # find the snow density at the bottom of each point
+            bottom_snow_density = xp.nanmax(ldensity * snow_mask, axis=1)
+            bottom_snow_depth = xp.nanmax(self.ldepth * snow_mask, axis=1)
+
+            # if there is no snow, swap in constant firn_density
+            bottom_snow_density = xp.where(snow_height > 0, 
+                                           bottom_snow_density, 
+                                           args.density_firn)
+
+            # compute the density slope from top to bottom of firn
+            firn_height_no0 = xp.where(firn_height > 0, firn_height, 1.0)
+            pslope = xp.where(
+                firn_height > 0,
+                (args.density_ice - bottom_snow_density) / firn_height_no0,
+                0.0,
+            )[:, xp.newaxis]
+
+            # apply the firn interpolation
+            bottom_snow_density = bottom_snow_density[:, xp.newaxis]
+            bottom_snow_depth = bottom_snow_depth[:, xp.newaxis]
+            firn_densities = bottom_snow_density + pslope* (self.ldepth - bottom_snow_depth)
+            ldensity = xp.where(firn_mask, firn_densities, ldensity)
+
+            # set constant ice layer density
+            ldensity = xp.where(ice_mask, args.density_ice, ldensity)
         elif args.initialize_density == 'constant':
-            ldensity = np.ones_like(snow_idx) * args.density_snow
+            ldensity = np.ones(self.shape) * args.density_snow
+            ldensity = xp.where(firn_mask, args.density_firn, ldensity)
+            ldensity = xp.where(ice_mask, args.density_ice, ldensity)
         else:
             raise ConfigError('Invalid configuration: initialize_density')
-            
-        # append firn and ice layer densities
-        for (type,depth) in zip(self.ltype,self.ldepth):
-            if type in ['firn']: 
-                ldensity = np.append(ldensity,
-                    ldensity[snow_idx[-1]] + pslope*(depth-self.ldepth[snow_idx[-1]]))
-            elif type in ['ice']:
-                ldensity = np.append(ldensity,args.density_ice)
 
         # WATER CONTENT [kg m-2]
         if args.initialize_water == 'dry':
-            lwater = np.zeros(self.nlayers)
+            lwater = np.zeros(self.shape)
         elif args.initialize_water == 'saturated':
             porosity = 1 - ldensity / args.density_ice
             lwater = porosity * args.Sr * self.lheight * args.density_water
         else:
             raise ConfigError('Invalid configuration: initialize_water')
-
-        return ltemp,ldensity,lwater,lgrainsize
+        
+        # store to self
+        self.ltemp = xp.array(ltemp)                    # LAYER TEMPERATURE [C]
+        self.ldensity = xp.array(ldensity)              # LAYER DENSITY [kg m-3]
+        self.lice = xp.array(ldensity*self.lheight)     # LAYER ICE (SOLID) MASS [kg m-2]
+        self.lwater = xp.array(lwater)                  # LAYER WATER (LIQUID) MASS [kg m-2]
+        self.lgrainsize = xp.array(lgrainsize)          # LAYER GRAIN SIZE [um]
+        self.drefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS ADDED PER TIMESTEP [kg m-2]
+        self.lrefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS [kg m-2]
+        return
     
     def initialize_LAPs(self):
         """
@@ -271,15 +301,14 @@ class Layers():
         DUST_FRESH = args.dust_freshsnow
 
         # INPUTS
-        n = self.nlayers
         lheight = self.lheight
         ldepth = self.ldepth
 
         if args.initialize_LAPs in ['clean']:
             # snowpack is clean; initialize as constant values
-            lBC = np.ones(n)*BC_FRESH*lheight
-            lOC = np.ones(n)*OC_FRESH*lheight
-            ldust = np.ones(n)*DUST_FRESH*lheight 
+            lBC = BC_FRESH*lheight
+            lOC = OC_FRESH*lheight
+            ldust = DUST_FRESH*lheight 
         elif args.initialize_LAPs in ['interpolate']:
             # read in LAP data
             lap_data = pd.read_csv(args.initial_LAP_fn,index_col=0)
@@ -291,9 +320,15 @@ class Layers():
             dust_data = lap_data['dust'].dropna()
 
             # interpolate concentration by depth
-            cBC = np.interp(ldepth, bc_data.index, bc_data)
-            cOC = np.interp(ldepth, oc_data.index, oc_data)
-            cdust = np.interp(ldepth, dust_data.index, dust_data)
+            cBC = np.interp(
+                ldepth.ravel(), bc_data.index, bc_data
+            ).reshape(self.shape)
+            cOC = np.interp(
+                ldepth.ravel(), oc_data.index, oc_data
+            ).reshape(self.shape)
+            cdust = np.interp(
+                ldepth.ravel(), dust_data.index, dust_data
+            ).reshape(self.shape)
 
             # calculate mass from concentration
             lBC = cBC * lheight
@@ -301,23 +336,23 @@ class Layers():
             ldust = cdust * lheight
         else:
             raise ConfigError('Invalid configuration: initialize_LAPs')
-        lBC[self.ice_idx] = 0
-        lOC[self.ice_idx] = 0
-        ldust[self.ice_idx] = 0
-        return lBC, lOC, ldust
+        
+        # store to self
+        self.lBC = lBC          # LAYER BLACK CARBON MASS [kg m-2]
+        self.lOC = lOC          # LAYER ORGANIC CARBON MASS [kg m-2]
+        self.ldust = ldust      # LAYER DUST MASS [kg m-2]
+        return
     
     def initialize_age(self):
-        # set snow layers ages to the first date of the simulation
-        time_0 = pd.to_datetime(self.args.start_date)
-        lage = np.array([time_0 for _ in range(self.nlayers)])
-
         # set firn layer ages counting back from start year
-        start_str = time_0.strftime('%Y-%m-%d')
-        start_year = start_str[:4]
-        for years_back, layer in enumerate(self.firn_idx):
-            # count back one year for each layer
-            layer_year = str(int(start_year) - years_back - 1)
-            lage[layer] = pd.to_datetime(start_str.replace(start_year, layer_year))
+        firn_mask_int = self.firn_mask.astype(int)
+        lage = xp.cumsum(firn_mask_int, axis=1) * -365
+
+        # firn ages count back in time; snow/ice initialized at 0
+        lage = xp.where(self.ltype >= 1, lage, 0.0)
+
+        # store to self
+        self.lage = xp.array(lage, dtype=xp.int32)  # LAYER AGE [days]
         return lage
     
     # ========= UTILITY FUNCTIONS ==========
@@ -333,25 +368,25 @@ class Layers():
             grain size 'g', timestep 'time',
             and impurities 'BC','OC' and 'dust'
         """
-        self.nlayers += len(layers_to_add.loc['T'].values)
-        self.ltemp = np.append(layers_to_add.loc['T'].values,self.ltemp).astype(float)
-        self.lwater = np.append(layers_to_add.loc['w'].values,self.lwater).astype(float)
-        self.lheight = np.append(layers_to_add.loc['h'].values,self.lheight).astype(float)
-        self.ltype = np.append(layers_to_add.loc['t'].values,self.ltype)
-        self.lice = np.append(layers_to_add.loc['m'].values,self.lice).astype(float)
-        new_layer_age = layers_to_add.loc['time'].values
-        self.lage = np.array(pd.to_datetime(np.append(new_layer_age,self.lage)))
-        self.lgrainsize = np.append(layers_to_add.loc['g'].values,self.lgrainsize).astype(float)
-        new_layer_BC = layers_to_add.loc['BC'].values.astype(float)*self.lheight[0]
-        self.lBC = np.append(new_layer_BC,self.lBC)
-        new_layer_OC = layers_to_add.loc['OC'].values.astype(float)*self.lheight[0]
-        self.lOC = np.append(new_layer_OC,self.lOC)
-        new_layer_dust = layers_to_add.loc['dust'].values.astype(float)*self.lheight[0]
-        self.ldust = np.append(new_layer_dust,self.ldust)
-        # new layers start with 0 refreeze
-        self.drefreeze = np.append(0,self.drefreeze) 
-        self.lrefreeze = np.append(0,self.lrefreeze)
-        self.update_layer_props()
+        # self.nlayers += len(layers_to_add.loc['T'].values)
+        # self.ltemp = np.append(layers_to_add.loc['T'].values,self.ltemp).astype(float)
+        # self.lwater = np.append(layers_to_add.loc['w'].values,self.lwater).astype(float)
+        # self.lheight = np.append(layers_to_add.loc['h'].values,self.lheight).astype(float)
+        # self.ltype = np.append(layers_to_add.loc['t'].values,self.ltype)
+        # self.lice = np.append(layers_to_add.loc['m'].values,self.lice).astype(float)
+        # new_layer_age = layers_to_add.loc['time'].values
+        # self.lage = np.array(pd.to_datetime(np.append(new_layer_age,self.lage)))
+        # self.lgrainsize = np.append(layers_to_add.loc['g'].values,self.lgrainsize).astype(float)
+        # new_layer_BC = layers_to_add.loc['BC'].values.astype(float)*self.lheight[0]
+        # self.lBC = np.append(new_layer_BC,self.lBC)
+        # new_layer_OC = layers_to_add.loc['OC'].values.astype(float)*self.lheight[0]
+        # self.lOC = np.append(new_layer_OC,self.lOC)
+        # new_layer_dust = layers_to_add.loc['dust'].values.astype(float)*self.lheight[0]
+        # self.ldust = np.append(new_layer_dust,self.ldust)
+        # # new layers start with 0 refreeze
+        # self.drefreeze = np.append(0,self.drefreeze) 
+        # self.lrefreeze = np.append(0,self.lrefreeze)
+        # self.update_layer_props()
         return
     
     def remove_layer(self,layer_to_remove):
@@ -363,20 +398,20 @@ class Layers():
         layer_to_remove : int
             index of layer to remove
         """
-        self.nlayers -= 1
-        self.ltemp = np.delete(self.ltemp,layer_to_remove)
-        self.lwater = np.delete(self.lwater,layer_to_remove)
-        self.lheight = np.delete(self.lheight,layer_to_remove)
-        self.ltype = np.delete(self.ltype,layer_to_remove)
-        self.lice = np.delete(self.lice,layer_to_remove)
-        self.lage = np.delete(self.lage,layer_to_remove)
-        self.drefreeze = np.delete(self.drefreeze,layer_to_remove)
-        self.lrefreeze = np.delete(self.lrefreeze,layer_to_remove)
-        self.lgrainsize = np.delete(self.lgrainsize,layer_to_remove)
-        self.lBC = np.delete(self.lBC,layer_to_remove)
-        self.lOC = np.delete(self.lOC,layer_to_remove)
-        self.ldust = np.delete(self.ldust,layer_to_remove)
-        self.update_layer_props()
+        # self.nlayers -= 1
+        # self.ltemp = np.delete(self.ltemp,layer_to_remove)
+        # self.lwater = np.delete(self.lwater,layer_to_remove)
+        # self.lheight = np.delete(self.lheight,layer_to_remove)
+        # self.ltype = np.delete(self.ltype,layer_to_remove)
+        # self.lice = np.delete(self.lice,layer_to_remove)
+        # self.lage = np.delete(self.lage,layer_to_remove)
+        # self.drefreeze = np.delete(self.drefreeze,layer_to_remove)
+        # self.lrefreeze = np.delete(self.lrefreeze,layer_to_remove)
+        # self.lgrainsize = np.delete(self.lgrainsize,layer_to_remove)
+        # self.lBC = np.delete(self.lBC,layer_to_remove)
+        # self.lOC = np.delete(self.lOC,layer_to_remove)
+        # self.ldust = np.delete(self.ldust,layer_to_remove)
+        # self.update_layer_props()
         return
     
     def split_layer(self,layer_to_split):
@@ -390,32 +425,32 @@ class Layers():
         layer_to_split : int
             Index of the layer to split
         """
-        args = self.args
-        if (self.nlayers+1) > args.max_nlayers and 'layers' in args.store_vars:
-            raise ConfigError('Too many layers: increase max_nlayers')
-        l = layer_to_split
-        self.nlayers += 1
-        self.ltemp = np.insert(self.ltemp,l,self.ltemp[l])
-        self.ltype = np.insert(self.ltype,l,self.ltype[l])
-        self.lgrainsize = np.insert(self.lgrainsize,l,self.lgrainsize[l])
-        self.lwater[l] = self.lwater[l]/2
-        self.lwater = np.insert(self.lwater,l,self.lwater[l])
-        self.lheight[l] = self.lheight[l]/2
-        self.lheight = np.insert(self.lheight,l,self.lheight[l])
-        self.lice[l] = self.lice[l]/2
-        self.lice = np.insert(self.lice,l,self.lice[l])
-        self.lage = np.insert(self.lage,l,self.lage[l])
-        self.drefreeze[l] = self.drefreeze[l]/2
-        self.drefreeze = np.insert(self.drefreeze,l,self.drefreeze[l])
-        self.lrefreeze[l] = self.lrefreeze[l]/2
-        self.lrefreeze = np.insert(self.lrefreeze,l,self.lrefreeze[l])
-        self.lBC[l] = self.lBC[l]/2
-        self.lBC = np.insert(self.lBC,l,self.lBC[l])
-        self.lOC[l] = self.lOC[l]/2
-        self.lOC = np.insert(self.lOC,l,self.lOC[l])
-        self.ldust[l] = self.ldust[l]/2
-        self.ldust = np.insert(self.ldust,l,self.ldust[l])
-        self.update_layer_props()
+        # args = self.args
+        # if (self.nlayers+1) > args.max_nlayers and 'layers' in args.store_vars:
+        #     raise ConfigError('Too many layers: increase max_nlayers')
+        # l = layer_to_split
+        # self.nlayers += 1
+        # self.ltemp = np.insert(self.ltemp,l,self.ltemp[l])
+        # self.ltype = np.insert(self.ltype,l,self.ltype[l])
+        # self.lgrainsize = np.insert(self.lgrainsize,l,self.lgrainsize[l])
+        # self.lwater[l] = self.lwater[l]/2
+        # self.lwater = np.insert(self.lwater,l,self.lwater[l])
+        # self.lheight[l] = self.lheight[l]/2
+        # self.lheight = np.insert(self.lheight,l,self.lheight[l])
+        # self.lice[l] = self.lice[l]/2
+        # self.lice = np.insert(self.lice,l,self.lice[l])
+        # self.lage = np.insert(self.lage,l,self.lage[l])
+        # self.drefreeze[l] = self.drefreeze[l]/2
+        # self.drefreeze = np.insert(self.drefreeze,l,self.drefreeze[l])
+        # self.lrefreeze[l] = self.lrefreeze[l]/2
+        # self.lrefreeze = np.insert(self.lrefreeze,l,self.lrefreeze[l])
+        # self.lBC[l] = self.lBC[l]/2
+        # self.lBC = np.insert(self.lBC,l,self.lBC[l])
+        # self.lOC[l] = self.lOC[l]/2
+        # self.lOC = np.insert(self.lOC,l,self.lOC[l])
+        # self.ldust[l] = self.ldust[l]/2
+        # self.ldust = np.insert(self.ldust,l,self.ldust[l])
+        # self.update_layer_props()
         return
 
     def merge_layers(self,layer_to_merge):
@@ -428,25 +463,25 @@ class Layers():
         layer_to_merge : int
             Index of the layer to merge with the layer below
         """
-        l = layer_to_merge
-        self.ldensity[l+1] = np.sum(self.ldensity[l:l+2]*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
-        self.lwater[l+1] = np.sum(self.lwater[l:l+2])
-        self.ltemp[l+1] = np.mean(self.ltemp[l:l+2])
-        self.lheight[l+1] = np.sum(self.lheight[l:l+2])
-        self.lice[l+1] = np.sum(self.lice[l:l+2])
-        self.drefreeze[l+1] = np.sum(self.drefreeze[l:l+2])
-        self.lrefreeze[l+1] = np.sum(self.lrefreeze[l:l+2])
-        self.lgrainsize[l+1] = np.sum(self.lgrainsize[l:l+2]*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
-        self.lBC[l+1] = np.sum(self.lBC[l:l+2])
-        self.lOC[l+1] = np.sum(self.lOC[l:l+2])
-        self.ldust[l+1] = np.sum(self.ldust[l:l+2])
+        # l = layer_to_merge
+        # self.ldensity[l+1] = np.sum(self.ldensity[l:l+2]*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
+        # self.lwater[l+1] = np.sum(self.lwater[l:l+2])
+        # self.ltemp[l+1] = np.mean(self.ltemp[l:l+2])
+        # self.lheight[l+1] = np.sum(self.lheight[l:l+2])
+        # self.lice[l+1] = np.sum(self.lice[l:l+2])
+        # self.drefreeze[l+1] = np.sum(self.drefreeze[l:l+2])
+        # self.lrefreeze[l+1] = np.sum(self.lrefreeze[l:l+2])
+        # self.lgrainsize[l+1] = np.sum(self.lgrainsize[l:l+2]*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
+        # self.lBC[l+1] = np.sum(self.lBC[l:l+2])
+        # self.lOC[l+1] = np.sum(self.lOC[l:l+2])
+        # self.ldust[l+1] = np.sum(self.ldust[l:l+2])
 
-        # get new layer weighted mean age
-        if self.lage[l] != self.lage[l+1]:
-            decimal_time = self.to_decimal_year(self.lage[l:l+2])
-            mean_time = np.sum(decimal_time*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
-            self.lage[l+1] = self.from_decimal_year(mean_time)
-        self.remove_layer(l)
+        # # get new layer weighted mean age
+        # if self.lage[l] != self.lage[l+1]:
+        #     decimal_time = self.to_decimal_year(self.lage[l:l+2])
+        #     mean_time = np.sum(decimal_time*self.lice[l:l+2])/np.sum(self.lice[l:l+2])
+        #     self.lage[l+1] = self.from_decimal_year(mean_time)
+        # self.remove_layer(l)
         return
     
     def check_layer_sizes(self):
@@ -476,19 +511,19 @@ class Layers():
         if args.option_uniform_snow:
             # only check minimum size
             layer = 0
-            while layer < len(self.snow_idx):
+            while layer < len(self.snow_mask):
                 dz = self.lheight[layer]
                 if dz < args.min_dz and self.ltype[layer]==self.ltype[layer+1]:
                     # layer too small: merge if it is the same type as the layer underneath
                     self.merge_layers(layer)
                 layer += 1
         if args.option_uniform_ice:
-            # update ice_idx
-            self.ice_idx = np.where(self.ltype=='ice')[0]
+            # update ice_mask
+            self.ice_mask = np.where(self.ltype=='ice')[0]
 
             # only check minimum size
-            layer = self.ice_idx[0]
-            while layer < len(self.ice_idx) - 1:
+            layer = self.ice_mask[0]
+            while layer < len(self.ice_mask) - 1:
                 # don't check the bottom layer
                 dz = self.lheight[layer]
                 if dz < args.min_dz:
@@ -524,7 +559,7 @@ class Layers():
 
             # ICE layers
             if self.ltype[layer] in ['ice'] and not args.option_uniform_ice:
-                layer_check = layer - len(self.firn_idx)
+                layer_check = layer - len(self.firn_mask)
                 if dz < min_heights(layer_check) and layer < self.nlayers - 1:
                     # layer too small: merge if it is not the bottom layer
                     self.merge_layers(layer)
@@ -552,17 +587,22 @@ class Layers():
         do : list-like
             List of any combination of depth, density to be updated
         """
-        self.nlayers = len(self.lheight)
-        self.snow_idx = np.where(self.ltype=='snow')[0]
-        self.firn_idx = np.where(self.ltype=='firn')[0]
-        self.ice_idx = np.where(self.ltype=='ice')[0]
+        # CONSTANTS
+        DENSITY_ICE = self.args.density_ice
+
+        self.snow_mask = self.ltype == 0
+        self.firn_mask = self.ltype == 1
+        self.ice_mask = self.ltype == 2
         
-        lh = self.lheight.copy()
         if 'depth' in do:
-            self.ldepth = np.array([np.sum(lh[:i+1])-(lh[i]/2) for i in range(self.nlayers)])
+            lh = self.lheight.copy()
+            self.ldepth = xp.cumsum(lh, axis=1) - (lh / 2.0)
         if 'density' in do:
-            self.ldensity = self.lice / self.lheight
-            self.ldensity[self.ice_idx] = self.args.density_ice
+            self.ldensity = xp.where(
+                self.ice_mask,
+                DENSITY_ICE,
+                self.lice / self.lheight
+            )
         return
     
     def update_layer_types(self):
@@ -587,7 +627,7 @@ class Layers():
                 if self.lheight[layer] < DZ_CHECK and self.ltype[layer+1] in ['ice']:
                     self.merge_layers(layer)
             # snow -> ice (occurs with rapid densification, no firn because it is already ice)
-            if density_check and self.ltype[layer] == 'snow' and len(self.firn_idx) == 0:
+            if density_check and self.ltype[layer] == 'snow' and len(self.firn_mask) == 0:
                 self.ltype[layer] = 'ice'
                 self.ldensity[layer] = DENSITY_ICE
                 # merge into ice below if layer is smaller than 1 meter
@@ -598,99 +638,5 @@ class Layers():
                 layer += 1
 
         # bound density of superimposed ice
-        self.ldensity[self.snow_idx][self.ldensity[self.snow_idx] > DENSITY_ICE] = DENSITY_ICE
+        self.ldensity[self.snow_mask][self.ldensity[self.snow_mask] > DENSITY_ICE] = DENSITY_ICE
         return
-    
-    def resize_ice(self):
-        """
-        Resizes ice layers to be uniform heights.
-
-        This function is run when option_uniform_ice=True
-        and ice is first exposed in a given year.
-        This makes it so ice melt is identical between
-        simulations with the same forcings.
-        """
-        args = self.args
-        
-        # define initial mass for conservation check
-        initial_mass = np.sum(self.lice + self.lwater)
-
-        # CONSTANTS
-        DZ_ICE = args.dz_icelayer
-        DENSITY_ICE = args.density_ice
-        ICE_GRAINSIZE = args.ice_grainsize
-
-        # get information about existing layers
-        ice_mass = np.sum(self.lice[self.ice_idx])
-        old_depths = self.ldepth[self.ice_idx]
-        sf_idx = np.concatenate([self.snow_idx,self.firn_idx])
-        assert len(sf_idx) == 0, 'surface ice identified but there is snow/firn'
-
-        # stack new ice layers using constant height
-        target_height = ice_mass / DENSITY_ICE
-        n_full_layers = int(target_height // DZ_ICE)
-        new_heights = [DZ_ICE] * n_full_layers
-
-        # fill bottom layer with excess
-        bottom_height = target_height - n_full_layers * DZ_ICE
-        if bottom_height > 0:
-            new_heights.append(bottom_height)
-
-        # recalculate layer depths
-        new_depths = np.array([np.sum(new_heights[:i+1])-(new_heights[i]/2) for i in range(len(new_heights))])
-        new_heights = np.array(new_heights)
-        
-        # interpolate layer properties to the new depths
-        new_density = np.interp(new_depths, old_depths, self.ldensity)
-        new_temp = np.interp(new_depths, old_depths, self.ltemp)
-        lage_num = self.lage.astype('datetime64[ns]').astype('int64')
-        new_age_num = np.interp(new_depths, old_depths, lage_num)
-        new_age = new_age_num.round().astype('int64').astype('datetime64[ns]')
-
-        # fill in interpolated variables where ice layers were
-        self.ldensity = np.append(self.ldensity[sf_idx], new_density)
-        self.ltemp = np.append(self.ltemp[sf_idx], new_temp)
-        self.lage = np.append(self.lage[sf_idx], new_age)
-        
-        # fill in constant variables
-        self.ltype = np.append(self.ltype[sf_idx], np.ravel(['ice']*len(new_depths)))
-        self.lwater = np.append(self.lwater[sf_idx], np.ones_like(new_depths)*0)
-        self.lgrainsize = np.append(self.lgrainsize[sf_idx], np.ones_like(new_depths)*ICE_GRAINSIZE)
-        self.lBC = np.append(self.lBC[sf_idx], np.ones_like(new_depths)*0)
-        self.lOC = np.append(self.lOC[sf_idx], np.ones_like(new_depths)*0)
-        self.ldust = np.append(self.ldust[sf_idx], np.ones_like(new_depths)*0)
-        self.lrefreeze = np.append(self.lrefreeze[sf_idx], np.ones_like(new_depths)*0)
-        self.drefreeze = np.append(self.drefreeze[sf_idx], np.ones_like(new_depths)*0)
-
-        # add back in height and depth
-        self.lheight = np.append(self.lheight[sf_idx], new_heights)
-        self.ldepth = np.append(self.ldepth[sf_idx], new_depths)
-
-        # calculate new layer mass
-        self.lice = np.append(self.lice[sf_idx], new_heights*new_density)
-
-        # make sure nlayers and type indexes are updated
-        self.update_layer_props(do=[])
-
-        # CHECK MASS CONSERVATION
-        change = np.sum(self.lice + self.lwater) - initial_mass
-        assert np.abs(change) < args.mb_threshold, f'resize_ice failed mass conservation in {self.args.output_fn}'
-        return
-    
-    def to_decimal_year(self, dates):
-        dates = pd.to_datetime(dates)
-        year = dates.year
-        start_of_year = pd.to_datetime(year.astype(str) + '-01-01')
-        end_of_year = pd.to_datetime((year + 1).astype(str) + '-01-01')
-        year_elapsed = (dates - start_of_year).total_seconds()
-        year_duration = (end_of_year - start_of_year).total_seconds()
-        return year + year_elapsed / year_duration
-    
-    def from_decimal_year(self, decimal_years):
-        years = decimal_years.astype(int)
-        start_of_year = pd.to_datetime(years.astype(str) + '-01-01')
-        end_of_year = pd.to_datetime((years + 1).astype(str) + '-01-01')
-        year_fraction = decimal_years - years
-        year_duration = (end_of_year - start_of_year).total_seconds()
-        fractional_seconds = year_fraction * year_duration
-        return start_of_year + pd.to_timedelta(fractional_seconds, unit='s')

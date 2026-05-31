@@ -25,12 +25,12 @@ import socket
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
 # ====================================================================================================================
 use_config = True       #$ -c, --use_config         Use configuration file?
-output_fn = None        #$ -out, --output_fn        Output file name (None for a default, descriptive name)
-rgi_id = '00.00000'     #$ -id, --rgi_id            RGI glacier ID
+output_fp = None        #$ -out, --output_fp        Output file path (None for a default, descriptive name)
+rgi_ids = None          #$ -ids, --rgi_ids          List of RGI glacier IDs to simulate
+rgi_region = 1          #$ -reg, --rgi_region       RGI region to run (rgi_ids overrides this)
 site = 'center'         #$ -site                    Name of site
 use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
-store_climate = False   #$ -store_climate           Store climate dataset?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
 
@@ -78,7 +78,7 @@ emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator fi
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/{g}/'                            # Generalized glacier filepath
 site_fn = 'site_constants.csv'                              # Name for site constants file
-shading_fn = 'data/by_glacier/{g}/shade/{g}{s}_shade.csv'   # Generalized shading filepath
+shading_fp = 'data/shading/'                                # Generalized shading filepath
 
 # SNICAR
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
@@ -91,7 +91,8 @@ merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of B
 ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of UK-ESM-->MERRA-2 deposition ratio
 ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
-bias_fn = 'data/bias_adjustment/{m}_{g}_{v}.csv'            # Bias adjustment filepath
+bias_fp = 'data/bias_adjustment/'                           # Bias adjustment filepath
+bias_fn = '{m}_{g}_{v}.csv'                                 # Bias adjustment file name format
 
 # OUTPUT
 albedo_out_fn = '../Output/EB/albedo_spectrum_{s}.csv'      # Output filepath for full albedo spectrum
@@ -102,11 +103,14 @@ cds_output_fn = 'default'                                   # 'default' or filen
 # ====================================================================================================================
 #                                            CLIMATE AND TIME INPUTS
 # ====================================================================================================================
-# TIME
+# TEMPORAL
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
 dates_from_data = False                     #$ -dfd, --dates_from_data  Overwrite simulation time with dates from the input AWS data?
 input_cds = False                           #$ -cds, --input_cds        Use a previously prepared cds for climate data (if True, see ++ above)
+
+# SPATIAL 
+bin_step = 100                              # Elevation between bins
 
 # WEATHER STATION SITE
 station_elevation = {                       # Elevation of the stations used in temperature quantile mapping [m a.s.l.]
@@ -122,15 +126,9 @@ elevation = None                            #$ -elevation   Site elevation
 timezone = None                             #$ -timezone    Glacier timezone
 glac_name = None                            #$ -glac_name   Glacier name
 
-# TOPOGRAPHY: Recommended to let the shading model determine these from DEM
-slope = None                                # Site slope [deg]
-aspect = None                               # Site aspect [deg, 0=N]
-sky_view = None                             # Site sky-view factor [-]
-
-# REANALYSIS DATA
-reanalysis = 'MERRA2'                       # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
+# CLIMATE DATA
+climate_source = 'MERRA2'                   # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
 deposition_data = None                      # None or 'UKESM'
-merra2_filetag = None                       # None or string to follow 'MERRA2_VAR_' in MERRA2 filename
 ukesm_vn = (                                # Name of var in UKESM data
         'tendency_of_atmosphere_'
         'mass_content_of_{sp}_dry_aerosol_'
@@ -148,20 +146,20 @@ tp_perturb = 1                              # Multiplicative factor to apply to 
 #                                            MODEL PHYSICS OPTIONS
 # ====================================================================================================================
 # INITIALIATION
-initialize_temp = 'interpolate'     # 'interpolate' or 'ripe'
-initialize_density = 'interpolate'  # 'interpolate' or 'constant'
-initialize_LAPs = 'interpolate'     # 'interpolate' or 'clean' 
-initialize_water = 'dry'            # 'dry' or 'saturated'
-surftemp_guess =  -10               # guess for surface temperature of first timestep [C]
-initial_snow_depth = 1              # default amount of initial snow [m]
-initial_firn_depth = 10             # default amount of initial firn [m] * only for sites identified as accumulation area
-initial_ice_depth = 200             # default amount of initial ice [m]
+initialize_temp = 'interpolate'         # 'interpolate' or 'ripe'
+initialize_density = 'interpolate'      # 'interpolate' or 'constant'
+initialize_LAPs = 'interpolate'         # 'interpolate' or 'clean' 
+initialize_water = 'dry'                # 'dry' or 'saturated'
+surftemp_guess =  -10                   # guess for surface temperature of first timestep [C]
+initial_snow_depth = 1                  # default amount of initial snow [m]
+initial_firn_depth = 10                 # default amount of initial firn [m] * only for sites identified as accumulation area
+initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
-store_vars = ['MB','EB','temp','layers']  # Variables to store of the possible set: ['MB','EB','temp','layers','SW]
-store_bands = False         # Store spectral albedo .csv
+store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
 
 # METHODS
+method_distribute = 'scatter'          # 'weighted', 'constant'
 method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
 method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
@@ -218,13 +216,12 @@ albedo_ice = 0.47           # Ice albedo [-]
 albedo_firn = 0.4           # Albedo of firn [-]
 snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
 snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
-wind_ref_height = 10 if reanalysis in ['ERA5-hourly'] else 2  # Reference height for wind speed [m]
 # <<<<<< Numerical >>>>>>
 dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
 dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 80            # Maximum number of vertical layers allowed (more layers --> larger file size)
+max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
 mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]

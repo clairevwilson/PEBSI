@@ -1,11 +1,16 @@
 
 # Built-in libraries
-import os, sys
-import time
+import os
 # External libraries
 import numpy as np
 import pandas as pd
 import xarray as xr
+# Enable GPU/CPU fluidity
+try:
+    import cupy as cp 
+    xp = cp
+except:
+    xp = np
 
 class Output():
     """
@@ -13,7 +18,7 @@ class Output():
     simulation and saves it to a netcdf file upon
     run completion.
     """
-    def __init__(self,time,args):
+    def __init__(self, time, args, sd):
         """
         Creates netcdf file where the model output 
         will be saved.
@@ -24,31 +29,63 @@ class Output():
             List of times used in the simulation
         args : command-line args
         """
-        # get filename
-        self.out_fn = args.output_fp + args.output_fn
         self.args = args
+        self.sd = sd
 
-        # info needed to create the output file
-        self.n_timesteps = len(time)
-        zeros = np.zeros([self.n_timesteps,args.max_nlayers])
+        # define all the variables to be saved
+        all_variables = {
+            'EB':['SWin','SWout','LWin','LWout', 'rain','ground', 
+                  'sensible','latent', 'meltenergy','albedo','surftemp'],
+            'MB':['melt','refreeze','runoff','cumrefreeze','dh',
+                  'vaporsolid','vaporliquid','accum','rainfall'],
+            'layers':['layertemp','layerdensity','layerwater','layerheight',
+                      'layerage','layertype','layergrainsize','layerrefreeze',
+                      'layerBC','layerOC','layerdust'],
+            'SW':['vis_albedo','SWin_sky','SWin_terr'],
+            'climate':['airtemp','rh','wind','winddir','sp','tp']
+        }
 
-        # create variable name dict
-        vn_dict = {'EB':['SWin','SWout','LWin','LWout','rain','ground',
-                         'sensible','latent','meltenergy','albedo'],
-                   'MB':['melt','refreeze','runoff','cumrefreeze','dh',
-                         'vaporsolid','vaporliquid','accum','rainfall'],
-                   'temp':['airtemp','surftemp'],
-                   'layers':['layertemp','layerdensity','layerwater','layerheight',
-                             'layerage','layertype','layergrainsize','layerrefreeze',
-                             'layerBC','layerOC','layerdust'],
-                    'SW':['vis_albedo','SWin_sky','SWin_terr']}
+        # associate each 1D variable with an index
+        self.var_idx = {}
+        i = 0
+        for otype in ['EB','MB','SW','climate']:
+            for var in all_variables[otype]:
+                self.var_idx[var] = i
+                i += 1 
+
+        # associate each 2D variable with an index
+        self.layer_idx = {}
+        j = 0
+        for var in all_variables['layers']:
+            self.layer_idx[var] = j 
+            j += 1
+
+        # make sure the requested storage variables are valid
+        for v in args.store_vars: assert v in all_variables, f'Invalid output group: {v}'
+
+        # extract the actual variables to store
+        self.store = store_vars = [v for g in args.store_vars for v in all_variables[g]]
+        n_vars_1d = len([v for v in store_vars if 'layer' not in v])
+        n_vars_2d = len([v for v in store_vars if 'layer' in v])
+
+        # generate dummy variables of the correct shape
+        N_TIME = self.n_timesteps = len(time)
+        N_LAYERS = self.max_nlayers = args.max_nlayers
+        N_POINTS = self.n_points = sd.n
+        self.outputs_1d = xp.zeros((N_POINTS, N_TIME, n_vars_1d), dtype=xp.float32)
+        self.outputs_2d = xp.zeros((N_POINTS, N_TIME, N_LAYERS, n_vars_2d), dtype=xp.float32)
+        
+        # Keep tracking variables
+        initial_height = args.initial_ice_depth + args.initial_firn_depth + args.initial_snow_depth
+        self.last_height = xp.full(N_POINTS, initial_height)
         
         # create file to store outputs
-        all_variables = xr.Dataset(data_vars = dict(
+        zeros = np.zeros([N_TIME, N_LAYERS])
+        ds_template = xr.Dataset(data_vars = dict(
+                # ENERGY BALANCE
+                surftemp = (['time'],zeros[:,0],{'units':'C'}),
                 SWin = (['time'],zeros[:,0],{'units':'W m-2'}),
                 SWout = (['time'],zeros[:,0],{'units':'W m-2'}),
-                SWin_sky = (['time'],zeros[:,0],{'units':'W m-2'}),
-                SWin_terr = (['time'],zeros[:,0],{'units':'W m-2'}),
                 LWin = (['time'],zeros[:,0],{'units':'W m-2'}),
                 LWout = (['time'],zeros[:,0],{'units':'W m-2'}),
                 rain = (['time'],zeros[:,0],{'units':'W m-2'}),
@@ -57,7 +94,13 @@ class Output():
                 latent = (['time'],zeros[:,0],{'units':'W m-2'}),
                 meltenergy = (['time'],zeros[:,0],{'units':'W m-2'}),
                 albedo = (['time'],zeros[:,0],{'units':'0-1'}),
+
+                # SHORTWAVE DETAILED
                 vis_albedo = (['time'],zeros[:,0],{'units':'0-1'}),
+                SWin_sky = (['time'],zeros[:,0],{'units':'W m-2'}),
+                SWin_terr = (['time'],zeros[:,0],{'units':'W m-2'}),
+
+                # MASS BALANCE
                 melt = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 refreeze = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 cumrefreeze = (['time'],zeros[:,0],{'units':'m w.e.'}),
@@ -66,8 +109,17 @@ class Output():
                 rainfall = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 vaporliquid = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 vaporsolid = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                dh = (['time'],zeros[:,0],{'units':'m'}),
+
+                # CLIMATE
                 airtemp = (['time'],zeros[:,0],{'units':'C'}),
-                surftemp = (['time'],zeros[:,0],{'units':'C'}),
+                rh = (['time'],zeros[:,0],{'units':'%'}),
+                wind = (['time'],zeros[:,0],{'units':'m s-1'}),
+                winddir = (['time'],zeros[:,0],{'units':'o'}),
+                sp = (['time'],zeros[:,0],{'units':'Pa'}),
+                tp = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                
+                # LAYERS
                 layertemp = (['time','layer'],zeros,{'units':'C'}),
                 layerwater = (['time','layer'],zeros,{'units':'kg m-2'}),
                 layerrefreeze = (['time','layer'],zeros,{'units':'kg m-2'}),
@@ -77,144 +129,136 @@ class Output():
                 layerOC = (['time','layer'],zeros,{'units':'ppb'}),
                 layerdust = (['time','layer'],zeros,{'units':'ppm'}),
                 layergrainsize = (['time','layer'],zeros,{'units':'um'}),
-                layerage = (['time','layer'],zeros),
-                layertype = (['time','layer'],zeros),
-                dh = (['time'],zeros[:,0],{'units':'m'})
-                ),
-                coords=dict(
+                layerage = (['time','layer'],zeros,{'units':'days'}),
+                layertype = (['time','layer'],zeros,{'units':'-'}),
+                ), coords=dict(
                     time=(['time'],time),
-                    layer=(['layer'],np.arange(args.max_nlayers))
-                    ))
-        # select variables from the specified input
-        vars_list = vn_dict[args.store_vars[0]]
-        for var in args.store_vars[1:]:
-            assert var in vn_dict, 'Choose store_vars from [MB,EB,temp,layers,SW]'
-            vars_list.extend(vn_dict[var])
-        self.vars_list = vars_list
+                    layer=(['layer'],np.arange(N_LAYERS))
+                ))
         
-        # create the netcdf file to store output
+        # find the filepath to store the data 
+        self.get_output_names()
+
+        # create the empty file to store output
         if args.store_data:
             if not os.path.exists(args.output_fp):
                 try:
                     os.mkdir(args.output_fp)
                 except:
                     assert os.path.exists(args.output_fp), f'Create output folder at {args.output_filepath}'
-            all_variables[self.vars_list].to_netcdf(self.out_fn)
-
-        # ENERGY BALANCE OUTPUTS
-        self.SWin_output = []       # incoming shortwave [W m-2]
-        self.SWout_output = []      # outgoing shortwave [W m-2]
-        self.LWin_output = []       # incoming longwave [W m-2]
-        self.LWout_output = []      # outgoing longwave [W m-2]
-        self.rain_output = []       # rain energy [W m-2]
-        self.ground_output = []     # ground energy [W m-2]
-        self.sensible_output = []   # sensible energy [W m-2]
-        self.latent_output = []     # latent energy [W m-2]
-        self.meltenergy_output = [] # melt energy [W m-2]
-        self.albedo_output = []     # surface broadband albedo [-]
-
-        # TEMPERATURE OUTPUTS
-        self.airtemp_output = []    # downscaled air temperature [C]
-        self.surftemp_output = []   # surface temperature [C]
-
-        # MASS BALANCE OUTPUTS
-        self.melt_output = []           # melt by timestep [m w.e.]
-        self.refreeze_output = []       # refreeze by timestep [m w.e.]
-        self.cumrefreeze_output = []    # cumulative refreeze by timestep [m w.e.]
-        self.accum_output = []          # accumulation by timestep [m w.e.]
-        self.rainfall_output = []          # accumulation by timestep [m w.e.]
-        self.runoff_output = []         # runoff by timestep [m w.e.]
-        self.dh_output = []             # surface height change by timestep [m]
-        self.vaporliquid_output = []    # liquid-vapor mass flux [m w.e.]  
-        self.vaporsolid_output = []     # solid-vapor mass flux [m w.e.]  
-
-        # DETAILED SHORTWAVE OUTPUTS
-        self.SWin_sky_output = []   # incoming sky shortwave [W m-2]
-        self.SWin_terr_output = []  # incoming terrain shortwave [W m-2]
-        self.vis_albedo_output = [] # surface visible albedo [-]
-
-        # LAYER OUTPUTS
-        self.layertemp_output = dict()      # layer temperature [C]
-        self.layerwater_output = dict()     # layer water content [kg m-2]
-        self.layerdensity_output = dict()   # layer density [kg m-3]
-        self.layerheight_output = dict()    # layer height [m]
-        self.layerBC_output = dict()        # layer black carbon content [ppb]
-        self.layerOC_output = dict()        # layer organic carbon content [ppb]
-        self.layerdust_output = dict()      # layer dust content [ppm]
-        self.layergrainsize_output = dict() # layer grain size [um]
-        self.layerrefreeze_output = dict()  # layer refreeze [kg m-2]
-        self.layerage_output = dict()       # layer age [datetime]
-        self.layertype_output = dict()      # layer type [-]
-        self.last_height = args.initial_ice_depth+args.initial_firn_depth+args.initial_snow_depth
+            
+            self.out_files = []
+            for i, g in enumerate(sd.rgiid_n):
+                out_fn = os.path.join(args.output_fp, args.output_fn.format(g=g, i=i))
+                ds_template[self.store].to_netcdf(out_fn)
+                self.out_files.append(out_fn)
         return
     
-    def store_timestep(self,massbal,enbal,surface,layers,step):
+    def get_output_names(self):
+        """
+        Creates the filepath/name to store the output.
+
+        Parameters
+        ==========
+        args : command-line arguments
+        """
+        args = self.args
+
+        # get output name and store the climate data
+        if args.output_fp is None:
+            model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
+            args.output_fp = f'{args.rgi_region}_{model_run_date}_'
+        # make file name unique by adding an indexer
+        i = 0
+        while os.path.exists(args.output_fp + str(i)):
+            i += 1
+        args.output_fp += str(i) + '/'
+        args.output_fn = '{g}_{i}.nc'
+        self.args = args
+        return
+    
+    def store_timestep(self,massbal,enbal,surface,layers,time_idx):
         """
         Appends the current values to each output list.
 
         Parameters
         ==========
-        massbal
-            Class object from pebsi.massbalance
-        enbal
-            Class object from pebsi.energybalance
-        surface
-            Class object from pebsi.surface
-        layers
-            Class object from pebsi.layers
-        step : pd.Datetime
-            Current timestamp
+        massbal, enbal, surface, layers : object
+            Physics modules containing GPU array attributes
+            of shape (N_POINTS, ) or (N_POINTS, N_LAYERS)
+        time_idx : int
+            Index of current timestamp
         """
         # CONSTANTS
         DENSITY_WATER = self.args.density_water
-        step = str(step)
 
-        # ENERGY BALANCE OUTPUTS
-        self.SWin_output.append(float(enbal.SWin))
-        self.SWout_output.append(float(enbal.SWout))
-        self.LWin_output.append(float(enbal.LWin))
-        self.LWout_output.append(float(enbal.LWout))
-        self.rain_output.append(float(enbal.rain))
-        self.ground_output.append(float(enbal.ground))
-        self.sensible_output.append(float(enbal.sens))
-        self.latent_output.append(float(enbal.lat))
-        self.meltenergy_output.append(float(surface.Qm))
-        self.albedo_output.append(float(surface.bba))
+        # ================================================
+        #                 LOG 1D VARIABLES
+        # ================================================
+        # ENERGY BALANCE
+        self.outputs_1d[:, time_idx, self.var_idx['SWin']] = enbal.SWin
+        self.outputs_1d[:, time_idx, self.var_idx['SWout']] = enbal.SWout
+        self.outputs_1d[:, time_idx, self.var_idx['LWin']] = enbal.LWin
+        self.outputs_1d[:, time_idx, self.var_idx['LWout']] = enbal.LWout
+        self.outputs_1d[:, time_idx, self.var_idx['rain']] = enbal.rain
+        self.outputs_1d[:, time_idx, self.var_idx['ground']] = enbal.ground
+        self.outputs_1d[:, time_idx, self.var_idx['sensible']] = enbal.sens
+        self.outputs_1d[:, time_idx, self.var_idx['latent']] = enbal.lat
+        self.outputs_1d[:, time_idx, self.var_idx['meltenergy']] = surface.Qm
+        self.outputs_1d[:, time_idx, self.var_idx['albedo']] = surface.bba
+        self.outputs_1d[:, time_idx, self.var_idx['surftemp']] = surface.stemp
+
+        # SHORTWAVE        
+        self.outputs_1d[:, time_idx, self.var_idx['vis_albedo']] = surface.vis_a
+        self.outputs_1d[:, time_idx, self.var_idx['SWin_sky']] = enbal.SWin_sky
+        self.outputs_1d[:, time_idx, self.var_idx['SWin_terr']] = enbal.SWin_terr
+
+        # MASS BALANCE
+        self.outputs_1d[:, time_idx, self.var_idx['melt']] = massbal.melt
+        self.outputs_1d[:, time_idx, self.var_idx['refreeze']] = massbal.refreeze
+        self.outputs_1d[:, time_idx, self.var_idx['runoff']] = massbal.runoff
+        self.outputs_1d[:, time_idx, self.var_idx['accum']] = massbal.accum
+        self.outputs_1d[:, time_idx, self.var_idx['rainfall']] = massbal.rainfall
+        self.outputs_1d[:, time_idx, self.var_idx['vaporliquid']] = massbal.vapor_liquid / DENSITY_WATER
+        self.outputs_1d[:, time_idx, self.var_idx['vaporsolid']] = massbal.vapor_solid / DENSITY_WATER
+
+        # CLIMATE
+        self.outputs_1d[:, time_idx, self.var_idx['airtemp']] = enbal.tempC
+        self.outputs_1d[:, time_idx, self.var_idx['rh']] = enbal.rh
+        self.outputs_1d[:, time_idx, self.var_idx['wind']] = enbal.wind
+        self.outputs_1d[:, time_idx, self.var_idx['winddir']] = enbal.winddir
+        self.outputs_1d[:, time_idx, self.var_idx['sp']] = enbal.sp
+        self.outputs_1d[:, time_idx, self.var_idx['tp']] = enbal.tp
+
+        # =====================================================================
+        #          LOG TIMESTEP SCALAR CALCULATIONS (dh & cumrefreeze)
+        # =====================================================================
+        # sum heights across layers for all points simultaneously: shape (N_POINTS,)
+        current_heights = xp.sum(layers.lheight, axis=1) 
+        dh_step = current_heights - self.last_height
+        self.outputs_1d[:, time_idx, self.var_idx['melt']] = dh_step
+        self.last_height = current_heights.copy()
+
+        # cumulative refreeze across layers: shape (N_POINTS,)
+        cumrefreeze_step = xp.sum(layers.lrefreeze, axis=1) / DENSITY_WATER
+        self.outputs_1d[:, time_idx, self.var_idx['cumrefreeze']] = cumrefreeze_step
         
-        # TEMPERATURE OUTPUTS
-        self.surftemp_output.append(float(surface.stemp))
-        self.airtemp_output.append(float(enbal.tempC))
-
-        # MASS BALANCE OUTPUTS
-        self.melt_output.append(float(massbal.melt))
-        self.refreeze_output.append(float(massbal.refreeze))
-        self.cumrefreeze_output.append(float(np.sum(layers.lrefreeze))/DENSITY_WATER)
-        self.runoff_output.append(float(massbal.runoff))
-        self.accum_output.append(float(massbal.accum))
-        self.rainfall_output.append(float(massbal.rainfall))
-        self.dh_output.append(np.sum(layers.lheight)-self.last_height)
-        self.last_height = np.sum(layers.lheight)
-        self.vaporliquid_output.append(massbal.vapor_liquid/DENSITY_WATER)
-        self.vaporsolid_output.append(massbal.vapor_solid/DENSITY_WATER)
-
-        # LAYER OUTPUTS
-        self.layertemp_output[step] = layers.ltemp.copy()
-        self.layerwater_output[step] = layers.lwater.copy()
-        self.layerheight_output[step] = layers.lheight.copy()
-        self.layerdensity_output[step] = layers.ldensity.copy()
-        self.layerBC_output[step] = layers.lBC / layers.lheight * 1e6
-        self.layerOC_output[step] = layers.lOC / layers.lheight * 1e6
-        self.layerdust_output[step] = layers.ldust / layers.lheight * 1e3
-        self.layergrainsize_output[step] = layers.lgrainsize.copy()
-        self.layerrefreeze_output[step] = layers.lrefreeze.copy()
-        self.layerage_output[step] = layers.lage.copy()
-        mapping = {'snow': 0, 'firn': 1, 'ice': 2}
-        self.layertype_output[step] = [mapping[l] for l in layers.ltype]
-
-        # DETAILED SHORTWAVE OUTPUTS
-        self.vis_albedo_output.append(float(surface.vis_a))
-        self.SWin_sky_output.append(float(enbal.SWin_sky))
-        self.SWin_terr_output.append(float(enbal.SWin_terr))
+        # =====================================================================
+        #               LOG 2D LAYER PROFILE VARIABLES
+        # =====================================================================
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layertemp']] = layers.ltemp
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerwater']] = layers.lwater
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerheight']] = layers.lheight
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerdensity']] = layers.ldensity
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerrefreeze']] = layers.lrefreeze
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layergrainsize']] = layers.lgrainsize
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layertype']] = layers.ltype_numeric
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerage']] = layers.lage_numeric
+        
+        # calculate concentrations of LAPs in proper units
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerBC']] = (layers.lBC / layers.lheight) * 1e6
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerOC']] = (layers.lOC / layers.lheight) * 1e6
+        self.outputs_2d[:, time_idx, :, self.layer_idx['layerdust']] = (layers.ldust / layers.lheight) * 1e3
         return
 
     def store_data(self):
@@ -223,109 +267,44 @@ class Output():
         """
         args = self.args 
 
-        # load output dataset
-        with xr.open_dataset(self.out_fn) as dataset:
-            ds = dataset.load()
-            # store variables
-            if 'EB' in args.store_vars:
-                ds['SWin'].values = self.SWin_output
-                ds['SWout'].values = self.SWout_output
-                ds['LWin'].values = self.LWin_output
-                ds['LWout'].values = self.LWout_output
-                ds['rain'].values = self.rain_output
-                ds['ground'].values = self.ground_output
-                ds['sensible'].values = self.sensible_output
-                ds['latent'].values = self.latent_output
-                ds['meltenergy'].values = self.meltenergy_output
-                ds['albedo'].values = self.albedo_output
-            if 'MB' in args.store_vars:
-                ds['melt'].values = self.melt_output
-                ds['refreeze'].values = self.refreeze_output
-                ds['runoff'].values = self.runoff_output
-                ds['accum'].values = self.accum_output
-                ds['rainfall'].values = self.rainfall_output
-                ds['dh'].values = self.dh_output
-                ds['cumrefreeze'].values = self.cumrefreeze_output
-                ds['vaporliquid'].values = self.vaporliquid_output
-                ds['vaporsolid'].values = self.vaporsolid_output
-            if 'temp' in args.store_vars:
-                ds['airtemp'].values = self.airtemp_output
-                ds['surftemp'].values = self.surftemp_output
-            if 'SW' in args.store_vars:
-                ds['SWin_sky'].values = self.SWin_sky_output
-                ds['SWin_terr'].values = self.SWin_terr_output
-                ds['vis_albedo'].values = self.vis_albedo_output
-            if 'layers' in args.store_vars:
-                layertemp_output = pd.DataFrame.from_dict(self.layertemp_output,orient='index')
-                layerdensity_output = pd.DataFrame.from_dict(self.layerdensity_output,orient='index')
-                layerheight_output = pd.DataFrame.from_dict(self.layerheight_output,orient='index')
-                layerwater_output = pd.DataFrame.from_dict(self.layerwater_output,orient='index')
-                layerBC_output = pd.DataFrame.from_dict(self.layerBC_output,orient='index')
-                layerOC_output = pd.DataFrame.from_dict(self.layerOC_output,orient='index')
-                layerdust_output = pd.DataFrame.from_dict(self.layerdust_output,orient='index')
-                layergrainsize_output = pd.DataFrame.from_dict(self.layergrainsize_output,orient='index')
-                layerrefreeze_output = pd.DataFrame.from_dict(self.layerrefreeze_output,orient='index')
-                layerage_output = pd.DataFrame.from_dict(self.layerage_output,orient='index')
-                layertype_output = pd.DataFrame.from_dict(self.layertype_output,orient='index')
+        # pull all the data to the CPU
+        if hasattr(self.outputs_1d, 'get'):
+            cpu_1d = self.outputs_1d.get()     # Shape: [N_POINTS, N_TIME, n_vars_1d]
+            cpu_2d = self.outputs_2d.get()     # Shape: [N_POINTS, N_TIME, N_LAYERS, n_vars_2d]
+        else:
+            cpu_1d = self.outputs_1d 
+            cpu_2d = self.outputs_2d
 
-                if len(layertemp_output.columns) < args.max_nlayers:
-                    n_columns = len(layertemp_output.columns)
-                    # Build the missing column names
-                    missing_cols = [str(i) for i in range(n_columns, args.max_nlayers)]
+        # loop through glaciers 
+        for i, out_fn in enumerate(self.out_files):
+            # slice the data to this glacier 
+            point_1d = cpu_1d[i, :, :]    # (N_TIME, N_1D_VARS)
+            point_2d = cpu_2d[i, :, :, :] # (N_TIME, N_LAYERS, N_2D_VARS)
 
-                    # Build a DataFrame of NaNs once
-                    nan_block = pd.DataFrame(
-                        np.full((self.n_timesteps, len(missing_cols)), np.nan),
-                        columns=missing_cols,index=layertemp_output.index,
-                    )
+            # open and populate the dataset
+            with xr.open_dataset(out_fn) as dataset:
+                ds = dataset.load()
 
-                    # Now append to each output DataFrame in one shot
-                    layertemp_output = pd.concat([layertemp_output, nan_block], axis=1)
-                    layerdensity_output = pd.concat([layerdensity_output, nan_block], axis=1)
-                    layerheight_output = pd.concat([layerheight_output, nan_block], axis=1)
-                    layerwater_output = pd.concat([layerwater_output, nan_block], axis=1)
-                    layerBC_output = pd.concat([layerBC_output, nan_block], axis=1)
-                    layerOC_output = pd.concat([layerOC_output, nan_block], axis=1)
-                    layerdust_output = pd.concat([layerdust_output, nan_block], axis=1)
-                    layergrainsize_output = pd.concat([layergrainsize_output, nan_block], axis=1)
-                    layerrefreeze_output = pd.concat([layerrefreeze_output, nan_block], axis=1)
-                    layerage_output = pd.concat([layerage_output, nan_block], axis=1)
-                    layertype_output = pd.concat([layertype_output, nan_block], axis=1)
+                # iterate through only the user-requested storage variables
+                for var in self.store:
+                    # 1D time variables
+                    if 'layer' not in var:
+                        var_idx = self.var_idx[var]
+                        ds[var].values = point_1d[:, var_idx]
+                    
+                    # 2D layer / time variables
+                    else:
+                        layer_idx = self.layer_idx[var]
+                        ds[var].values = point_2d[:, :, layer_idx]
 
-                else:
-                    n = len(layertemp_output.columns)
-                    assert 1==0, f'Need to increase max_nlayers: currently have {n} layers'
+                # add some helpful variables
+                ds = self.add_vars(ds)
 
-                ds['layertemp'].values = layertemp_output
-                ds['layerheight'].values = layerheight_output
-                ds['layerdensity'].values = layerdensity_output
-                ds['layerwater'].values = layerwater_output
-                ds['layerBC'].values = layerBC_output
-                ds['layerOC'].values = layerOC_output
-                ds['layerdust'].values = layerdust_output
-                ds['layergrainsize'].values = layergrainsize_output
-                ds['layerrefreeze'].values = layerrefreeze_output
-                ds['layertype'].values = layertype_output
-
-                # handle datetime object for layerage
-                arr = np.asarray(layerage_output, dtype=object)
-                arr[pd.isna(arr)] = np.datetime64("NaT")
-                ds['layerage'].values = arr.astype("datetime64[ns]")
-
-        encoding = {
-            "layerage": {
-                "units": "seconds since 1970-01-01 00:00:00",
-                "calendar": "standard",
-                "dtype":"float64"
-            }
-        }
-
-        # save NetCDF
-        ds.to_netcdf(self.out_fn, encoding=encoding)
-
-        return ds
+            # save the full dataset back to its output
+            ds.to_netcdf(out_fn)
+        return
     
-    def add_vars(self):
+    def add_vars(self, ds):
         """
         Calculates additional variables from other
         existing variables in the output dataset.
@@ -334,33 +313,26 @@ class Output():
         - Net radiation NetRad [W m-2]
         - Net mass balance MB [m w.e.]
         """
-        if 'SWin' in self.vars_list:
-            with xr.open_dataset(self.out_fn) as dataset:
-                ds = dataset.load()
+        # add summed radiation terms
+        SWnet = ds['SWin'] + ds['SWout']
+        LWnet = ds['LWin'] + ds['LWout']
+        NetRad = SWnet + LWnet
+        ds['SWnet'] = (['time'],SWnet.values,{'units':'W m-2'})
+        ds['LWnet'] = (['time'],LWnet.values,{'units':'W m-2'})
+        ds['NetRad'] = (['time'],NetRad.values,{'units':'W m-2'})
 
-                # add summed radiation terms
-                SWnet = ds['SWin'] + ds['SWout']
-                LWnet = ds['LWin'] + ds['LWout']
-                NetRad = SWnet + LWnet
-                ds['SWnet'] = (['time'],SWnet.values,{'units':'W m-2'})
-                ds['LWnet'] = (['time'],LWnet.values,{'units':'W m-2'})
-                ds['NetRad'] = (['time'],NetRad.values,{'units':'W m-2'})
+        # add summed mass balance term
+        MB = ds['accum'] + ds['refreeze'] - ds['melt']
+        ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
 
-                # add summed mass balance term
-                MB = ds['accum'] + ds['refreeze'] - ds['melt']
-                ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
-
-                # add snow, firn, and ice depth
-                snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
-                firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
-                icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
-                ds['snowdepth'] = (['time'],snowdepth.values,{'units':'m'})
-                ds['firndepth'] = (['time'],firndepth.values,{'units':'m'})
-                ds['icedepth'] = (['time'],icedepth.values,{'units':'m'})
-
-            # save NetCDF 
-            ds.to_netcdf(self.out_fn)
-        return
+        # add snow, firn, and ice depth
+        snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
+        firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
+        icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
+        ds['snowdepth'] = (['time'],snowdepth.values,{'units':'m'})
+        ds['firndepth'] = (['time'],firndepth.values,{'units':'m'})
+        ds['icedepth'] = (['time'],icedepth.values,{'units':'m'})
+        return ds
     
     def add_basic_attrs(self,args,time_elapsed,climate):
         """
@@ -381,10 +353,10 @@ class Output():
         climate
             Class object from pebsi.climate
         """
+        # get elapsed time
         time_elapsed = f'{time_elapsed:.1f} s'
-        elev = str(args.elevation)+' m a.s.l.'
 
-        # get information on variable sources (AWS or reanalysis)
+        # get inforation about climate data sources
         which_re = args.reanalysis
         re_str = ''
         if args.use_aws:
@@ -413,74 +385,82 @@ class Output():
         corr_str = 'none' if corr_str == '' else corr_str
         
         # load the output dataset
-        with xr.open_dataset(self.out_fn) as dataset:
-            ds = dataset.load()
+        for i, out_fn in enumerate(self.out_files):
+            with xr.open_dataset(self.out_fn) as dataset:
+                ds = dataset.load()
 
-        # store basic attributes
-        ds = ds.assign_attrs(glacier=args.glac_name,
-                                id=args.rgi_id,
-                                elevation=elev,
-                                site=args.site,
-                                from_AWS=AWS_str,
-                                which_AWS=which_AWS,
-                                from_reanalysis=re_str,
-                                which_reanalysis=which_re,
-                                bias_corrected=corr_str,
-                                sim_start=str(args.start_date),
-                                sim_end=str(args.end_date),
-                                model_run_date=str(pd.Timestamp.today()),
-                                time_elapsed=time_elapsed,
-                                run_by=args.machine)
-        if args.task_id > -1:
-            ds = ds.assign_attrs(task_id=str(args.task_id))
+            elev = f'{self.sd.elev_n[i]} m a.s.l.'
+            rgiid = str(self.sd.rgiid_n[i])
+            lat = str(self.sd.lat_n[i])
+            lon = str(self.sd.lon_n[i])
 
-        # list variables from config that can be skipped
-        skip = ['store_data','progress_bar','debug', 'fff',
-                    'dates_from_data','reanalysis',
-                    'bias_vars', 'aws_elev', 'output_fn',
-                    'glac_name', 'site', 'rgi_id',
-                    'start_date','end_date','machine']
-        skip_in_config = skip + args.cmd_args
+            # store basic attributes
+            ds = ds.assign_attrs(
+                elevation=elev,
+                id=rgiid,
+                lat=lat,
+                lon=lon,
+                from_AWS=AWS_str,
+                which_AWS=which_AWS,
+                from_reanalysis=re_str,
+                which_reanalysis=which_re,
+                bias_corrected=corr_str,
+                sim_start=str(args.start_date),
+                sim_end=str(args.end_date),
+                model_run_date=str(pd.Timestamp.today()),
+                time_elapsed=time_elapsed,
+                run_by=args.machine
+            )
 
-        # add args that were specified in config file
-        if args.use_config:
-            import yaml
-            with open(args.config_fn) as f:
-                config_inputs = yaml.safe_load(f)
-    
-            new_attrs = {}
-            for key, value in config_inputs.items():
-                if key not in skip_in_config:
+            if args.task_id > -1:
+                ds = ds.assign_attrs(task_id=str(args.task_id))
+
+            # list variables from config that can be skipped
+            skip = ['store_data','progress_bar','debug', 'fff',
+                        'dates_from_data','climate_source',
+                        'bias_vars', 'aws_elev', 'output_fn',
+                        'rgiids','start_date','end_date','machine']
+            skip_in_config = skip + args.cmd_args
+
+            # add args that were specified in config file
+            if args.use_config:
+                import yaml
+                with open(args.config_fn) as f:
+                    config_inputs = yaml.safe_load(f)
+        
+                new_attrs = {}
+                for key, value in config_inputs.items():
+                    if key not in skip_in_config:
+                        if type(value) == list:
+                            store = ', '.join(value)
+                        elif type(value) == bool:
+                            store = str(value)
+                        else:
+                            store = value
+                        new_attrs[key] = store
+                ds = ds.assign_attrs(**new_attrs)
+
+            # add args that were specified in command line
+            cmd_attrs = {}
+            for key in args.cmd_args:
+                if key not in skip:
+                    value = getattr(args, key)
                     if type(value) == list:
                         store = ', '.join(value)
                     elif type(value) == bool:
                         store = str(value)
                     else:
                         store = value
-                    new_attrs[key] = store
-            ds = ds.assign_attrs(**new_attrs)
+                    cmd_attrs[key] = store
+            ds = ds.assign_attrs(**cmd_attrs)
 
-        # add args that were specified in command line
-        cmd_attrs = {}
-        for key in args.cmd_args:
-            if key not in skip:
-                value = getattr(args, key)
-                if type(value) == list:
-                    store = ', '.join(value)
-                elif type(value) == bool:
-                    store = str(value)
-                else:
-                    store = value
-                cmd_attrs[key] = store
-        ds = ds.assign_attrs(**cmd_attrs)
-
-        # save NetCDF
-        ds.to_netcdf(self.out_fn)
+            # save NetCDF
+            ds.to_netcdf(self.out_fn)
 
         # success printout
-        print(f'~ Saved {args.glac_name.capitalize()} {args.site} model output to {self.out_fn} ~')
+        print(f"~ Successfully saved model outputs across {self.n_points} points in {args.output_fp} ~")
         return
-    
+
     def add_attrs(self,new_attrs):
         """
         Adds new attributes as a dict to the output dataset.
@@ -490,19 +470,22 @@ class Output():
         new_attrs : dict
             Attributes to store
         """
-        with xr.open_dataset(self.out_fn) as dataset:
-            ds = dataset.load()
-            if not new_attrs:
-                return ds
-            ds = ds.assign_attrs(new_attrs)
-        ds.to_netcdf(self.out_fn)
+        if not new_attrs:
+            return 
+        
+        for out_fn in self.out_files:
+            with xr.open_dataset(self.out_fn) as dataset:
+                ds = dataset.load()
+                ds = ds.assign_attrs(new_attrs)
+            ds.to_netcdf(self.out_fn)
         return
     
-    def get_output(self):
+    def get_output(self, i):
         """
-        Returns the output dataset.
+        Returns the output dataset for a given 
+        index in the points array.
         """
-        return xr.open_dataset(self.out_fn)
+        return xr.open_dataset(self.out_files[i])
     
     def delete_temp_files(self):
         """

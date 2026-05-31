@@ -10,21 +10,13 @@
 # ================================================
 store_data: false
 debug: true
-output_fn: 'test_simulation'
+output_fp: 'test_simulation/'
 start_date: '2024-04-20'
 end_date: '2024-05-20'
 
-# ================================================
-#                SITE INFORMATION
-# ================================================
-rgi_id: '00.00000'
-site: 'center'
-glac_name: 'test'
-timezone: 0
-
-# ================================================
-#                CLIMATE OPTIONS
-# ================================================
-use_aws: true
-aws_fn: 'data/sample_aws.csv'
-aws_elev: 1500
+rgi_ids: ['01.00570']
+dem_fn: '../DEMs/gulkana_dem.tif'
+# shading_fp: '/trace/group/rounce/cvwilson/shading/'
+climate_fp: '/Volumes/TOSHIBA EXT/'
+method_snicar: 'emulator'
+method_distribute: 'none'
