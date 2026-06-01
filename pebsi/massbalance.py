@@ -10,6 +10,7 @@ in an hourly time loop.
 # Built-in libraries
 from tqdm import tqdm
 import time as pytime
+from types import SimpleNamespace
 # External libraries
 import numpy as np
 import pandas as pd
@@ -57,7 +58,7 @@ class massBalance():
         self.N_TIME = len(self.time_list)
         self.N_POINTS = self.sd.n
 
-        # initialize variables (N_POINTS)
+        # initialize variables
         self.firn_converted = xp.zeros(self.N_POINTS)
         self.ice_exposed = xp.zeros(self.N_POINTS)  
         self.days_since_snowfall = xp.zeros(self.N_POINTS)  
@@ -72,7 +73,7 @@ class massBalance():
 
         # update climate variables with args parameters
         PRECIP_FACTOR = args.kp
-        self.climate.cds.tp.values *= PRECIP_FACTOR
+        self.climate.tp_nt *= PRECIP_FACTOR
         return
     
     def main(self):
@@ -92,7 +93,7 @@ class massBalance():
         # ===== ENTER TIME LOOP =====
         for time_idx, time in enumerate(self.iterable(self.time_list, desc='Main loop')):
             # >>> INITIALIZE TIMESTEP <<<
-            self.time, self.ti = time, time_idx
+            self.ti, self.time = time_idx, time
             self.timer.update()
 
             # initialize the energy balance to unpack climate data for this timestep
@@ -106,7 +107,7 @@ class massBalance():
             snowfall = self.accumulation(snowfall)
 
             # add dry deposited BC, OC and dust to layers
-            enbal.get_dry_deposition(layers)
+            self.get_dry_deposition()
 
             # >>> UPDATE GRAIN SIZE <<<
             self.get_grain_size()
@@ -123,6 +124,7 @@ class massBalance():
 
             # >>> SURFACE ENERGY BALANCE <<<
             # simultaneously solve surface energy balance and surface temperature
+            # LEFT OFF HERE: PREPROCESS SHORTWAVE FOR SHADING AND TERRAIN IN CLIMATE
             surface.get_surftemp(enbal,layers)
 
             # >>> MELTING <<<
@@ -236,19 +238,14 @@ class massBalance():
         rain_scale = np.linspace(0,1,20)
         temp_scale = np.linspace(SNOW_THRESHOLD_LOW,SNOW_THRESHOLD_HIGH,20)
 
-        if enbal.tempC <= SNOW_THRESHOLD_LOW: 
-            # precip falls as snow
-            rain = 0
-            snow = enbal.tp*DENSITY_WATER
-        elif SNOW_THRESHOLD_LOW < enbal.tempC < SNOW_THRESHOLD_HIGH:
-            # mix of rain and snow
-            fraction_rain = np.interp(enbal.tempC,temp_scale,rain_scale)
-            rain = enbal.tp*fraction_rain*DENSITY_WATER
-            snow = enbal.tp*(1-fraction_rain)*DENSITY_WATER
-        else:
-            # precip falls as rain
-            rain = enbal.tp*DENSITY_WATER
-            snow = 0
+        # calculate fraction of rain
+        fraction_rain = np.interp(enbal.tempC,temp_scale,rain_scale)
+        rain = enbal.tp * fraction_rain * DENSITY_WATER 
+        snow = enbal.tp*(1-fraction_rain)*DENSITY_WATER
+
+        # make sure cropped to boundaries correctly
+        rain = xp.where(enbal.tempC <= SNOW_THRESHOLD_LOW, 0, rain)
+        snow = xp.where(enbal.tempC > SNOW_THRESHOLD_HIGH, 0, snow)
         
         return rain,snow  # kg m-2
     
@@ -270,127 +267,126 @@ class massBalance():
             Actual snow mass that was added [kg m-2]
         """
         # get classes
-        layers = self.layers
         enbal = self.enbal
         args = self.args
+        layers = self.layers
 
         # add delayed snow to snowfall
         snowfall += layers.delayed_snow
-        if snowfall == 0:
+        if np.all(snowfall) == 0:
             # skip this function if no snow
             return 0
         
         # define initial mass for conservation check
-        initial_mass = np.sum(layers.lice + layers.lwater)
+        initial_mass = xp.sum(layers.lice + layers.lwater)
 
-        # check switches
-        if int(self.args.switch_snow) == 0:
-            # snow falls with the same properties as the current top layer
-            new_density = layers.ldensity[0]
-            new_height = snowfall/new_density
-            new_grainsize = layers.lgrainsize[0]
-            new_BC = layers.lBC[0]/layers.lheight[0]*new_height
-            new_OC = layers.lOC[0]/layers.lheight[0]*new_height
-            new_dust = layers.ldust[0]/layers.lheight[0]*new_height
-            new_age = layers.lage[0]
-        elif int(self.args.switch_snow) == 1:
-            # check if using constant density for new snow
-            if args.constant_snowfall_density:
-                new_density = args.constant_snowfall_density
-            else:
-                # CROCUS formulation of density (Vionnet et al. 2012)
-                new_density = max(109+6*(enbal.tempC-0.)+26*enbal.wind**0.5,50)
-            
-            # check if using constant grain size for new snow
-            if args.constant_freshgrainsize:
-                new_grainsize = args.constant_freshgrainsize
-            else:
-                # CLM formulation of grain size (CLM5.0 Documentation)
-                airtemp = enbal.tempC
-                new_grainsize = np.piecewise(airtemp,
-                                    [airtemp<=-30,-30<airtemp<0,airtemp>=0],
-                                    [54.5,54.5+5*(airtemp+30),204.5])
-
-            # height and age of new layer
-            new_height = snowfall/new_density
-            new_age = self.time
-
-            # wet deposition occurs in snowfall
-            new_BC = enbal.bcwet * enbal.dt
-            new_OC = enbal.ocwet * enbal.dt
-            new_dust = enbal.dustwet * enbal.dt
-            
-            # update new snow timestamp
-            self.surface.snow_timestamp = self.ti
-
-        # check switch for LAPs
-        if int(args.switch_LAPs) != 1:
-            new_BC = 0
-            new_OC = 0
-            new_dust = 0
-            
-        # conditions: if any are TRUE, create a new layer
-        new_layer_cond = np.array([layers.ltype[0] in 'ice',
-                            layers.ltype[0] in 'firn',
-                            layers.ldensity[0] > new_density*3])
-        # unless there is a small surface layer, then combine new snow
-        small_surf_layer = layers.lheight[0] < 1e-3 and layers.ltype[0] != 'ice'
-
-        # check conditions for a new layer
-        if np.any(new_layer_cond) and not small_surf_layer:
-            # check if there is enough snow to create a new layer (1 mm cutoff)
-            if new_height < 1e-3:
-                # delay small amounts of snowfall: avoids computational issues
-                layers.delayed_snow = snowfall
-                return 0 # no snow was added so return 0
-            else:
-                # create a dataframe of all the new properties
-                new_layer = pd.DataFrame([enbal.tempC,0,snowfall/new_density,'snow',snowfall,
-                                      new_grainsize,new_BC,new_OC,new_dust,new_age],
-                                     index=['T','w','h','t','m','g','BC','OC','dust','time'])
-                # add the layer and reset delayed_snow to 0
-                layers.add_layers(new_layer)
-                layers.delayed_snow = 0
+        # check if using constant density for new snow
+        if args.constant_snowfall_density:
+            new_density = args.constant_snowfall_density
         else:
-            # get new layers mass
-            new_layermass = layers.lice[0] + snowfall
+            # CROCUS formulation of density (Vionnet et al. 2012)
+            new_density = xp.maximum(109+6*(enbal.tempC-0.)+26*enbal.wind**0.5,50)
+        
+        # check if using constant grain size for new snow
+        if args.constant_freshgrainsize:
+            new_grainsize = args.constant_freshgrainsize
+        else:
+            # CLM formulation of grain size (CLM5.0 Documentation)
+            airtemp = enbal.tempC
+            new_grainsize = xp.select(
+                [airtemp <= -30, airtemp < 0],
+                [54.5, 54.5 + 5 * (airtemp + 30)],
+                default=204.5
+            )
 
-            # take mass-weighted average surface layer and new snow
-            layers.ldensity[0] = (layers.ldensity[0]*layers.lice[0] + new_density*snowfall)/(new_layermass)
-            layers.ltemp[0] = (layers.ltemp[0]*layers.lice[0] + enbal.tempC*snowfall)/(new_layermass)
-            layers.lgrainsize[0] = (layers.lgrainsize[0]*layers.lice[0] + new_grainsize*snowfall)/(new_layermass)
+        # height and age of new layer
+        new_height = snowfall/new_density
+        new_age = xp.zeros_like(snowfall)
 
-            # mass-weighted age
-            decimal_time = layers.to_decimal_year([self.time, layers.lage[0]])
-            layer_mass = np.array([snowfall, layers.lice[0]])
-            mean_time = np.sum(decimal_time*layer_mass)/np.sum(layer_mass)
-            layers.lage[0] = layers.from_decimal_year(mean_time)
+        # wet deposition occurs in snowfall
+        new_BC = enbal.bcwet * enbal.dt
+        new_OC = enbal.ocwet * enbal.dt
+        new_dust = enbal.dustwet * enbal.dt
 
-            # add mass to layers
-            layers.lice[0] = new_layermass
-            layers.lheight[0] += snowfall/new_density
+        # pack properties of new layer into a namespace
+        new_layer = SimpleNamespace(
+            ltemp = enbal.tempC,
+            lheight = snowfall / new_density,
+            ltype = xp.full_like(enbal.tempC, 0),
+            lice = snowfall,
+            ldensity = new_density,
+            lgrainsize = new_grainsize,
+            lBC = new_BC,
+            lOC = new_OC,
+            ldust = new_dust,
+            lage = new_age,
+            lwater = xp.full_like(enbal.tempC, 0),
+            lrefreeze = xp.full_like(enbal.tempC, 0),
+            drefreeze = xp.full_like(enbal.tempC, 0)
+        )
+        
+        # define conditions for making a new layer for accumulation
+        surf_not_snow = (layers.ltype[:, 0] > 0)
+        density_threshold = (layers.ldensity[:, 0] > (new_density * 3))
+        new_layer_cond = surf_not_snow | density_threshold
+
+        # check for small surface snow layer (merge new snow with it no matter what)
+        small_surf_layer = (layers.lheight[:, 0] < 1e-3) & (layers.ltype[:, 0] == 0)
+
+        # CASE 1: points in which a new layer is created (have enough snow)
+        create_new_mask = new_layer_cond & (~small_surf_layer) & (new_height >= 1e-3)
+        if xp.any(create_new_mask):
+            layers.add_top_layer(create_new_mask, new_layer)
+
+        # CASE 2: points that delay snowfall (want a new layer, but too little snowfall)
+        delay_snow_mask = new_layer_cond & (~small_surf_layer) & (new_height < 1e-3)
+        layers.delayed_snow[delay_snow_mask] = snowfall[delay_snow_mask]
+
+        # CASE 3: points where the new snow is merged with existing surface layer
+        merge_snow_mask = (~new_layer_cond) | small_surf_layer
+        if xp.any(merge_snow_mask):
+            layers.merge_new_layer(merge_snow_mask, new_layer)
             
-            # sum LAPs
-            layers.lBC[0] = layers.lBC[0] + new_BC
-            layers.lOC[0] = layers.lOC[0] + new_OC
-            layers.ldust[0] = layers.ldust[0] + new_dust
-            
-            # check if layer got too big and needs to be split
-            if layers.lheight[0] > (args.dz_toplayer * 2):
-                layers.split_layer(0)
-            
-            # reset delayed snow
-            layers.delayed_snow = 0
+        # reset delayed snow andb set snow_timestamp wherever action took place
+        action_taken_mask = create_new_mask | merge_snow_mask
+        layers.delayed_snow[action_taken_mask] = 0.0
+        self.surface.snow_timestamp[action_taken_mask] = self.ti
+
+        # if the layer grew too large, split it
+        too_large_mask = layers.lheight[:, 0] > (args.dz_toplayer * 2)
+        if np.any(too_large_mask):
+            layers.split_layer(too_large_mask, 0)
 
         # update layer depth from new layer heights
         layers.update_layer_props()
 
         # CHECK MASS CONSERVATION
-        change = np.sum(layers.lice + layers.lwater) - initial_mass
-        assert np.abs(change - snowfall) < args.mb_threshold
+        change = xp.sum(layers.lice + layers.lwater) - initial_mass
+        fail_str = f'accumulation failed mass conservation in {self.output.out_fn}'
+        assert xp.abs(change - xp.sum(snowfall)) < args.mb_threshold, fail_str
 
         # return actual snowfall that was added, including any delayed_snow
         return snowfall
+    
+    def get_dry_deposition(self):
+        """
+        Adds dry deposition of light-absorbing particles
+        to the surface layer.
+
+        Parameters
+        ==========
+        layers
+            Class object from pebsi.layers
+        """
+        layers = self.layers 
+        enbal = self.enbal 
+
+        # add LAPs to top layer except where it is ice
+        mask = layers.ltype[:, 0] < 2
+        layers.lBC[mask, 0] += enbal.bcdry * self.dt 
+        layers.lOC[mask, 0] += enbal.ocdry * self.dt 
+        layers.ldust[mask, 0] += enbal.dustdry * self.dt
+        return
     
     def get_grain_size(self):
         """
@@ -417,112 +413,119 @@ class massBalance():
         airtemp = enbal.tempC
         surftemp = surface.stemp
 
+        # find fresh snow grainsize
         if args.constant_freshgrainsize:
             FRESH_GRAINSIZE = args.constant_freshgrainsize
         else:
-            FRESH_GRAINSIZE = np.piecewise(airtemp,[airtemp<=-30,-30<airtemp<0,airtemp>=0],
-                                       [54.5,54.5+5*(airtemp+30),204.5])
+            FRESH_GRAINSIZE = xp.select(
+                [airtemp <= -30, airtemp < 0],
+                [54.5, 54.5 + 5 * (airtemp + 30)],
+                default=204.5
+            )[:, xp.newaxis]
+
+        # define snow, firn and ice masks 
+        snow_mask = layers.snow_mask 
+        firn_mask = layers.firn_mask 
+        ice_mask = layers.ice_mask
+
+        # exit function if there are no snow layers anywhere
+        if not xp.any(snow_mask):
+            layers.lgrainsize[firn_mask] = FIRN_GRAINSIZE
+            layers.lgrainsize[ice_mask] = ICE_GRAINSIZE
+            return
             
-        # only update grain size if we have snow layers
-        if len(layers.snow_idx) > 0:
-            idx = layers.snow_idx
-            n = len(idx)
+        # grab layer masses
+        m_total = layers.lice
+        m_refreeze = layers.drefreeze       # differential refreeze: added this step
+        m_snow = layers.lice - m_refreeze   # "old snow" (includes old refreeze)
+        
+        # define mass fractions of old snow and refreeze
+        f_snow = m_snow / m_total
+        f_rfz = m_refreeze / m_total
+        
+        # calculate liquid water fraction
+        mw_total = layers.lwater + layers.lice
+        f_liq = layers.lwater / mw_total    # fraction of total mass inc. liquid water
+
+        # grab arrays needed for dry grain metamorphosis lookup
+        dz = layers.lheight.copy()
+        T = layers.ltemp.copy() + CTOK
+        p = layers.ldensity.copy()
+        grainsize = layers.lgrainsize.copy()
+        
+        # calculate surface temperature in K
+        surftempK = surftemp + CTOK
+
+        # DRY METAMORPHISM
+        if args.constant_drdry:
+            # apply constant drdry growth rate except where grainsize is too large
+            drdry = xp.ones_like(grainsize) * args.constant_drdry * dt
+            drdry[grainsize >= RFZ_GRAINSIZE] = 0.0
+        else:
+            # calculate dTdz in 2D
+            dTdz = xp.zeros_like(T)
             
-            # get fractions of refreeze and old snow
-            m_refreeze = layers.drefreeze[idx]
-            m_snow = layers.lice[idx] - m_refreeze
-            f_snow = m_snow / layers.lice[idx]
-            f_rfz = m_refreeze / layers.lice[idx]
-            f_liq = layers.lwater[idx] / (layers.lwater[idx] + layers.lice[idx])
+            # top layer gradient utilizes surface temperature
+            dTdz[:, 0] = (surftempK - (T[:, 0] * dz[:, 0] + T[:, 1] * dz[:, 1]) \
+                            / (dz[:, 0] + dz[:, 1])) / dz[:, 0]
+            
+            # interior layers using a vectorized slice formulation
+            t_upper = (T[:, :-2] * dz[:, :-2] + T[:, 1:-1] * dz[:, 1:-1]) \
+                            / (dz[:, :-2] + dz[:, 1:-1])
+            t_lower = (T[:, 1:-1] * dz[:, 1:-1] + T[:, 2:] * dz[:, 2:]) \
+                            / (dz[:, 1:-1] + dz[:, 2:])
+            dTdz[:, 1:-1] = (t_upper - t_lower) / dz[:, 1:-1]
+            
+            # bottom layer gets assigned the same dTdz as the layer above
+            dTdz[:, -1] = dTdz[:, -2]
 
-            # define values for lookup table
-            dz = layers.lheight.copy()[idx]             # in m
-            T = layers.ltemp.copy()[idx] + CTOK         # in K
-            p = layers.ldensity.copy()[idx]             # in kg m-3
-            grainsize = layers.lgrainsize.copy()[idx]   # in um
-            surftempK = surftemp + CTOK                 # in K
+            # take absolute value (direction does not matter)
+            dTdz = xp.abs(dTdz)
 
-            # dry metamorphism
-            if args.constant_drdry:
-                drdry = np.ones(len(idx)) * args.constant_drdry * dt # um
-                drdry[np.where(grainsize>RFZ_GRAINSIZE)[0]] = 0
-            else:
-                # calculate temperature gradient (central in space)
-                dTdz = np.zeros_like(T)
-                if len(idx) > 2:
-                    dTdz[0] = (surftempK - (T[0]*dz[0]+T[1]*dz[1]) / (dz[0]+dz[1]))/dz[0]
-                    dTdz[1:-1] = ((T[:-2]*dz[:-2] + T[1:-1]*dz[1:-1]) / (dz[:-2] + dz[1:-1]) -
-                            (T[1:-1]*dz[1:-1] + T[2:]*dz[2:]) / (dz[1:-1] + dz[2:])) / dz[1:-1]
-                    dTdz[-1] = dTdz[-2] # bottom temp gradient isn't used, set to next layer up
-                elif len(idx) == 2: # use top ice layer for temp gradient
-                    T_2layer = np.array([surftempK,T[0],T[1],layers.ltemp[2]+CTOK])
-                    depth_2layer = np.array([0,layers.ldepth[0],layers.ldepth[1],layers.ldepth[2]])
-                    dTdz = (T_2layer[0:2] - T_2layer[2:]) / (depth_2layer[0:2] - depth_2layer[2:])
-                else: # single layer
-                    # layers.ltemp is in C so use surftemp, not surftempK
-                    dTdz = (surftemp - layers.ltemp[1]) / layers.ldepth[1]
-                    dTdz = np.array([dTdz])
+            # Fast matrix bounding to lookup table limits
+            p = xp.clip(p, 50.0, 400.0)
+            dTdz = xp.clip(dTdz, 0.0, 300.0)
+            T = xp.clip(T, 223.15, 273.15)
 
-                # direction of temp gradient does not matter
-                dTdz = np.abs(dTdz)
+            # flatten matrices to feed your grid interpolators in a single parallel operation
+            input_matrix = xp.column_stack((T.ravel(), dTdz.ravel(), p.ravel()))
 
-                # force values to be within lookup table ranges
-                p[np.where(p < 50)[0]] = 50
-                p[np.where(p > 400)[0]] = 400
-                dTdz[np.where(dTdz > 300)[0]] = 300
-                T[np.where(T < 223.15)[0]] = 223.15
-                T[np.where(T > 273.15)[0]] = 273.15
+            tau = args.interp_tau(input_matrix).reshape(layers.shape)
+            kap = args.interp_kap(input_matrix).reshape(layers.shape)
+            dr0 = args.interp_dr0(input_matrix).reshape(layers.shape)
 
-                # create input matrix for interpolation
-                input_matrix = np.column_stack(
-                    (T.ravel(), dTdz.ravel(), p.ravel()))
+            # calculate denominator in drdry equation
+            avoid_div_zero_mask = (tau + grainsize) <= FRESH_GRAINSIZE
+            denominator = xp.where(
+                avoid_div_zero_mask, 
+                tau + 1e-6, # avoid 0 denominator
+                tau + grainsize - FRESH_GRAINSIZE
+            )
+            
+            # determine actual dry grain growth rate from parameters
+            drdrydt = dr0 * xp.power(tau / denominator, 1.0 / kap) / dt
+            drdry = drdrydt * dt
 
-                # interpolate lookup table at the values of T,dTdz,p
-                tau = args.interp_tau(input_matrix).reshape(T.shape)
-                kap = args.interp_kap(input_matrix).reshape(T.shape)
-                dr0 = args.interp_dr0(input_matrix).reshape(T.shape)
+        # WET METAMORPHISM
+        grainsize_m = grainsize / 1e6
+        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * (grainsize_m ** 2))
+        drwet = drwetdt * dt * 1e6
+        
+        # accelerate grain growth?
+        if args.option_accel_grains:
+            F = xp.exp(0.01 * layers.ldensity)
+            drwet *= F
 
-                # calculate dry grain growth
-                drdrydt = []
-                for r,t,k,g in zip(dr0,tau,kap,grainsize):
-                    # condition to avoid 0 denominator / negative with fractional power
-                    if t + g <= FRESH_GRAINSIZE:
-                        drdrydt.append(r*np.power(t/(t + 1e-6),1/k)/dt)
-                    else:
-                        drdrydt.append(r*np.power(t/(t + g - FRESH_GRAINSIZE),1/k)/dt)
-                # get growth for this timestep
-                drdry = np.array(drdrydt) * dt
+        # apply metamorphosis and refreezing 
+        aged_grainsize = grainsize + drdry + drwet
+        updated_grainsize = aged_grainsize * f_snow + RFZ_GRAINSIZE * f_rfz
+        updated_grainsize = xp.clip(updated_grainsize, None, RFZ_GRAINSIZE)
 
-            # wet metamorphism
-            grainsize_m = grainsize / 1e6   # in m
-            drwetdt = WET_C*f_liq**3/(4*PI*(grainsize_m)**2)
-            drwet = drwetdt * dt * 1e6 # transform to um from m
-            if args.option_accel_grains:
-                # apply a factor to increase grain growth at high density (f_liq is low)
-                F = np.exp(0.01*(layers.ldensity.copy()[idx]))
-                drwet = drwet * F
-
-            # get change in grain size due to aging
-            aged_grainsize = grainsize + drdry + drwet
-                      
-            # sum contributions of snow and refreeze
-            grainsize = aged_grainsize*f_snow + RFZ_GRAINSIZE*f_rfz
-
-            # enforce maximum grainsize
-            grainsize[grainsize > RFZ_GRAINSIZE] = RFZ_GRAINSIZE
-
-            # update grainsize in layers
-            layers.lgrainsize[idx] = grainsize
-            layers.lgrainsize[layers.firn_idx] = FIRN_GRAINSIZE 
-            layers.lgrainsize[layers.ice_idx] = ICE_GRAINSIZE
-
-        elif len(layers.firn_idx) > 0: # no snow, but there is firn
-            layers.lgrainsize[layers.firn_idx] = FIRN_GRAINSIZE
-            layers.lgrainsize[layers.ice_idx] = ICE_GRAINSIZE
-        else: # no snow or firn, just ice
-            layers.lgrainsize[layers.ice_idx] = ICE_GRAINSIZE
-
-        return 
+        # store the updated snow grainsize
+        layers.lgrainsize[snow_mask] = updated_grainsize[snow_mask]
+        layers.lgrainsize[firn_mask] = FIRN_GRAINSIZE
+        layers.lgrainsize[ice_mask] = ICE_GRAINSIZE
+        return
 
     def subsurface_heating(self):
         """

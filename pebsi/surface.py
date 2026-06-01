@@ -65,9 +65,9 @@ class Surface():
         self.min_annual_albedo = xp.ones(N_POINTS)
 
         # set initial albedo based on surface type
-        self.albedo_dict = {'snow':args.albedo_fresh_snow,
-                            'firn':args.albedo_firn,
-                            'ice':args.albedo_ice}
+        self.albedo_dict = {0:args.albedo_fresh_snow,
+                            1:args.albedo_firn,
+                            2:args.albedo_ice}
         self.bba = xp.full(N_POINTS, self.albedo_dict[self.stype[0]])
         self.vis_a = self.bba
 
@@ -649,17 +649,14 @@ class Surface():
             layers.max_snow = 0
 
         # check if max_snow has been exceeded
-        current_snow = np.sum(layers.lice[layers.snow_idx])
-        layers.max_snow = max(current_snow, layers.max_snow)
+        current_snow = xp.sum(layers.lice[layers.snow_mask])
+        layers.max_snow = xp.maximum(current_snow, layers.max_snow)
         
-        # scale surrounding albedo based on snowdepth
-        if layers.max_snow <= 0:
-            albedo_surr = ALBEDO_GROUND
-        else:
-            albedo_surr = np.interp(current_snow,
-                                np.array([0, layers.max_snow]),
-                                np.array([ALBEDO_GROUND,ALBEDO_SNOW]))
-        self.albedo_surr = albedo_surr
+        # get fraction of max annual snow at each point
+        snow_fraction = xp.clip(current_snow / layers.max_snow, 0.0, 1.0)
+
+        # scale surrounding albedo between bare rock and fresh snow
+        self.albedo_surr = ALBEDO_GROUND + (ALBEDO_SNOW - ALBEDO_GROUND) * snow_fraction
         return
 
 class HiddenPrints:
