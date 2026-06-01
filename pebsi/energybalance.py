@@ -58,7 +58,6 @@ class energyBalance():
         self.sp = getattr(climate, 'sp_nt')[:, ti]
         self.rh = getattr(climate, 'rh_nt')[:, ti]
         self.wind = getattr(climate, 'wind_nt')[:, ti]
-        self.tcc = getattr(climate, 'tcc_nt')[:, ti]
         self.SWin_ds = getattr(climate, 'SWin_nt')[:, ti]
         self.SWout_ds = getattr(climate, 'SWout_nt')[:, ti]
         self.albedo_ds = getattr(climate, 'albedo_nt')[:, ti]
@@ -71,6 +70,7 @@ class energyBalance():
         self.ocwet = getattr(climate, 'ocwet_nt')[:, ti]
         self.dustdry = getattr(climate, 'dustdry_nt')[:, ti]
         self.dustwet = getattr(climate, 'dustwet_nt')[:, ti]
+        self.tcc = getattr(climate, 'tcc_nt')[:, ti]
 
         # time
         self.timestamp = climate.dates[ti]
@@ -489,29 +489,6 @@ class energyBalance():
         
         return Qs, Ql
     
-    def get_dry_deposition(self, layers):
-        """
-        Adds dry deposition of light-absorbing particles
-        to the surface layer.
-
-        Parameters
-        ==========
-        layers
-            Class object from pebsi.layers
-        """
-        # switch runs have no LAPs
-        if self.args.switch_LAPs == 0:
-            self.bcdry = 0
-            self.ocdry = 0
-            self.dustdry = 0
-
-        # ice layers are not affected by LAPs
-        if layers.ltype[0] != 'ice':
-            layers.lBC[0] += self.bcdry * self.dt
-            layers.lOC[0] += self.ocdry * self.dt
-            layers.ldust[0] += self.dustdry * self.dt
-        return
-    
     def get_roughness(self,days_since_snowfall,layers):
         """
         Function to determine the roughness length of the
@@ -535,12 +512,10 @@ class energyBalance():
 
         # determine roughness from surface type
         layertype = layers.ltype
-        if layertype[0] in ['snow']:
-            sigma = min(ROUGHNESS_FRESH_SNOW + AGING_RATE * days_since_snowfall, ROUGHNESS_AGED_SNOW)
-        elif layertype[0] in ['firn']:
-            sigma = ROUGHNESS_FIRN
-        elif layertype[0] in ['ice']:
-            sigma = ROUGHNESS_ICE
+        sigma = xp.minimum(ROUGHNESS_FRESH_SNOW + AGING_RATE * days_since_snowfall, 
+                           ROUGHNESS_AGED_SNOW)
+        sigma = xp.where(layertype[:, 0] == 1, ROUGHNESS_FIRN, sigma)
+        sigma = xp.where(layertype[:, 0] == 2, ROUGHNESS_ICE, sigma)
 
         # return roughness in m
         self.roughness = sigma / 1000

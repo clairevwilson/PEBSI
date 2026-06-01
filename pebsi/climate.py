@@ -66,10 +66,12 @@ class Climate():
         # specify spatial and temporal information
         self.sd = sd
         self.n_t = len(self.dates)
+        self.shape = (sd.n, self.n_t)
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
                             'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
+        self.optional_vars = ['SWout','LWout','tcc','NR','albedo']
         self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
         # define wind reference height [m]
@@ -198,8 +200,10 @@ class Climate():
         # loop through vars
         for var in self.need_vars:
             # gather data for each var and add to all_data
-            region = str(self.args.rgi_region).zfill(2)
+            region = 'gulkana' # 'reg' + str(self.args.rgi_region).zfill(2)
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
+            if var == self.need_vars[0]:
+                print('hard coded gulkana region for testing')
             self.get_var_data(fn, var)
         return
     
@@ -244,11 +248,14 @@ class Climate():
                 ds = ds.sortby(lon_vn)
 
         # index by lat and lon and select variable
-        if ds.coords[lat_vn].values.size > 1:
-            ds = ds.sel({lat_vn:self.point_lats,
-                         lon_vn:self.point_lons}, method='nearest')[vn]
+        if lat_vn not in ds.dims or lon_vn not in ds.dims:
+            # extract the single cell and replicate it for additional points
+            n_points = len(self.point_lats)
+            ds = ds[vn].expand_dims(point=n_points)
         else:
-            ds = ds[vn]
+            # extract lats/lons across full dataset
+            ds = ds.sel({lat_vn: self.point_lats, 
+                         lon_vn: self.point_lons}, method='nearest')[vn]
 
         if var in self.carbon_vars and args.deposition_data:
             # turn daily into hourly
@@ -318,10 +325,12 @@ class Climate():
 
         # check all variables are full
         failed = []
-        shape = (self.sd.n, self.n_t)
-        for var in self.all_vars:
+        for var in self.all_vars + self.optional_vars:
+            if not hasattr(self, var + '_nt') and var in self.optional_vars:
+                setattr(self, var+'_nt', xp.full(self.shape, xp.nan))
+                continue
             data = getattr(self, var + '_nt')
-            if np.any(np.isnan(data)) or data.shape != shape:
+            if np.any(np.isnan(data)) or data.shape != self.shape:
                 failed.append(var)
 
         # can input net radiation instead of incoming LW radiation
@@ -408,10 +417,10 @@ class Climate():
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
                        'rh':'%','sp':'Pa','tp':'m s-1','elev':'m',
-                       'SWin':'J m-2', 'LWin':'J m-2', 'NR':'J m-2', 'tcc':'-',
+                       'SWin':'J m-2', 'LWin':'J m-2', 'NR':'J m-2', 'tcc':'1',
                        'bcdry':'kg m-2 s-1', 'bcwet':'kg m-2 s-1',
                        'ocdry':'kg m-2 s-1', 'ocwet':'kg m-2 s-1',
-                       'dustdry':'kg m-2 s-1', 'dustwet':'kg m-2 s-1'}
+                       'dustdry':'kg m-2 s-1','dustwet':'kg m-2 s-1'}
         
         # get the current variable's units
         units_in = ds.attrs['units'].replace('*','')
@@ -446,6 +455,10 @@ class Climate():
             elif 'dry' in var or 'wet' in var:
                 if units_in == 'm-2.kg.s-1':
                     pass
+
+            # TOTAL CLOUD COVER
+            elif var == 'tcc' and units_in in ['%']:
+                ds = ds / 100
 
             # OTHER MISMATCH NOT LISTED
             else:
@@ -762,9 +775,14 @@ class Climate():
         sp_vn = self.var_dict['sp']['vn']
         qv_vn = 'QV2M'
 
-        ds_qv = xr.open_dataset(fn.replace(rh_vn, qv_vn))
-        ds_temp = xr.open_dataset(fn.replace(rh_vn, temp_vn))
-        ds_sp = xr.open_dataset(fn.replace(rh_vn, sp_vn))
+        if '.nc' in fn:
+            ds_qv = xr.open_dataset(fn.replace(rh_vn, qv_vn))
+            ds_temp = xr.open_dataset(fn.replace(rh_vn, temp_vn))
+            ds_sp = xr.open_dataset(fn.replace(rh_vn, sp_vn))
+        elif '.zarr' in fn:
+            ds_qv = xr.open_zarr(fn.replace(rh_vn, qv_vn), consolidated=False)
+            ds_temp = xr.open_zarr(fn.replace(rh_vn, temp_vn), consolidated=False)
+            ds_sp = xr.open_zarr(fn.replace(rh_vn, sp_vn), consolidated=False)
 
         # calculate saturation pressure from air temperature
         esat = self.sat_vapor_pressure(ds_temp[temp_vn].values - CTOK)
@@ -796,8 +814,6 @@ class Climate():
         ds_rh.encoding = {}
         for var in ds_rh.variables: ds_rh[var].encoding = {}
 
-        for var in ds_rh.variables:
-            print(var, ds_rh[var].attrs)
         if 'zarr' in fn:
             import zarr
             ds_rh.to_zarr(fn, mode='w', consolidated=False)
@@ -914,22 +930,22 @@ class Climate():
             self.elev_vn = self.var_dict['elev']['vn']
 
             # Variable filenames
-            self.var_dict['temp']['fn'] = 'T2M/T2M_reg{r}.zarr'
-            self.var_dict['rh']['fn'] = 'RH2M/RH2M_reg{r}.zarr'
-            self.var_dict['sp']['fn'] = 'PS/PS_reg{r}.zarr'
-            self.var_dict['tcc']['fn'] = 'CLDTOT/CLDTOT_reg{r}.zarr'
-            self.var_dict['LWin']['fn'] = 'LWGAB/LWGAB_reg{r}.zarr'
-            self.var_dict['SWin']['fn'] = 'SWGDN/SWGDN_reg{r}.zarr'
-            self.var_dict['vwind']['fn'] = 'V2M/V2M_reg{r}.zarr'
-            self.var_dict['uwind']['fn'] = 'U2M/U2M_reg{r}.zarr'
-            self.var_dict['tp']['fn'] = 'PRECTOTCORR/PRECTOTCORR_reg{r}.zarr'
+            self.var_dict['temp']['fn'] = '{r}/T2M_{r}.zarr'
+            self.var_dict['rh']['fn'] = '{r}/RH2M_{r}.zarr'
+            self.var_dict['sp']['fn'] = '{r}/PS_{r}.zarr'
+            self.var_dict['tcc']['fn'] = '{r}/CLDTOT_{r}.zarr'
+            self.var_dict['LWin']['fn'] = '{r}/LWGAB_{r}.zarr'
+            self.var_dict['SWin']['fn'] = '{r}/SWGDN_{r}.zarr'
+            self.var_dict['vwind']['fn'] = '{r}/V2M_{r}.zarr'
+            self.var_dict['uwind']['fn'] = '{r}/U2M_{r}.zarr'
+            self.var_dict['tp']['fn'] = '{r}/PRECTOTCORR_{r}.zarr'
             self.var_dict['elev']['fn'] = 'MERRA2_constants.nc'
-            self.var_dict['bcwet']['fn'] = 'BCWT002/BCWT002_reg{r}.zarr'
-            self.var_dict['bcdry']['fn'] = 'BCDP002/BCDP002_reg{r}.zarr'
-            self.var_dict['ocwet']['fn'] = 'OCWT002/OCWT002_reg{r}.zarr'
-            self.var_dict['ocdry']['fn'] = 'OCDP002/OCDP002_reg{r}.zarr'
-            self.var_dict['dustwet']['fn'] = 'DUWT003/DUWT003_reg{r}.zarr'
-            self.var_dict['dustdry']['fn'] = 'DUDP003/DUDP003_reg{r}.zarr'
+            self.var_dict['bcwet']['fn'] = '{r}/BCWT002_{r}.zarr'
+            self.var_dict['bcdry']['fn'] = '{r}/BCDP002_{r}.zarr'
+            self.var_dict['ocwet']['fn'] = '{r}/OCWT002_{r}.zarr'
+            self.var_dict['ocdry']['fn'] = '{r}/OCDP002_{r}.zarr'
+            self.var_dict['dustwet']['fn'] = '{r}/DUWT003_{r}.zarr'
+            self.var_dict['dustdry']['fn'] = '{r}/DUDP003_{r}.zarr'
         elif args.climate_source == 'ERA5-hourly':
             self.GCM_fp += 'ERA5/ERA5_hourly/'
 
