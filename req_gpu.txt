@@ -1,0 +1,14 @@
+numpy
+pandas
+xarray 
+rioxarray
+geopandas 
+pysolar 
+shapely
+rasterio
+netCDF4
+zarr
+jupyter
+joblib
+scipy
+matplotlib

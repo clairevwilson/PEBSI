@@ -28,11 +28,9 @@ from pebsi.massbalance import massBalance
 
 try:
     import cupy as cp 
-    xp = cp
-    from shading.gpu_shading import Shading
+    xp = cp  
 except:
     xp = np
-    from shading.shading import Shading
 
 # START TIMER
 start_time = time.time()
@@ -105,7 +103,7 @@ class PEBSI():
         existing_shading = os.listdir(args.shading_fp)
         missing_shading = [f for f in args.rgi_ids if f + '.nc' not in existing_shading]
         if len(missing_shading) > 0:
-            # *** run shading here (need fast implementation)
+            sd.run_shading()
             pass
 
         # validate spatial inputs

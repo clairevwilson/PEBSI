@@ -26,13 +26,7 @@ class Shading:
     shortwave dataset.
     """
 
-    def __init__(
-        self,
-        dem: xr.Dataset,
-        x_coord: str,
-        y_coord: str,
-        kernel_path: str = None,
-    ):
+    def __init__(self, dem, x_coord, y_coord, step_size=1.0, kernel_path=None):
         """
         Parameters
         ----------
@@ -40,20 +34,25 @@ class Shading:
             Dataset with an 'elevation' variable on a (y, x) grid.
         x_coord, y_coord : str
             Name of x and y coordinate in DEM
+        step_size : float
+            Step size in grid cells for ray tracing
         kernel_path : str
             Path to the azimuth_trace CUDA kernel source (.cu). 
             Ignored when running on CPU. Defaults to the bundled 
             kernel at shading/cuda/azimuth_trace.cu.
         """
         self.gpu = use_gpu
-
+        
+        self.step_size = step_size
         self.z = xp.array(dem.elevation.values, dtype=xp.float32)
         self.ny, self.nx = self.z.shape
 
         dx = np.abs(dem[x_coord].diff("x").values[0])
         dy = np.abs(dem[y_coord].diff("y").values[0])
+        assert np.isclose(dx, dy), "Grid cells must be square"
+        self.grid_resolution = float(dx)
 
-        dZdy, dZdx = xp.gradient(self.z, (dy, dx))
+        dZdy, dZdx = xp.gradient(self.z, self.grid_resolution)
         self.dZdx = dZdx
         self.dZdy = -dZdy
 
@@ -73,6 +72,7 @@ class Shading:
             self.kernel = kernels.get_function("azimuth_trace")
             self.block_size = (16, 16)
             self.grid_size = (self.nx // 16 + 1, self.ny // 16 + 1)
+            self.step_size = cp.float32(step_size)
 
     def run_shadow_kernel(self, azimuth_deg):
         """
@@ -94,6 +94,9 @@ class Shading:
 
             j_basis = cp.float32(np.sin(np.deg2rad(azimuth_deg)))
             i_basis = -cp.float32(np.cos(np.deg2rad(azimuth_deg)))
+
+            self.nx = cp.int32(self.nx)
+            self.ny = cp.int32(self.ny)
 
             self.kernel(
                 self.grid_size,
@@ -207,7 +210,7 @@ class Shading:
         azimuths = np.linspace(0, 360, num_azimuths, endpoint=False)
 
         for az in tqdm(azimuths, desc="sky view factor", unit="az"):
-            horizon_rad = xp.deg2rad(self._horizon_zenith_deg(az))
+            horizon_rad = xp.deg2rad(self.horizon_zenith_deg(az))
             svf += xp.cos(horizon_rad) ** 2
 
         return svf / num_azimuths

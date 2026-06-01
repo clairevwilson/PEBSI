@@ -11,6 +11,7 @@ from shapely.geometry import Point, LineString, MultiLineString
 from shapely.ops import voronoi_diagram, linemerge
 from dataclasses import dataclass
 from typing import Any
+from PEBSI.shading.gpu_shading import Shading
 
 try:
     import cupy as cp 
@@ -45,6 +46,9 @@ class SpatialData:
         --------
         glacier_lats, glacier_lons : 2D lists/arrays of shape (len(rgi_ids), num_points_per_glacier)
         """
+        # load RGI data into memory for this region
+        self.get_rgi_data()
+
         if self.args.method_distribute == 'scatter':
             lats, lons, glaciers = self.scatter_points()
         else:
@@ -61,15 +65,8 @@ class SpatialData:
         self.rgiid_n = xp.array(glaciers)
         self.n = len(self.lat_n)
         return
-
-    def scatter_points(self, tolerance=0.05):
-        """
-        Samples approximately N points evenly distributed inside a polygon shapefile
-        using an adaptive grid spacing search.
-        """
-        # find the total number of parallel processes available 
-        N_PARALLEL = 1000
-
+    
+    def get_rgi_data(self):
         # find the regional shapefile
         region = str(self.args.rgi_region).zfill(2)
         all_rgi = os.listdir(self.args.rgi_fp)
@@ -83,12 +80,28 @@ class SpatialData:
         if gdf.crs.is_geographic:
             gdf = gdf.to_crs(epsg=32632) # Force metric project tracking
 
+        # store to self 
+        self.rgi_df = df 
+        self.rgi_gdf = gdf
+        return
+
+    def scatter_points(self, tolerance=0.05):
+        """
+        Samples approximately N points evenly distributed inside a polygon shapefile
+        using an adaptive grid spacing search.
+        """
+        # find the total number of parallel processes available 
+        N_PARALLEL = 1000
+
         # first find the number of points for each glacier
         ids_fmtd = ['RGI60-'+id for id in self.args.rgi_ids]
-        rgi_df = df.loc[df['RGIId'].isin(ids_fmtd)]
+        rgi_df = self.rgi_df.loc[self.rgi_df['RGIId'].isin(ids_fmtd)]
         total_area = rgi_df['Area'].sum()
         rgi_df['exact_points'] = (rgi_df['Area'] / total_area) * N_PARALLEL
         rgi_df['points'] = rgi_df['exact_points'].round().astype(int)
+
+        # load the geodataframe
+        rgi_gdf = self.rgi_gdf
 
         # fix discrepancy to get exactly N_PARALLEL points
         current_sum = rgi_df['points'].sum()
@@ -111,7 +124,7 @@ class SpatialData:
         lats, lons, glaciers = [], [], []
         for id in self.args.rgi_ids:
             target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+id, 'points'].item()
-            current_glacier = gdf.loc[gdf['RGIId'] == 'RGI60-'+id]
+            current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+id]
             
             polygon = current_glacier.unary_union
             xmin, ymin, xmax, ymax = polygon.bounds
@@ -141,7 +154,7 @@ class SpatialData:
                 spacing *= np.sqrt(current_count / target_n)
 
             # Package coordinates out cleanly
-            points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=gdf.crs)
+            points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=rgi_gdf.crs)
             points_latlon = points_gdf.to_crs(epsg=4326)
             xs = points_latlon.geometry.x.tolist()
             ys = points_latlon.geometry.y.tolist()
@@ -322,28 +335,19 @@ class SpatialData:
         multiple regional CSV files.
         """
         # figure out what unique IDs there are
-        rgi_ids = self.rgiid_n
-        ids = rgi_ids.get() if hasattr(rgi_ids, 'get') else rgi_ids
-        unique_ids = np.unique(['RGI60-'+id for id in ids])
-        unique_regions = np.unique([id[:2] for id in ids])
-
-        # list all the regions 
-        all_regions = os.listdir(self.args.rgi_fp)
+        unique_ids = xp.unique(self.rgiid_n)
+        ids = self.rgiid_n
         
         # store mapping by glacier ID: mediane elvation
         glacier_med_elev = {}
         
-        # open only the required regional CSV files
-        for region in unique_regions:
-            csv_path = [f for f in all_regions if f.startswith(region) and f.endswith('csv')][0]
-            
-            # open dataframe and filter to the IDs in this simulation
-            df = pd.read_csv(self.args.rgi_fp + csv_path)
-            df_filtered = df[df['RGIId'].isin(unique_ids)]
-            
-            # store these values in master lookup
-            for _, row in df_filtered.iterrows():
-                glacier_med_elev[row['RGIId'].split('-')[-1]] = float(row['Zmed'])
+        # crop the RGI df to the IDs 
+        df = self.rgi_df
+        df_filtered = df[df['RGIId'].isin(unique_ids)]
+        
+        # store these values in master lookup
+        for _, row in df_filtered.iterrows():
+            glacier_med_elev[row['RGIId'].split('-')[-1]] = float(row['Zmed'])
 
         # stretch glacier-scale values to points
         stretched_elevations = []
@@ -354,3 +358,94 @@ class SpatialData:
         # store median elevation
         self.median_elev_n = xp.array(stretched_elevations, dtype=xp.float64)
         return
+
+    def run_shading(self):
+        if len(self.args.rgi_ids) > 1:
+            print(f'Running shading model for {len(self.args.rgi_ids)} glaciers...')
+
+        # open the master DEM using the VRT file produced in preprocessing
+        rgi_gdf = self.rgi_gdf
+        region = str(self.args.rgi_region).zfill(2)
+        vrt_path = self.args.format(r=region)
+        master_dem = rxr.open_rasterio(vrt_path, chunks=True).squeeze().drop_vars("band")
+        dem_crs = master_dem.rio.crs
+        
+        # ensure RGI matches the DEM project coordinates
+        if rgi_gdf.crs != dem_crs:
+            rgi_gdf = rgi_gdf.to_crs(dem_crs)
+
+        output_fp = self.args.shading_data_fp
+        os.makedirs(output_fp, exist_ok=True)
+
+        # loop through the macro block grid
+        for i in range(len(x_edges)-1):
+            for j in range(len(y_edges)-1):
+                block_box = box(x_edges[i], y_edges[j], x_edges[i+1], y_edges[j+1])
+                
+                # Find all glaciers whose centroids live in this block
+                # (Using centroids prevents a cross-boundary glacier from being processed twice!)
+                glaciers_in_block = rgi_gdf[rgi_gdf.centroid.within(block_box)]
+                
+                if glaciers_in_block.empty:
+                    continue
+                    
+                print(f"\nProcessing block X:[{x_edges[i]},{x_edges[i+1]}], Y:[{y_edges[j]},{y_edges[j+1]}]")
+                print(f"Contains {len(glaciers_in_block)} glaciers.")
+
+                # Get total spatial envelope of ALL glaciers in this block combined
+                envelope = glaciers_in_block.total_bounds
+                
+                # Apply the shadow peak buffer (e.g., 20km) around the entire envelope
+                buffered_bounds = (
+                    envelope[0] - buffer_meters,
+                    envelope[1] - buffer_meters,
+                    envelope[2] + buffer_meters,
+                    envelope[3] + buffer_meters
+                )
+
+                # 4. Read just this chunk out of the Master Virtual Raster
+                # Rioxarray lazily grabs only the required pixels from the underlying tiles!
+                try:
+                    sub_dem = master_dem.rio.clip_box(*buffered_bounds)
+                    # Load fully into RAM/GPU memory now that it's a small, safe chunk
+                    sub_dem_ds = sub_dem.compute().to_dataset(name="elevation")
+                except Exception as e:
+                    print(f"Skipping empty or out-of-bounds DEM block: {e}")
+                    continue
+
+                # 5. Calculate Subregion Center for the UTC solar calculation
+                centroid_geo = glaciers_in_block.to_crs(epsg=4326).unary_union.centroid
+                
+                # 6. Run your optimized GPU Shading Model once for this entire block
+                shading_model = Shading(sub_dem_ds, x_coord="x", y_coord="y", step_size=1.0)
+                shading_model.latitude = centroid_geo.y
+                shading_model.longitude = centroid_geo.x
+                
+                print("Running GPU shadow kernel for subregion chunk...")
+                mask_dict = shading_model.compute_shadow_masks(datetimes_utc)
+                
+                # Unpack GPU arrays to standard CPU Xarray dataset
+                mask_arrays = [m.get() if hasattr(m, 'get') else m for m in mask_dict.values()]
+                mask_3d = np.stack(mask_arrays, axis=0).astype(np.float16)
+
+                subregion_masks = xr.Dataset(
+                    {"shadow_mask": (["time", "y", "x"], mask_3d)},
+                    coords={"time": datetimes_utc, "y": sub_dem_ds["y"], "x": sub_dem_ds["x"]}
+                )
+
+                # 7. Siphon individual glaciers out of the calculated chunk
+                for idx, glacier in glaciers_in_block.iterrows():
+                    glacier_id = glacier['RGIId']
+                    g_bounds = glacier.geometry.bounds
+                    
+                    # Crop cleanly to exact individual glacier envelope
+                    glacier_masks = subregion_masks.sel(
+                        x=slice(g_bounds[0], g_bounds[2]),
+                        y=slice(g_bounds[3], g_bounds[1])
+                    )
+                    
+                    # Save isolated NetCDF
+                    out_file = Path(output_dir) / f"{glacier_id}_shadows.nc"
+                    glacier_masks.to_netcdf(out_file)
+
+        print("\nAll regions successfully completed!")
