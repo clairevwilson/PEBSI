@@ -14,7 +14,6 @@ import copy
 import numpy as np
 import pandas as pd
 from scipy.optimize import brentq
-import suncalc
 # Internal libraries
 from util.config import ConfigError
 try:

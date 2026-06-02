@@ -10,7 +10,6 @@ from individual heat fluxes.
 # External libraries
 import pandas as pd
 import numpy as np
-import suncalc
 # Internal libraries
 from util.config import ConfigError
 try:

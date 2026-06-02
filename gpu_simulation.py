@@ -96,12 +96,11 @@ class PEBSI():
 
         # create spatial points and load the DEM info for points
         sd.get_points()
-        sd.load_dem_info()
 
         # check if shading model needs to be run anywhere
         os.makedirs(args.shading_fp, exist_ok=True)
         existing_shading = os.listdir(args.shading_fp)
-        missing_shading = [f for f in args.rgi_ids if f + '.nc' not in existing_shading]
+        missing_shading = [f for f in args.rgi_ids if f + '_shadows.nc' not in existing_shading]
         if len(missing_shading) > 0:
             sd.run_shading()
             pass
