@@ -105,7 +105,7 @@ class Config():
             all_regions = os.listdir(args.rgi_fp)
             csv_path = [f for f in all_regions if f.startswith(region) and f.endswith('csv')][0]
             df = pd.read_csv(args.rgi_fp + csv_path)
-            df = df.loc[(df['Area'] > 14) & (df['Area'] < 16)]
+            df = df.loc[(df['Area'] > 14) & (df['Area'] < 15)]
 
             # find all glaciers in this region
             all_ids = [f.split('-')[-1] for f in df['RGIId']]
@@ -144,9 +144,12 @@ class Config():
         args.wvs = np.array(args.wvs)
 
         # load ML algorithm for albedo
-        if args.method_snicar == 'emulator':
-            import joblib
-            args.SNICAR_emulator = joblib.load(args.emulator_fn)
+        # if args.method_snicar == 'emulator':
+        #     import joblib
+        #     args.SNICAR_emulator = joblib.load(args.emulator_fn)
+
+        # define wind reference height [m]
+        args.wind_ref_height = 10 if args.climate_source in ['ERA5-hourly'] else 2
 
         self.args = args
         return

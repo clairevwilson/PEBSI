@@ -28,7 +28,7 @@ class Layers():
 
     All mass terms are stored in kg m-2.
     """
-    def __init__(self,core):
+    def __init__(self, args, climate, spatial):
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
@@ -40,29 +40,20 @@ class Layers():
         args : command line arguments
         """
         # INPUTS
-        self.climate = core.climate 
-        self.args = args = core.args
-        self.N_POINTS = N_POINTS = core.sd.n
+        self.climate = climate 
+        self.args = args
+        self.N_POINTS = N_POINTS = spatial.n
         self.N_LAYERS = N_LAYERS = args.max_nlayers
         self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
-        dz_snow = xp.full(N_POINTS, args.initial_snow_depth)
+        self.dz_snow = xp.full(N_POINTS, args.initial_snow_depth)
         # *** rough approximation of where there should be firn
-        dz_firn = xp.zeros(N_POINTS)
-        dz_firn[core.sd.elev_n > core.sd.median_elev_n] = args.initial_firn_depth
+        self.dz_firn = xp.zeros(N_POINTS)
+        self.dz_firn[spatial.elev_n > spatial.median_elev_n] = args.initial_firn_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
-        self.make_layers(dz_snow,dz_firn)
-
-        # initialize layer temperature, density, water and refreeze content
-        self.initialize_layers(dz_snow,dz_firn)
-
-        # initialize LAPs (black carbon, organic carbon, and dust)
-        self.initialize_LAPs()
-
-        # initialize layer ages
-        self.initialize_age()
+        self.make_layers()
 
         # define intensive and extensive variables
         self.intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
@@ -76,12 +67,17 @@ class Layers():
         self.max_snow = np.sum(self.lice * self.snow_mask, axis=1)
         # minimum albedo per year
         self.firn_albedos = xp.zeros(N_POINTS + 1)
+
+        # sum masses for mass conservation checks
+        self.mass_water = np.sum(self.lwater, axis=1)
+        self.mass_ice = np.sum(self.lice, axis=1)
+        self.mass = np.sum(self.lwater + self.lice, axis=1)
         
         if args.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
-        return 
+        return
     
-    def make_layers(self,snow_height,firn_height):
+    def make_layers(self):
         """
         Initializes layer depths based on an exponential
         growth function with prescribed rate of growth 
@@ -112,6 +108,9 @@ class Layers():
         DZ_SNOW = args.dz_snowlayer
         DZ_ICE = args.dz_icelayer
         LAYER_GROWTH = args.layer_growth
+
+        snow_height = self.dz_snow 
+        firn_height = self.dz_firn
 
         # initialize variables to get filled
         lheight = xp.zeros(self.shape)
@@ -185,7 +184,7 @@ class Layers():
         self.ice_mask = ltype==2        # type 2 = ice
         return
 
-    def initialize_layers(self,snow_height,firn_height):
+    def initialize_layers(self):
         """
         Initializes the layer temperature, density, 
         water content and grain size.
@@ -207,6 +206,9 @@ class Layers():
         snow_mask = self.snow_mask
         firn_mask = self.firn_mask
         ice_mask = self.ice_mask
+
+        snow_height = self.dz_snow 
+        firn_height = self.dz_firn
 
         # read in depth profiles
         temp_data = pd.read_csv(self.args.initial_temp_fn)
@@ -284,6 +286,13 @@ class Layers():
         else:
             raise ConfigError('Invalid configuration: initialize_water')
         
+        # AGE [days]
+        firn_mask_int = self.firn_mask.astype(int)
+        lage = xp.cumsum(firn_mask_int, axis=1) * -365
+
+        # firn ages count back in time; snow/ice initialized at 0
+        lage = xp.where(self.ltype >= 1, lage, 0.0)
+
         # store to self
         self.ltemp = xp.array(ltemp)                    # LAYER TEMPERATURE [C]
         self.ldensity = xp.array(ldensity)              # LAYER DENSITY [kg m-3]
@@ -292,6 +301,7 @@ class Layers():
         self.lgrainsize = xp.array(lgrainsize)          # LAYER GRAIN SIZE [um]
         self.drefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS ADDED PER TIMESTEP [kg m-2]
         self.lrefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS [kg m-2]
+        self.lage = xp.array(lage, dtype=xp.int32)      # LAYER AGE [days]
         return
     
     def initialize_LAPs(self):
@@ -348,21 +358,6 @@ class Layers():
         self.lOC = lOC          # LAYER ORGANIC CARBON MASS [kg m-2]
         self.ldust = ldust      # LAYER DUST MASS [kg m-2]
         return
-    
-    def initialize_age(self):
-        """
-        Initializes the age of each layer in days.
-        """
-        # set firn layer ages counting back from start year
-        firn_mask_int = self.firn_mask.astype(int)
-        lage = xp.cumsum(firn_mask_int, axis=1) * -365
-
-        # firn ages count back in time; snow/ice initialized at 0
-        lage = xp.where(self.ltype >= 1, lage, 0.0)
-
-        # store to self
-        self.lage = xp.array(lage, dtype=xp.int32)  # LAYER AGE [days]
-        return lage
     
     # ========= UTILITY FUNCTIONS ==========
     def add_top_layer(self, mask, new_layer):

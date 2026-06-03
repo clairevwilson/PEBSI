@@ -19,13 +19,6 @@ import xarray as xr
 from pebsi.energybalance import energyBalance
 from pebsi.layers import Layers
 from pebsi.surface import Surface
-from util.output import Output
-np.set_printoptions(suppress=True)
-try:
-    import cupy as cp
-    xp = cp 
-except:
-    xp = np
 
 class massBalance():
     """
@@ -173,10 +166,6 @@ class massBalance():
             date_in_range = doy >= args.start_end_summer and doy <= args.start_end_summer + 60
             if date_in_range and time.hour == 0 and not self.firn_converted:
                 self.end_of_summer()
-
-            # if ice is first exposed, re-size ice layers
-            if len(layers.snow_idx) + len(layers.firn_idx) < 1 and not self.ice_exposed:
-                self.ice_exposed = True 
 
             # if start of calendar year, reset annual trackers
             if time.day_of_year == 1 and time.hour == 0:

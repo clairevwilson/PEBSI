@@ -18,12 +18,6 @@ import xarray as xr
 # Internal libraries
 from util.config import ConfigError
 
-try:
-    import cupy as cp 
-    xp = cp
-except:
-    xp = np
-
 class Climate():
     """
     Climate-related functions which build the 
@@ -46,27 +40,13 @@ class Climate():
         ==========
         args : command line arguments
         """
-        # start timer
+        # start timer for loading climate data
         self.start_time = time.time()
 
-        # load args and run information
+        # load args and simulation information
         self.args = args
-        self.dates = pd.date_range(args.start_date,args.end_date,freq='h')
-
-        # handle timezones
-        tz = sd.tz_n.get() if hasattr(sd.tz_n, 'get') else sd.tz_n
-        if len(xp.unique(tz)) == 1:
-            # if all glaciers are in the same timezone, dates_UTC can be 1D
-            self.dates_UTC = self.dates - pd.to_timedelta(int(tz[0]), unit='h')
-        else:
-            # else, need dates_UTC to be a 2D array (points, time)
-            timedelta_col = pd.to_timedelta(tz, unit='h')[:, xp.newaxis]
-            self.dates_UTC = self.dates[xp.newaxis, :] - timedelta_col
-
-        # specify spatial and temporal information
         self.sd = sd
-        self.n_t = len(self.dates)
-        self.shape = (sd.n, self.n_t)
+        self.get_spatial_temporal_info()
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
@@ -74,38 +54,32 @@ class Climate():
         self.optional_vars = ['SWout','LWout','tcc','NR','albedo']
         self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
-        # define wind reference height [m]
-        args.wind_ref_height = 10 if args.climate_source in ['ERA5-hourly'] else 2
-
-        # DECIDE HOW TO HANDLE QUANTILE MAPPING ******
-        qm_fns = os.listdir(args.bias_fp)
-        # # grab the name of the glacier of quantile mapping data
-        # if str(args.qm_glac_name) != 'None':
-        #     self.mapping_glacier = args.qm_glac_name
-        #     if args.debug:
-        #         print('Using quantile mapping from', self.mapping_glacier)
-        # else:
-        #     self.mapping_glacier = args.glac_name
-        # 
-        # # find elevation of temperature data
-        # if 'temp' in args.bias_vars and int(rgi_region) > 0:
-        #     qm_print = f'Add {self.mapping_glacier} AWS elev to station_elevation or specify in config file'
-        #     check = self.mapping_glacier in args.station_elevation or args.aws_elev is not None
-        #     assert check, qm_print  
-        #     if args.aws_elev is not None:
-        #         self.temp_elev = args.aws_elev 
-        #     else:              
-        #         self.temp_elev = args.station_elevation[self.mapping_glacier]
-        # elif int(rgi_region) == 0:
-        #     self.temp_elev = self.median_elev
-        #     self.aws_elev = self.temp_elev
-
         # create dictionary containing reanalysis filenames
         self.get_vardict()
         if not self.args.use_aws:
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
-        # ***** DECIDE HOW TO HANDLE AWS DATA????
+        else:
+            assert ~self.args.use_aws, 'NOT SET UP FOR AWS DATA YET'
+            pass
+        return
+    
+    def get_spatial_temporal_info(self):
+        self.dates = pd.date_range(self.args.start_date,self.args.end_date,freq='h')
+
+        # handle timezones
+        tz = self.sd.tz_n
+        if len(np.unique(tz)) == 1:
+            # if all glaciers are in the same timezone, dates_UTC can be 1D
+            self.dates_UTC = self.dates - pd.to_timedelta(int(tz[0]), unit='h')
+        else:
+            # else, need dates_UTC to be a 2D array (points, time)
+            timedelta_col = pd.to_timedelta(tz, unit='h')[:, np.newaxis]
+            self.dates_UTC = self.dates[np.newaxis, :] - timedelta_col
+
+        # specify spatial and temporal information
+        self.n_t = len(self.dates)
+        self.shape = (self.sd.n, self.n_t)
         return
     
     # def get_aws(self,fp):
@@ -186,8 +160,10 @@ class Climate():
         self.interpolate = dates[0].minute != 30 and self.args.climate_source == 'MERRA2'
 
         # get lat/lon DataArrays for indexing spatial data
-        self.point_lats = xr.DataArray(sd.lat_n, dims='point')
-        self.point_lons = xr.DataArray(sd.lon_n, dims='point')
+        lat_n = sd.lat_n.get() if hasattr(sd.lat_n, 'get') else sd.lat_n
+        lon_n = sd.lon_n.get() if hasattr(sd.lon_n, 'get') else sd.lon_n
+        self.point_lats = xr.DataArray(lat_n, dims='point')
+        self.point_lons = xr.DataArray(lon_n, dims='point')
         
         # get GCM data geopotential
         z_fp = self.GCM_fp + self.var_dict['elev']['fn']
@@ -276,11 +252,12 @@ class Climate():
                 ds = ds.sel(time=dates)
         
         # make sure the correct grid cell was accessed
-        assert xp.all(xp.abs(ds.coords[lat_vn].values - self.sd.lat_n) <= lat_res), 'Wrong grid cell was accessed'
-        assert xp.all(xp.abs(ds.coords[lon_vn].values - self.sd.lon_n) <= lon_res), 'Wrong grid cell was accessed'
+        assert np.all(np.abs(ds.coords[lat_vn].values - self.point_lats.values) <= lat_res), 'Wrong grid cell was accessed'
+        assert np.all(np.abs(ds.coords[lon_vn].values - self.point_lons.values) <= lon_res), 'Wrong grid cell was accessed'
 
         # store result
-        setattr(self, var + '_nt', xp.array(ds.transpose('point','time').values))
+        data_array = ds.transpose('point','time').values
+        setattr(self, var, data_array.astype(np.float32))
         ds.close()
         return
     
@@ -294,12 +271,12 @@ class Climate():
         args = self.args
 
         # calculate wind speed and direction from u and v components
-        uwind = self.uwind_nt
-        vwind = self.vwind_nt
-        wind = xp.sqrt(xp.power(uwind,2)+xp.power(vwind,2))
-        winddir = xp.arctan2(-uwind,-vwind) * 180 / xp.pi
-        self.wind_nt = wind
-        self.winddir_nt = winddir
+        uwind = self.uwind
+        vwind = self.vwind
+        wind = np.sqrt(np.power(uwind,2)+np.power(vwind,2))
+        winddir = np.arctan2(-uwind,-vwind) * 180 / np.pi
+        self.wind = wind
+        self.winddir = winddir
 
         # ****** FIGURE OUT QM
         # if args.climate_source == 'MERRA2':
@@ -326,10 +303,10 @@ class Climate():
         # check all variables are full
         failed = []
         for var in self.all_vars + self.optional_vars:
-            if not hasattr(self, var + '_nt') and var in self.optional_vars:
-                setattr(self, var+'_nt', xp.full(self.shape, xp.nan))
+            if not hasattr(self, var ) and var in self.optional_vars:
+                setattr(self, var, np.full(self.shape, np.nan))
                 continue
-            data = getattr(self, var + '_nt')
+            data = getattr(self, var)
             if np.any(np.isnan(data)) or data.shape != self.shape:
                 failed.append(var)
 
@@ -345,7 +322,7 @@ class Climate():
         # done getting climate
         time_elapsed = time.time()-self.start_time
         if self.args.debug:
-            print(f'~ Loaded climate dataset in {time_elapsed:.1f} seconds ~')
+            print(f'~ Loaded climate data in {time_elapsed:.1f} seconds ~')
         return
     
     def apply_perturbations(self):
@@ -353,8 +330,8 @@ class Climate():
         Applies additive temperature perturbation
         or multiplicative precipitation perturbation.
         """
-        self.temp_nt += self.args.temp_perturb
-        self.tp_nt *= self.args.tp_perturb
+        self.temp += self.args.temp_perturb
+        self.tp *= self.args.tp_perturb
         return
 
     def adjust_to_elevation(self):
@@ -364,10 +341,10 @@ class Climate():
         incoming longwave radiation).
         """
         # Set copies of un-edited variables
-        self.original_temp = self.temp_nt
-        self.original_tp = self.tp_nt
-        self.original_sp = self.sp_nt
-        self.original_LWin = self.LWin_nt
+        self.original_temp = self.temp
+        self.original_tp = self.tp
+        self.original_sp = self.sp
+        self.original_LWin = self.LWin
 
         # TEMPERATURE: correct according to lapse rate
         self.temp_to_elevation()
@@ -493,8 +470,8 @@ class Climate():
     #     #     # update dry and wet BC deposition
     #     #     self.cds['bcdry'][{'time':idx}] = self.cds['bcdry'][{'time':idx}] * f
     #     #     self.cds['bcwet'][{'time':idx}] = self.cds['bcwet'][{'time':idx}] * f
-    #     self.bcdry_nt *= f
-    #     self.bcwet_nt *= f
+    #     self.bcdry *= f
+    #     self.bcwet *= f
     #     return
     
     def apply_merra_dep_ratio(self):
@@ -518,10 +495,10 @@ class Climate():
                                       method='nearest').values.reshape(-1, 1)
 
         # apply to dry deposition
-        self.bcdry_nt *= ratio_bc
-        self.ocdry_nt *= ratio_oc
-        self.dustdry_nt *= RATIO_DUST
-        self.dustwet_nt *= RATIO_DUST
+        self.bcdry *= ratio_bc
+        self.ocdry *= ratio_oc
+        self.dustdry *= RATIO_DUST
+        self.dustwet *= RATIO_DUST
 
         # close datasets
         ds_bc.close()
@@ -567,14 +544,14 @@ class Climate():
             temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.sd.gcm_elev_n
 
         # format temp and point elev as (, n) arrays
-        self.temp_elev = temp_elev[:, xp.newaxis]
-        point_elev = self.sd.elev_n[:, xp.newaxis]
+        self.temp_elev = temp_elev[:, np.newaxis]
+        point_elev = self.sd.elev_n[:, np.newaxis]
 
         # apply lapse rate
         new_temp = self.original_temp + LAPSE_RATE*(point_elev - self.temp_elev)
 
         # update temperature in the cds
-        self.temp_nt = new_temp
+        self.temp = new_temp
         return
 
     def precip_to_elevation(self):
@@ -589,14 +566,14 @@ class Climate():
             PREC_GRAD = self.args.precgrad
 
         # format tp and point elev as (, n) arrays
-        tp_elev = self.sd.median_elev_n[:, xp.newaxis]
-        point_elev = self.sd.elev_n[:, xp.newaxis]
+        tp_elev = self.sd.median_elev_n[:, np.newaxis]
+        point_elev = self.sd.elev_n[:, np.newaxis]
 
         # apply precipitation gradient
         new_tp = self.original_tp*(1+PREC_GRAD*(point_elev-tp_elev))
 
         # update precip in the cds
-        self.tp_nt = new_tp
+        self.tp = new_tp
         return
 
     def sp_to_elevation(self):
@@ -614,11 +591,11 @@ class Climate():
         sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.sd.gcm_elev_n
 
         # format sp and point elev as (, n) arrays
-        sp_elev = sp_elev[:, xp.newaxis]
-        point_elev = self.sd.elev_n[:, xp.newaxis]
+        sp_elev = sp_elev[:, np.newaxis]
+        point_elev = self.sd.elev_n[:, np.newaxis]
 
         # adjust temperature from elevation of the site to elevation of the sp data
-        new_temp = self.temp_nt.copy()
+        new_temp = self.temp.copy()
         temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - point_elev) + CTOK
 
         # calculate new surface pressure with barometric law
@@ -627,7 +604,7 @@ class Climate():
         new_sp = self.original_sp * ratio
 
         # update surface pressure array
-        self.sp_nt = xp.array(new_sp)
+        self.sp = new_sp
         return
 
     def LWin_to_elevation(self, temp_LW_elev=False):
@@ -650,13 +627,13 @@ class Climate():
         CTOK = self.args.celsius_to_kelvin
 
         # get temperature and RH data at the site and data location
-        rh = self.rh_nt                     # RH assumed constant with elevation
-        temp_site = self.temp_nt            # Temperature already updated to self.elev
+        rh = self.rh                     # RH assumed constant with elevation
+        temp_site = self.temp            # Temperature already updated to self.elev
 
         # get elevation of longwave data
         LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.sd.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.sd.elev_n)[:, xp.newaxis]
+            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.sd.elev_n)[:, np.newaxis]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK
@@ -675,7 +652,7 @@ class Climate():
         new_LWin = self.original_LWin + delta_LW
 
         # Update surface pressure in the cds
-        self.LWin_nt = new_LWin
+        self.LWin = new_LWin
         return
     
     def bias_adjust_qm(self,var):
@@ -702,10 +679,10 @@ class Climate():
         
         # interpolate values according to quantile mapping
         values = getattr(self, var)
-        adjusted = xp.interp(values, bias_df['sorted'], bias_df['mapping'])
+        adjusted = np.interp(values, bias_df['sorted'], bias_df['mapping'])
 
         # update values
-        setattr(self, var, xp.array(adjusted))
+        setattr(self, var, adjusted)
         return
     
     def get_emulator_inputs(self):
@@ -713,13 +690,13 @@ class Climate():
         Loads the SNICAR emulator inputs.
         """
         # sum dry and wet deposition
-        bctot = self.bcwet_nt + self.bcdry_nt
+        bctot = self.bcwet + self.bcdry
 
         cds = xr.Dataset(
             data_vars={
                 'bc': (['point', 'time'], bctot),
-                'temp': (['point', 'time'], self.temp_nt),
-                'SWin': (['point', 'time'], self.SWin_nt)
+                'temp': (['point', 'time'], self.temp),
+                'SWin': (['point', 'time'], self.SWin)
             },
             coords={
                 'time': self.dates,
@@ -751,9 +728,9 @@ class Climate():
         )
         PDDs_cumsum = (positive_temp_sum.groupby(water_year).cumsum())
 
-        self.SW_emulator_input = xp.array(SWin.values)
-        self.PDD_emulator_input = xp.array(PDDs_cumsum.values)
-        self.BC_emulator_input = xp.array(bc_rolling.values)
+        self.SW_emulator_input = SWin.values
+        self.PDD_emulator_input = PDDs_cumsum.values
+        self.BC_emulator_input = bc_rolling.values
         return
     
     def create_rh2m_ds(self, fn):
@@ -885,7 +862,7 @@ class Climate():
         vap : float
             Vapor pressure [Pa]
         """
-        return 243.04*xp.log(vap/610.94)/(17.625-xp.log(vap/610.94))
+        return 243.04*np.log(vap/610.94)/(17.625-np.log(vap/610.94))
 
     def get_vardict(self):
         """

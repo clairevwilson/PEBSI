@@ -54,7 +54,7 @@ RGI_fp = '../../../RGI/rgi60/00_rgi60_attribs/'
 for fn in os.listdir(RGI_fp):
     if args.help_regions:
         print(fn.split('.')[0])
-    if args.region in fn and 'csv' in fn:
+    if args.region in fn and 'csv' in fn and 'RGI' not in fn:
         f = fn.split('.')[0]
         RGI_fn = f + '.csv'
         shapefile_fp = '../../../RGI/rgi60/' + f + '/'

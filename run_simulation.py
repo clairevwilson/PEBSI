@@ -21,7 +21,7 @@ import pandas as pd
 # Internal libraries
 import util.params as prms
 import util.config as config
-from pebsi.climate import Climate
+from util.climate import Climate
 from pebsi.massbalance import massBalance
 from shading.shading import Shading
 

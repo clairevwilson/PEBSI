@@ -53,7 +53,7 @@ output_fp = '../Output/'                                    # General output fil
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
 dem_fp = '../data/dems/COP30'                               # DEM filepath for many glaciers (COP 30)
-vrt_path = '../data/dems/COP30_reg{r}.vrt'                  # Path to VRT file for COP30 DEMs, inside dem_fp
+vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'            # Path to VRT file for COP30 DEMs, inside dem_fp
 dem_fn = '../data/dems/{g}_dem.tif'                         # DEM filename for a single glacier
 shading_data_fp = '../data/shading/'                        # Shading data filepath for output of shading model  
 

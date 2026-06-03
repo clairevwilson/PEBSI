@@ -26,7 +26,7 @@ class Shading:
     shortwave dataset.
     """
 
-    def __init__(self, dem, x_coord, y_coord, step_size=1.0, kernel_path=None):
+    def __init__(self, dem, step_size=1.0, kernel_path=None):
         """
         Parameters
         ----------
@@ -47,12 +47,10 @@ class Shading:
         self.z = xp.array(dem.elevation.values, dtype=xp.float32)
         self.ny, self.nx = self.z.shape
 
-        dx = np.abs(dem[x_coord].diff("x").values[0])
-        dy = np.abs(dem[y_coord].diff("y").values[0])
-        assert np.isclose(dx, dy), "Grid cells must be square"
-        self.grid_resolution = float(dx)
+        dx, dy = dem.rio.resolution()
+        self.grid_resolution = (dy, dx)
 
-        dZdy, dZdx = xp.gradient(self.z, self.grid_resolution)
+        dZdy, dZdx = xp.gradient(self.z, dy, dx)
         self.dZdx = dZdx
         self.dZdy = -dZdy
 
@@ -159,7 +157,7 @@ class Shading:
         xp.ndarray, shape (ny, nx), values in [0, 1]
             0 = fully shadowed, 1 = fully sunlit.
         """
-        zenith_deg = self.horizon_zenith_deg(azimuth_deg)
+        zenith_deg = self.horizon_zenith_angle(azimuth_deg)
         z_i = altitude_deg - zenith_deg
         return 1.0 / (1.0 + xp.exp(-z_i / 0.1))
 
@@ -182,14 +180,23 @@ class Shading:
         masks : dict
             xp.ndarray of shape (ny, nx) to index by datetime
         """
-        masks = {}
-        for dt in tqdm(datetimes, desc="shadow masks", unit="step"):
-            altitude, azimuth = self._solar_position(dt)
+        ny, nx = self.z.shape
+        total_steps = len(datetimes)
+        
+        # preallocate a single 3D array for all masks
+        masks_cpu = np.zeros((total_steps, ny, nx), dtype=np.int8)
+
+        for idx, dt in enumerate(tqdm(datetimes, desc="shadow masks", unit="step")):
+            altitude, azimuth = self.solar_position(dt)
             if altitude <= 0:
-                masks[dt] = xp.zeros(self.z.shape, dtype=xp.float32)
+                continue # sun below horizon, mask remains zero
             else:
-                masks[dt] = self.shadow_mask(altitude, azimuth)
-        return masks
+                mask_gpu = self.shadow_mask(altitude, azimuth).astype(xp.int8)
+                masks_cpu[idx] = mask_gpu.get() if hasattr(mask_gpu, 'get') else np.asarray(mask_gpu)
+
+                # clear the gpu_mask from VRAM
+                del mask_gpu
+        return masks_cpu
     
     def skyviewfactor(self, num_azimuths = 16):
         """

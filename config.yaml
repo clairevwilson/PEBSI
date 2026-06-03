@@ -14,7 +14,7 @@ output_fp: 'test_simulation/'
 start_date: '2024-04-20'
 end_date: '2024-05-20'
 
-# rgi_ids: ['01.00570']
+rgi_ids: ['01.00570'] # , '01.09162']
 # shading_fp: '/trace/group/rounce/cvwilson/shading/'
 method_snicar: 'emulator'
-method_distribute: 'none'
+method_distribute: 'none' # 'scatter' # 
