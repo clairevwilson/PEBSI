@@ -28,7 +28,7 @@ class Layers():
 
     All mass terms are stored in kg m-2.
     """
-    def __init__(self, args, climate, spatial):
+    def __init__(self, args, climate, terrain):
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
@@ -42,7 +42,7 @@ class Layers():
         # INPUTS
         self.climate = climate 
         self.args = args
-        self.N_POINTS = N_POINTS = spatial.n
+        self.N_POINTS = N_POINTS = terrain.N_POINTS
         self.N_LAYERS = N_LAYERS = args.max_nlayers
         self.shape = (N_POINTS, N_LAYERS)
 
@@ -50,7 +50,7 @@ class Layers():
         self.dz_snow = xp.full(N_POINTS, args.initial_snow_depth)
         # *** rough approximation of where there should be firn
         self.dz_firn = xp.zeros(N_POINTS)
-        self.dz_firn[spatial.elev_n > spatial.median_elev_n] = args.initial_firn_depth
+        self.dz_firn[terrain.elev_n > terrain.median_elev_n] = args.initial_firn_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
@@ -60,18 +60,6 @@ class Layers():
         self.extensive_vars = ['lice','lwater','lBC','lOC','ldust',
                                'drefreeze','lrefreeze']
         self.all_layer_vars = self.intensive_vars + self.extensive_vars + ['lheight','ldepth']
-
-        # delayed snowfall
-        self.delayed_snow = xp.zeros(N_POINTS)
-        # running maximum snow mass (reset each year)
-        self.max_snow = np.sum(self.lice * self.snow_mask, axis=1)
-        # minimum albedo per year
-        self.firn_albedos = xp.zeros(N_POINTS + 1)
-
-        # sum masses for mass conservation checks
-        self.mass_water = np.sum(self.lwater, axis=1)
-        self.mass_ice = np.sum(self.lice, axis=1)
-        self.mass = np.sum(self.lwater + self.lice, axis=1)
         
         if args.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
@@ -215,7 +203,7 @@ class Layers():
         density_data = pd.read_csv(self.args.initial_density_fn)
         grainsize_data = pd.read_csv(self.args.initial_grains_fn)
 
-        # TEMPERATURE [C]
+        # ===== TEMPERATURE [C] =====
         if args.initialize_temp == 'interpolate':
             ltemp = xp.interp(
                 self.ldepth.ravel(),
@@ -227,7 +215,7 @@ class Layers():
         else:
             raise ConfigError('Invalid configuration: initialize_temp')
         
-        # GRAIN SIZE [um]
+        # ===== GRAIN SIZE [um] =====
         lgrainsize = xp.interp(
             self.ldepth.ravel(),
             grainsize_data['depth'],
@@ -236,7 +224,7 @@ class Layers():
         lgrainsize[self.ltype == 1] = args.firn_grainsize
         lgrainsize[self.ltype == 2] = args.ice_grainsize
 
-        # DENSITY [kg m-3]
+        # ===== DENSITY [kg m-3] =====
         if args.initialize_density == 'interpolate':
             # SNOW layers initialized by interpolation
             ldensity = xp.interp(
@@ -276,6 +264,9 @@ class Layers():
             ldensity = xp.where(ice_mask, args.density_ice, ldensity)
         else:
             raise ConfigError('Invalid configuration: initialize_density')
+        
+        # calculate dry mass from density
+        lice = ldensity * self.lheight
 
         # WATER CONTENT [kg m-2]
         if args.initialize_water == 'dry':
@@ -286,17 +277,29 @@ class Layers():
         else:
             raise ConfigError('Invalid configuration: initialize_water')
         
-        # AGE [days]
+        # ===== AGE [days] =====
         firn_mask_int = self.firn_mask.astype(int)
         lage = xp.cumsum(firn_mask_int, axis=1) * -365
 
         # firn ages count back in time; snow/ice initialized at 0
         lage = xp.where(self.ltype >= 1, lage, 0.0)
 
-        # store to self
+        # ===== LAPs [kg m-2] =====
+        self.initialize_LAPs()
+
+        # ===== STORE EVERYTHING TO SELF =====
+        # running maximum snow mass (reset each year)
+        self.max_snow = np.sum(lice * self.snow_mask, axis=1)
+
+        # sum masses for mass conservation checks
+        self.mass_water = np.sum(lwater, axis=1)
+        self.mass_ice = np.sum(lice, axis=1)
+        self.mass = np.sum(lwater + lice, axis=1)
+
+        # main properties
         self.ltemp = xp.array(ltemp)                    # LAYER TEMPERATURE [C]
         self.ldensity = xp.array(ldensity)              # LAYER DENSITY [kg m-3]
-        self.lice = xp.array(ldensity*self.lheight)     # LAYER ICE (SOLID) MASS [kg m-2]
+        self.lice = xp.array(lice)     # LAYER ICE (SOLID) MASS [kg m-2]
         self.lwater = xp.array(lwater)                  # LAYER WATER (LIQUID) MASS [kg m-2]
         self.lgrainsize = xp.array(lgrainsize)          # LAYER GRAIN SIZE [um]
         self.drefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS ADDED PER TIMESTEP [kg m-2]

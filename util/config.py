@@ -17,7 +17,10 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy.interpolate import RegularGridInterpolator
+from collections import namedtuple 
 from types import SimpleNamespace
+from types import MappingProxyType
+import jax
 
 class ConfigError(Exception):
     """Raised when an expected crash
@@ -111,9 +114,13 @@ class Config():
             all_ids = [f.split('-')[-1] for f in df['RGIId']]
             args.rgi_ids = all_ids
 
+        # configure last items
         self.args = args
         self.configure_lookups()
-        args.ice_spectrum_fn = self.configure_SNICAR()
+        self.args.ice_spectrum_fn = self.configure_SNICAR()
+
+        # FINALLY: convert args into a JAX-compatible NamedTuple (immutable)
+        self.convert_to_jax_safe(self.args)
 
         # print debug statement
         if self.args.debug and self.args.use_config:
@@ -139,9 +146,6 @@ class Config():
             grain_size_dims, ds.kapmat.values, method='linear')
         args.interp_dr0 = RegularGridInterpolator(
             grain_size_dims, ds.dr0mat.values, method='linear')
-        
-        # convert args.wvs from list to numpy array
-        args.wvs = np.array(args.wvs)
 
         # load ML algorithm for albedo
         # if args.method_snicar == 'emulator':
@@ -192,3 +196,42 @@ class Config():
         df_spectrum = pd.DataFrame(ice_point_spectrum)
         df_spectrum.to_csv(ice_spectrum_fn, index=False, header=False)
         return ice_spectrum_fn
+    
+    def convert_to_jax_safe(self, args):
+        # sort args as a dictionary
+        raw_config_dict = vars(args)
+
+        # define custom class for dictionaries so JAX sees them as immutable
+        @jax.tree_util.register_static
+        class FrozenDict(dict):
+            """A read-only, hashable dictionary that JAX treats as a static constant."""
+            def __hash__(self):
+                # Hash the sorted items so that identical dictionaries share the same hash
+                return hash(frozenset(self.items()))
+            def __setitem__(self, key, value):
+                raise TypeError("FrozenDict objects are immutable")
+            def __delitem__(self, key):
+                raise TypeError("FrozenDict objects are immutable")
+
+        def freeze_object(obj):
+            """Recursively converts lists to tuples and dicts to FrozenDicts."""
+            if isinstance(obj, list):
+                return tuple(freeze_object(item) for item in obj)
+            elif isinstance(obj, np.ndarray):
+                return tuple(freeze_object(item) for item in obj.tolist())
+            elif isinstance(obj, dict):
+                # Recursively freeze nested elements, then pack them into our Registered FrozenDict
+                frozen_inner = {k: freeze_object(v) for k, v in obj.items()}
+                return FrozenDict(frozen_inner)
+            else:
+                return obj
+        
+        # deep freeze every item inside the dictionary
+        frozen_config_dict = {k: freeze_object(v) for k, v in raw_config_dict.items()}
+        
+        # create new dynamic named tuple
+        JaxSafeConfig = namedtuple('JaxSafeConfig', frozen_config_dict.keys())
+
+        # instantiate it with the SimpleNamespace args
+        self.args = JaxSafeConfig(**frozen_config_dict)
+        return

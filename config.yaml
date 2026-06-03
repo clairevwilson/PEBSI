@@ -10,7 +10,7 @@
 # ================================================
 store_data: false
 debug: true
-output_fp: 'test_simulation/'
+output_fp: '../Output/test_simulation/'
 start_date: '2024-04-20'
 end_date: '2024-05-20'
 

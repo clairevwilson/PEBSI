@@ -31,7 +31,7 @@ class Climate():
     If use_aws = False, only reanalysis data will 
     be used.
     """
-    def __init__(self, args, sd):
+    def __init__(self, args, terrain):
         """
         Initializes glacier information and creates
         the dataset where climate data will be stored.
@@ -45,7 +45,7 @@ class Climate():
 
         # load args and simulation information
         self.args = args
-        self.sd = sd
+        self.terrain = terrain
         self.get_spatial_temporal_info()
 
         # list all required variables
@@ -56,6 +56,7 @@ class Climate():
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()
+        self.bias_vars = []
         if not self.args.use_aws:
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
@@ -68,7 +69,7 @@ class Climate():
         self.dates = pd.date_range(self.args.start_date,self.args.end_date,freq='h')
 
         # handle timezones
-        tz = self.sd.tz_n
+        tz = self.terrain.tz_n
         if len(np.unique(tz)) == 1:
             # if all glaciers are in the same timezone, dates_UTC can be 1D
             self.dates_UTC = self.dates - pd.to_timedelta(int(tz[0]), unit='h')
@@ -78,8 +79,8 @@ class Climate():
             self.dates_UTC = self.dates[np.newaxis, :] - timedelta_col
 
         # specify spatial and temporal information
-        self.n_t = len(self.dates)
-        self.shape = (self.sd.n, self.n_t)
+        self.N_TIME = len(self.dates)
+        self.shape = (self.terrain.N_POINTS, self.N_TIME)
         return
     
     # def get_aws(self,fp):
@@ -154,7 +155,7 @@ class Climate():
         """
         # load time and point data
         dates = self.dates_UTC
-        sd = self.sd
+        sd = self.terrain
         
         # interpolate data if time was input on the hour instead of half-hour
         self.interpolate = dates[0].minute != 30 and self.args.climate_source == 'MERRA2'
@@ -171,7 +172,7 @@ class Climate():
             zds = zds.sel({self.lat_vn: self.point_lats, 
                            self.lon_vn: self.point_lons},method='nearest')
             zds = self.check_units('elev',zds)
-            self.sd.gcm_elev_n = zds.isel(time=0).values
+            self.terrain.gcm_elev_n = zds.isel(time=0).values
         
         # loop through vars
         for var in self.need_vars:
@@ -359,7 +360,7 @@ class Climate():
         if self.args.temp_perturb > 0:
             # account for perturbed air temperature
             LAPSE_RATE = self.args.lapse_rate / 1000
-            elev_change = LAPSE_RATE*(self.sd.gcm_elev_n - self.temp_elev)
+            elev_change = LAPSE_RATE*(self.terrain.gcm_elev_n - self.temp_elev)
             temp_LW_elev = self.original_temp - self.args.temp_perturb + elev_change
             self.LWin_to_elevation(temp_LW_elev)
         else:
@@ -541,11 +542,11 @@ class Climate():
             # if temperature was a bias-corrected variable, use pre-set temp_elev
             temp_elev = self.temp_elev
         else:
-            temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.sd.gcm_elev_n
+            temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format temp and point elev as (, n) arrays
         self.temp_elev = temp_elev[:, np.newaxis]
-        point_elev = self.sd.elev_n[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply lapse rate
         new_temp = self.original_temp + LAPSE_RATE*(point_elev - self.temp_elev)
@@ -566,8 +567,8 @@ class Climate():
             PREC_GRAD = self.args.precgrad
 
         # format tp and point elev as (, n) arrays
-        tp_elev = self.sd.median_elev_n[:, np.newaxis]
-        point_elev = self.sd.elev_n[:, np.newaxis]
+        tp_elev = self.terrain.median_elev_n[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply precipitation gradient
         new_tp = self.original_tp*(1+PREC_GRAD*(point_elev-tp_elev))
@@ -588,11 +589,11 @@ class Climate():
         CTOK = self.args.celsius_to_kelvin
         
         # get elevation of surface pressure data
-        sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.sd.gcm_elev_n
+        sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format sp and point elev as (, n) arrays
         sp_elev = sp_elev[:, np.newaxis]
-        point_elev = self.sd.elev_n[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.temp.copy()
@@ -631,9 +632,9 @@ class Climate():
         temp_site = self.temp            # Temperature already updated to self.elev
 
         # get elevation of longwave data
-        LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.sd.gcm_elev_n
+        LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.sd.elev_n)[:, np.newaxis]
+            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.terrain.elev_n)[:, np.newaxis]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK
@@ -700,7 +701,7 @@ class Climate():
             },
             coords={
                 'time': self.dates,
-                'point': range(self.sd.n)
+                'point': range(self.terrain.N_POINTS)
             }
         )
 
