@@ -7,8 +7,6 @@ import yaml, os
 import itertools
 import pickle
 from concurrent.futures import ProcessPoolExecutor
-# data handling
-from project.data_handling import MassBalance
 
 base_fp = '/trace/group/rounce/cvwilson/'
 
@@ -17,6 +15,7 @@ site_dict = {
     'wolverine':['EC'],
     'kahiltna':['KPS','KQU',],
     'gulkana':['T','Z'],
+    # 'gulkana':['T']
 }
 
 # parameters to calibrate
@@ -31,6 +30,8 @@ values = list(vars_dict.values())
 with open('project/best_firn_params.pkl', 'rb') as f:
     params_dict = pickle.load(f)
 
+# params_table = pd.read_csv('firn_params.csv', index_col=0)
+
 def initialize_simulation(input):
     global base_fp
     i, glacier, site, perturb_var, perturb_val = input
@@ -38,6 +39,7 @@ def initialize_simulation(input):
     # get file names
     config_fn = base_fp + f'configs/config_{i}.yaml'
     climate_fp = base_fp + 'climate_data/'
+    rgi_fp = base_fp + '../shared/RGI/rgi60/00_rgi60_attribs/'
     out_fp = base_fp + f'Output/paper2/{glacier}{site}_sensitivity/'
     if perturb_var == 'temperature':
         param = 'temp_perturb'
@@ -45,13 +47,13 @@ def initialize_simulation(input):
     elif perturb_var == 'precipitation':
         param = 'tp_perturb'
         param_str = 'tpx' + str(perturb_val)
-    out_fn = f'{glacier}{site}_{param_str}_0528_'
+    out_fn = f'{glacier}{site}_{param_str}_fixedgrains_'
 
     # define bias vars
     if glacier != 'kahiltna':
-        bias_vars = ['temp','rh','SWin']
+        bias_vars = ['temp','rh','SWin','wind']
     else:
-        bias_vars = ['temp','SWin']
+        bias_vars = ['temp','SWin','wind']
     
     # create dict
     config_dict = {
@@ -61,6 +63,7 @@ def initialize_simulation(input):
         'start_date':'1980-04-01',
         'end_date':'2025-09-01',
         'bias_vars':bias_vars,
+        'option_accel_grains':True,
 
         # Glacier info
         'glac_name':glacier,
@@ -70,10 +73,13 @@ def initialize_simulation(input):
         'climate_fp':climate_fp,
         'output_fn':out_fn,
         'output_fp':out_fp,
+        'rgi_fp':rgi_fp,
 
         # Parameters
         param: perturb_val,
-        'constant_freshgrainsize': 54.5
+        'constant_freshgrainsize': 54.5,
+        # 'kp': float(params_table.loc[site, 'kp']),
+        # 'lapse_rate': float(params_table.loc[site, 'lr'])
     }
 
     # add calibrated parameters to config
@@ -110,7 +116,9 @@ def run_single_simulation(input):
         if os.path.exists(args.config_fn):
             os.remove(args.config_fn)
 
+    print('success?', success)
     if success:
+        print('so were here then, wtf?')
         # process the dataset for CFM input
         timeres='1d'
         forcing_fp = '/trace/group/rounce/cvwilson/Firn/Forcings/'
@@ -136,6 +144,7 @@ def run_single_simulation(input):
 
         # store data as a .csv       
         df = data_in[['BDOT','RAIN','TS','SMELT','SUBLIM']].to_dataframe()
+        print('STORING TO', forcing_fp + forcing_fn)
         df.to_csv(forcing_fp + forcing_fn)
     return
 

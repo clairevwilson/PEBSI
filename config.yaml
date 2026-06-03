@@ -29,3 +29,4 @@ aws_elev: 1500
 # ================================================
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
+rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'

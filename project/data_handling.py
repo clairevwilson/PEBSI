@@ -43,7 +43,7 @@ class MassBalance():
         # open dataframes
         metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
         wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
-        benchmark_fp = home_fp + 'MB_data/'
+        benchmark_fp = '/trace/group/rounce/cvwilson/MB_data/' # home_fp + 'MB_data/'
         glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
 
         # store input attributes

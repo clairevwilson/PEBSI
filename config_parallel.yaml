@@ -4,6 +4,7 @@ use_aws: false
 store_data: true
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
+rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'
 ksp_BC: 1
 ksp_OC: 1
 dust_factor: 20

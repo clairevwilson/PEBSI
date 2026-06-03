@@ -28,17 +28,17 @@ site_dict = {
 
 # parameters to calibrate
 params = {
-    'wind_factor':[0.5, 1, 1.5, 2, 2.5, 3, 3.5],
-    'lapse_rate':[-3, -6.5, -9]
-    # 'lapse_rate':[-3.5, -4, -4.5, -5, -5.5, -6, -6.5, -7, -7.5, -8, -8.5, -9],
+    # 'wind_factor':[0.5, 1, 1.5, 2, 2.5, 3, 3.5],
+    # 'lapse_rate':[-3, -6.5, -9],
+    'lapse_rate':[-3.5, -4, -4.5, -5, -5.5, -6, -6.5, -7, -7.5, -8, -8.5, -9],
 }
 
 keys = list(params.keys())
 values = list(params.values())
 
-# open pre calibrated parameters dict
-with open('project/best_firn_params.pkl', 'rb') as f:
-    params_dict = pickle.load(f)
+# # open pre calibrated parameters dict
+# with open('project/best_firn_params.pkl', 'rb') as f:
+#     params_dict = pickle.load(f)
 
 def initialize_simulation(input):
     global base_fp
@@ -47,9 +47,10 @@ def initialize_simulation(input):
     # get file names
     config_fn = base_fp + f'configs/config_{i}.yaml'
     climate_fp = base_fp + 'climate_data/'
+    rgi_fp = base_fp + '../shared/RGI/rgi60/00_rgi60_attribs/'
     out_fp = base_fp + 'Output/paper2/recalibrate_' + site +'/'
     params_str = '_'.join([p.replace('_','') + str(v) for p, v in zip(param_keys, param_values)])
-    out_fn = f'grid_{glacier}_{site}_{params_str}_hourlygrains_'
+    out_fn = f'grid_{glacier}_{site}_{params_str}_fixed_'
     if os.path.exists(out_fp + out_fn+'0.nc'):
         os.remove(out_fp + out_fn+'0.nc')
 
@@ -67,7 +68,7 @@ def initialize_simulation(input):
     else:
         qm_glac_name = glacier 
 
-    bias_vars = ['temp','rh']
+    bias_vars = ['temp','rh','wind']
     if glacier != 'kahiltna':
         bias_vars.append('SWin')
     
@@ -85,11 +86,13 @@ def initialize_simulation(input):
         'site':site,
         'qm_glac_name':qm_glac_name,
         'constant_freshgrainsize': 54.5,
+        'option_accel_grains':True,
 
         # Filepaths
         'climate_fp':climate_fp,
         'output_fn':out_fn,
         'output_fp':out_fp,
+        'rgi_fp':rgi_fp
     }
 
     # add parameters to config
