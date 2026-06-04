@@ -10,17 +10,13 @@ functions to maintain layer arrays.
 import warnings, sys
 warnings.simplefilter('error', RuntimeWarning)
 # External libraries
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import xarray as xr
 # Internal libraries
 from util.config import ConfigError
-# Handle GPU vs CPU
-try:
-    import cupy as cp
-    xp = cp 
-except:
-    xp = np
 
 class Layers():
     """
@@ -47,19 +43,13 @@ class Layers():
         self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
-        self.dz_snow = xp.full(N_POINTS, args.initial_snow_depth)
+        self.dz_snow = np.full(N_POINTS, args.initial_snow_depth)
         # *** rough approximation of where there should be firn
-        self.dz_firn = xp.zeros(N_POINTS)
+        self.dz_firn = np.zeros(N_POINTS)
         self.dz_firn[terrain.elev_n > terrain.median_elev_n] = args.initial_firn_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
-
-        # define intensive and extensive variables
-        self.intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
-        self.extensive_vars = ['lice','lwater','lBC','lOC','ldust',
-                               'drefreeze','lrefreeze']
-        self.all_layer_vars = self.intensive_vars + self.extensive_vars + ['lheight','ldepth']
         
         if args.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
@@ -101,23 +91,23 @@ class Layers():
         firn_height = self.dz_firn
 
         # initialize variables to get filled
-        lheight = xp.zeros(self.shape)
-        ltype = xp.zeros(self.shape, dtype=xp.int32)
+        lheight = np.zeros(self.shape)
+        ltype = np.zeros(self.shape)
 
         # define the exponential curve for indexing reference
-        layer_indices = xp.arange(N_LAYERS)
+        layer_indices = np.arange(N_LAYERS)
 
         # are snow layers a constant size?
         if args.option_uniform_snow:
-            curve_snow = xp.full(N_LAYERS, DZ_SNOW)
+            curve_snow = np.full(N_LAYERS, DZ_SNOW)
         else:
-            curve_snow = DZ_TOP * xp.exp(layer_indices * LAYER_GROWTH)
+            curve_snow = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
 
         # are ice layers a constant size?
         if args.option_uniform_ice:
-            curve_ice = xp.full(N_LAYERS, DZ_ICE)
+            curve_ice = np.full(N_LAYERS, DZ_ICE)
         else:
-            curve_ice = DZ_TOP * xp.exp(layer_indices * LAYER_GROWTH)
+            curve_ice = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
     
         # create layers for each point
         for i in range(N_POINTS):
@@ -152,19 +142,19 @@ class Layers():
                     curr_lyr += 1
 
             # add ice layers until all layers are full with a thickness cap
-            curve_ice_clipped = xp.minimum(curve_ice, args.dz_icelayer)
-            lheight[i] = xp.where(xp.arange(N_LAYERS) >= curr_lyr, 
+            curve_ice_clipped = np.minimum(curve_ice, args.dz_icelayer)
+            lheight[i] = np.where(np.arange(N_LAYERS) >= curr_lyr, 
                                   curve_ice_clipped, lheight[i])
-            ltype[i] = xp.where(xp.arange(N_LAYERS) >= curr_lyr, 2, ltype[i])
+            ltype[i] = np.where(np.arange(N_LAYERS) >= curr_lyr, 2, ltype[i])
 
         # calculate midpoint heights
-        cum_height = xp.cumsum(lheight, axis=1)
+        cum_height = np.cumsum(lheight, axis=1)
         ldepth = cum_height - (lheight / 2.0)
 
         # store to self
-        self.ltype = xp.array(ltype)            # LAYER TYPE (0, 1, or 2) [-]
-        self.lheight = xp.array(lheight)        # LAYER HEIGHT (dz) [m]
-        self.ldepth = xp.array(ldepth)          # LAYER DEPTH (midlayer) [m]
+        self.ltype = np.array(ltype)            # LAYER TYPE (0, 1, or 2) [-]
+        self.lheight = np.array(lheight)        # LAYER HEIGHT (dz) [m]
+        self.ldepth = np.array(ldepth)          # LAYER DEPTH (midlayer) [m]
 
         # assign indices
         self.snow_mask = ltype==0       # type 0 = snow
@@ -205,18 +195,18 @@ class Layers():
 
         # ===== TEMPERATURE [C] =====
         if args.initialize_temp == 'interpolate':
-            ltemp = xp.interp(
+            ltemp = np.interp(
                 self.ldepth.ravel(),
                 temp_data['depth'],
                 temp_data['temp']
             ).reshape(self.shape)
         elif args.initialize_temp == 'ripe':
-            ltemp = xp.zeros(self.shape)
+            ltemp = np.zeros(self.shape)
         else:
             raise ConfigError('Invalid configuration: initialize_temp')
         
         # ===== GRAIN SIZE [um] =====
-        lgrainsize = xp.interp(
+        lgrainsize = np.interp(
             self.ldepth.ravel(),
             grainsize_data['depth'],
             grainsize_data['grainsize']
@@ -227,41 +217,41 @@ class Layers():
         # ===== DENSITY [kg m-3] =====
         if args.initialize_density == 'interpolate':
             # SNOW layers initialized by interpolation
-            ldensity = xp.interp(
+            ldensity = np.interp(
                 self.ldepth.ravel(),
                 density_data['depth'],
                 density_data['density']
             ).reshape(self.shape)
 
             # find the snow density at the bottom of each point
-            bottom_snow_density = xp.nanmax(ldensity * snow_mask, axis=1)
-            bottom_snow_depth = xp.nanmax(self.ldepth * snow_mask, axis=1)
+            bottom_snow_density = np.nanmax(ldensity * snow_mask, axis=1)
+            bottom_snow_depth = np.nanmax(self.ldepth * snow_mask, axis=1)
 
             # if there is no snow, swap in constant firn_density
-            bottom_snow_density = xp.where(snow_height > 0, 
+            bottom_snow_density = np.where(snow_height > 0, 
                                            bottom_snow_density, 
                                            args.density_firn)
 
             # compute the density slope from top to bottom of firn
-            firn_height_no0 = xp.where(firn_height > 0, firn_height, 1.0)
-            pslope = xp.where(
+            firn_height_no0 = np.where(firn_height > 0, firn_height, 1.0)
+            pslope = np.where(
                 firn_height > 0,
                 (args.density_ice - bottom_snow_density) / firn_height_no0,
                 0.0,
-            )[:, xp.newaxis]
+            )[:, np.newaxis]
 
             # apply the firn interpolation
-            bottom_snow_density = bottom_snow_density[:, xp.newaxis]
-            bottom_snow_depth = bottom_snow_depth[:, xp.newaxis]
+            bottom_snow_density = bottom_snow_density[:, np.newaxis]
+            bottom_snow_depth = bottom_snow_depth[:, np.newaxis]
             firn_densities = bottom_snow_density + pslope* (self.ldepth - bottom_snow_depth)
-            ldensity = xp.where(firn_mask, firn_densities, ldensity)
+            ldensity = np.where(firn_mask, firn_densities, ldensity)
 
             # set constant ice layer density
-            ldensity = xp.where(ice_mask, args.density_ice, ldensity)
+            ldensity = np.where(ice_mask, args.density_ice, ldensity)
         elif args.initialize_density == 'constant':
             ldensity = np.ones(self.shape) * args.density_snow
-            ldensity = xp.where(firn_mask, args.density_firn, ldensity)
-            ldensity = xp.where(ice_mask, args.density_ice, ldensity)
+            ldensity = np.where(firn_mask, args.density_firn, ldensity)
+            ldensity = np.where(ice_mask, args.density_ice, ldensity)
         else:
             raise ConfigError('Invalid configuration: initialize_density')
         
@@ -279,10 +269,10 @@ class Layers():
         
         # ===== AGE [days] =====
         firn_mask_int = self.firn_mask.astype(int)
-        lage = xp.cumsum(firn_mask_int, axis=1) * -365
+        lage = np.cumsum(firn_mask_int, axis=1) * -365
 
         # firn ages count back in time; snow/ice initialized at 0
-        lage = xp.where(self.ltype >= 1, lage, 0.0)
+        lage = np.where(self.ltype >= 1, lage, 0.0)
 
         # ===== LAPs [kg m-2] =====
         self.initialize_LAPs()
@@ -297,14 +287,14 @@ class Layers():
         self.mass = np.sum(lwater + lice, axis=1)
 
         # main properties
-        self.ltemp = xp.array(ltemp)                    # LAYER TEMPERATURE [C]
-        self.ldensity = xp.array(ldensity)              # LAYER DENSITY [kg m-3]
-        self.lice = xp.array(lice)     # LAYER ICE (SOLID) MASS [kg m-2]
-        self.lwater = xp.array(lwater)                  # LAYER WATER (LIQUID) MASS [kg m-2]
-        self.lgrainsize = xp.array(lgrainsize)          # LAYER GRAIN SIZE [um]
+        self.ltemp = np.array(ltemp)                    # LAYER TEMPERATURE [C]
+        self.ldensity = np.array(ldensity)              # LAYER DENSITY [kg m-3]
+        self.lice = np.array(lice)     # LAYER ICE (SOLID) MASS [kg m-2]
+        self.lwater = np.array(lwater)                  # LAYER WATER (LIQUID) MASS [kg m-2]
+        self.lgrainsize = np.array(lgrainsize)          # LAYER GRAIN SIZE [um]
         self.drefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS ADDED PER TIMESTEP [kg m-2]
         self.lrefreeze = np.zeros_like(self.ltemp)      # LAYER REFREEZE MASS [kg m-2]
-        self.lage = xp.array(lage, dtype=xp.int32)      # LAYER AGE [days]
+        self.lage = np.array(lage)      # LAYER AGE [days]
         return
     
     def initialize_LAPs(self):
@@ -362,293 +352,420 @@ class Layers():
         self.ldust = ldust      # LAYER DUST MASS [kg m-2]
         return
     
-    # ========= UTILITY FUNCTIONS ==========
-    def add_top_layer(self, mask, new_layer):
-        """
-        Adds a new layer to the top of layers
-        for the points in mask.
+# ========= UTILITY FUNCTIONS ==========
+def add_top_layer(state, mask, new_layer):
+    """
+    Adds a new layer to the top of layers
+    for the points in mask.
 
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a new layer is added
-        new_layer : object
-            Namespace container with new layer properties
-        """
-        # convert namespace to a dictionary of {attribute_name: array_values}
-        properties = vars(new_layer)
-
-        # loop through vars (e.g., ltemp, ldensity)
-        for attr, new_values in properties.items():
-            # grab the existing array for this var
-            target_array = getattr(self, attr)
-            
-            # shift layers down one idx for points where a layer is added
-            target_array[mask, 1:] = target_array[mask, :-1]
-            
-            # insert the new layer data
-            target_array[mask, 0] = new_values[mask]
-        return
-    
-    def add_bottom_layer(self, mask):
-        """
-        Fills in data for a new bottom layer added
-        as a result of a different layer being removed
-        for the points in mask. Data is copied from
-        the layer that was previously the bottom (-2).
-
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a new layer is added
-        """
-        for var in self.all_layer_vars:
-            data = getattr(self, var)
-            previous_bottom = data[mask, -2]
-            data[mask, -1] = previous_bottom 
-        return
-    
-    def remove_layer(self, mask, idx):
-        """
-        Removes a single layer from layers class
-        for the points in mask.
-
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a layer is removed
-        idx : int
-            Index of the layer to remove
-        """
-        # shift everything below the removed layer upwards by 1
-        for var in self.all_layer_vars:
-            data = getattr(self, var)
-            data[mask, idx:-1] = data[mask, idx + 1:]
-
-        # add a new bottom layer
-        self.add_bottom_layer(mask)        
-        return
-    
-    def split_layer(self, mask, idx):
-        """
-        Splits a single layer into two layers. Extensive
-        properties are halved and intensive properties 
-        are maintained.
-
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a layer is split
-        layer_to_split : int
-            Index of the layer to split for points in mask
-        """
-        # shift everything below the split layer downwards by 1
-        for var in self.all_layer_vars:
-            data = getattr(self, var)
-            data[mask, idx + 1:] = data[mask, idx:-1]
-
-        # intensive variables were already copied correctly
-        # halve the extensive properties in the split layers
-        for var in self.extensive_vars:
-            data = getattr(self, var)
-            data[mask, idx:idx+2] /= 2
-
-        # make sure depth, density and type are updated
-        self.lheight = self.lice / self.ldensity
-        self.update_layer_props()
-        return
-
-    def merge_existing_layers(self, mask, idx):
-        """
-        Merges two layers into one. Extensive properties
-        are added and intensive properties are averaged.
-
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a new layer is added
-        idx : int
-            Index of the layer to merge with the layer
-            beneath it for each point in mask
-        """
-        # idx is the layer being removed and merged down into target_idx
-        target_idx = idx + 1
-
-        # calculate mass weights between the two existing layers
-        m_removed = self.lice[mask, idx]
-        m_target = self.lice[mask, target_idx]
-        m_total = m_removed + m_target
-
-        # merge intensive properties with weighted mean
-        for var in self.intensive_vars:
-            data = getattr(self, var)
-            target = data[mask, target_idx]
-            removed = data[mask, idx]
-            weighted_avg = (target * m_target + removed * m_removed) / m_total
-            
-            # make sure ltype is int type
-            if var == 'ltype': weighted_avg = weighted_avg.astype(int)
-                
-            # store the weighted average
-            data[mask, target_idx] = weighted_avg
-
-        # merge extensive properties into the lower layer (target_idx)
-        for var in self.extensive_vars:
-            data = getattr(self, var)
-            target = data[mask, target_idx]
-            removed = data[mask, idx]
-            data[mask, target_idx] = removed + target
-
-        # recalculate height from averaged density 
-        self.lheight = self.lice / self.ldensity
-
-        # shift everything below the removed layer upwards by 1
-        for var in self.all_layer_vars:
-            data = getattr(self, var)
-            data[mask, idx:-1] = data[mask, idx + 1:]
-
-        # lost a layer, so need to create new bottom layer
-        self.add_bottom_layer(mask)
-
-        # make sure depth, density and type are updated
-        self.update_layer_props()
-        return
-    
-    def merge_new_layer(self, mask, new_layer):
-        """
-        Merges accumulation into existing top layer
-        for points in mask. Extensive properties are 
-        added and intensive properties are averaged.
-
-        Parameters
-        ==========
-        mask : xp.Array (N_POINTS)
-            Boolean mask for points where a new layer is added
-        new_layer : object
-            Namespace container with new layer properties
-        """
-        # convert namespace to a dictionary of {attribute_name: array_values}
-        properties = vars(new_layer)
-
-        # calculate mass weights for the merge cells
-        m_old = self.lice[mask, 0]
-        m_new = new_layer.lice[mask]
-        m_total = m_old + m_new
-
-        # take mass-weighted mean for intensive properties
-        for var in self.intensive_vars:
-            data = getattr(self, var)
-            existing = data[mask, 0]
-            new = properties[var][mask]
-            weighted_avg = (existing * m_old + new * m_new) / (m_total)
-
-            # make sure ltype is int type
-            if var == 'ltype': weighted_avg = weighted_avg.astype(int)
-
-            # store the weighted average
-            data[mask, 0] = weighted_avg
-
-        # sum extensive properties
-        for var in self.extensive_vars:
-            data = getattr(self, var)
-            existing = data[mask, 0]
-            new = properties[var][mask]
-            data[mask, 0] = existing + new
-
-        # recalculate heights, depths, and masks
-        self.lheight = self.lice / self.ldensity 
-        self.update_layer_props()
-        return
-    
-    def check_layer_sizes(self):
-        """
-        Scans through layers sequentially from top to bottom.
-        If a layer is below the minimum height threshold, it is 
-        merged with the layer directly beneath it.
-        """
-        args = self.args
-
-        # remove dead layers (mass ~ 0) across the entire grid
-        # run this from bottom up so layer indices don't shift
-        for idx in reversed(range(self.N_LAYERS)):
-            dead_mask = self.lice[:, idx] < (args.mb_threshold / 1000.0)
-            if xp.any(dead_mask):
-                self.remove_layer(dead_mask, idx)
-
-        # sequential check for miniscule layers
-        # only loop to idx -2 because bottom layer cannot be merged
-        idx = 0
-        while idx < self.N_LAYERS - 1:
-            dz = self.lheight[:, idx]
-            
-            # identify where the current layer is too thin
-            merge_mask = dz < args.min_dz
-            
-            # only merge snow if it matches the type underneath
-            # ice or firn merge unconditionally
-            is_snow = self.ltype[:, idx] == 0
-            type_matches_below = self.ltype[:, idx] == self.ltype[:, idx + 1]
-            merge_mask &= (~is_snow | type_matches_below)
-
-            if xp.any(merge_mask):
-                # merge any points where this layer msut be merged
-                self.merge_existing_layers(merge_mask, idx)
-                
-                # do not update idx since layers just shifted up
-                continue
-            else:
-                # no profiles were merged, so move to the next layer idx
-                idx += 1
-            
-        return
-    
-    def update_layer_props(self,do=['depth','density']):
-        """
-        Recalculates nlayers, depths, and density. 
-        Can specify to only update certain properties.
-
-        Parameters
-        ==========
-        do : list-like
-            List of any combination of depth, density to be updated
-        """
-        # CONSTANTS
-        DENSITY_ICE = self.args.density_ice
-
-        self.snow_mask = self.ltype == 0
-        self.firn_mask = self.ltype == 1
-        self.ice_mask = self.ltype == 2
+    Parameters
+    ==========
+    state : NamedTuple
+        Current model state containing point/layer properties
+    mask : jnp.Array (N_POINTS,)
+        Boolean mask for points where a new layer is added
+    new_layer : dict
+        Dictionary with new layer properties
+    """
+    # convert namespace to a dictionary of {attribute_name: array_values}
+    properties = state._asdict()
+    for attr, new_values in new_layer.items():
+        data = properties[attr]
         
-        if 'depth' in do:
-            lh = self.lheight.copy()
-            self.ldepth = xp.cumsum(lh, axis=1) - (lh / 2.0)
-        if 'density' in do:
-            self.ldensity = xp.where(
-                self.ice_mask,
-                DENSITY_ICE,
-                self.lice / self.lheight
-            )
-        return
+        # shift layers down one idx for points where a layer is added
+        shifted = data.at[:, 1:].set(data[:, :-1])
+        
+        # insert the new layer data to index 0
+        shifted_new = shifted.at[:, 0].set(new_values)
+
+        # mask logic
+        properties[attr] = jnp.where(
+            mask[:, None],
+            shifted_new, 
+            data
+        )
+    return state._replace(**properties)
+
+def add_bottom_layer(state, mask, all_layer_vars):
+    """
+    Fills in data for a new bottom layer added
+    as a result of a different layer being removed
+    for the points in mask. Data is copied from
+    the layer that was previously the bottom (-2).
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS)
+        Boolean mask for points where a new layer is added
+    """
+    properties = state._asdict()
+    for var in all_layer_vars:
+        data = properties[var]
+
+        # copy the second-from-bottom to the bottom layer
+        dupe_bottom = data.at[:, -1].set(data[:, -2])
+
+        # replace it only at points in mask
+        properties[var] = jnp.where(
+            mask[:, None],
+            dupe_bottom,
+            data
+        )
+    return state._replace(**properties)
+
+def remove_layer(state, mask, idx, all_layer_vars):
+    """
+    Removes a single layer from layers class
+    for the points in mask.
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS)
+        Boolean mask for points where a layer is removed
+    idx : int
+        Index of the layer to remove
+    """
+    properties = state.asdict()
+
+    # load layer index array
+    layers_idx = jnp.arange(state.lice.shape[1])
+
+    # combine point mask with index mask
+    # (shift layers below removed up by one)
+    target_mask = mask[:, None] & (layers_idx >= idx)[None, :]
+
+    for var in all_layer_vars:
+        data = properties[var]
+
+        # shift everything upwards by one
+        fully_shifted = data.at[:, :-1].set(data[:, 1:])
+        
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            target_mask,
+            fully_shifted,
+            data
+        )
+
+    # write these properties to state
+    state = state._replace(**properties)
+
+    # add a new bottom layer
+    state = add_bottom_layer(state, mask, all_layer_vars)        
+    return state
+
+def split_layer(state, mask, idx, args):
+    """
+    Splits a single layer into two layers. Extensive
+    properties are halved and intensive properties 
+    are maintained.
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS)
+        Boolean mask for points where a layer is split
+    layer_to_split : int
+        Index of the layer to split for points in mask
+    """
+    properties = state._asdict()
+
+    # load layer index array
+    layers_idx = jnp.arange(state.lice.shape[1])
+
+    # combine point mask with index mask
+    # (shift points at or below index down by one)
+    target_mask = mask[:, None] & (layers_idx > idx)[None, :]
+
+    for var in args.all_layer_vars:
+        data = properties[var]
+
+        # shift everything downwards by one
+        fully_shifted = data.at[:, 1:].set(data[:, :-1])
+
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            target_mask,
+            fully_shifted,
+            data
+        )
+
+    # halve extensive properties at layers that were copied
+    halve_condition = (layers_idx == idx) | (layers_idx == idx + 1)
+    halve_mask = mask[:, None] & halve_condition[None, :]
+
+    for var in args.extensive_vars:
+        data = properties[var]
+        
+        # calculate halved quantities at every point
+        halved_data = data / 2.0
+        
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            halve_mask,
+            halved_data,
+            properties[var] # use the shifted data
+        )
+
+    # recalculate lheight directly
+    properties['lheight'] = properties['lice'] / properties['ldensity']
+
+    # write these properties to state
+    state = state._replace(**properties)
+
+    # finally, send state through the profile updates utility
+    state = update_layer_props(state, args.density_ice)
     
-    def update_layer_types(self):
-        """
-        Checks if new ice layers have been created by 
-        the densification of firn.
-        """
-        args = self.args
-        DENSITY_ICE = args.density_ice
+    return state
 
-        # find which firn layers have crossed the ice density threshold
-        is_firn = self.ltype == 'firn'
-        density_check = self.ldensity >= DENSITY_ICE
-        trans_mask = is_firn & density_check
+def merge_existing_layers(state, mask, idx, args):
+    """
+    Merges two layers into one. Extensive properties
+    are added and intensive properties are averaged.
 
-        # apply the ice transformation
-        self.ltype[trans_mask] = 'ice'
-        self.ldensity[trans_mask] = DENSITY_ICE
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS)
+        Boolean mask for points where a new layer is added
+    idx : int
+        Index of the layer to merge with the layer
+        beneath it for each point in mask
+    """
+    properties = state._asdict()
+    layers_idx = jnp.arange(state.lice.shape[1])
 
-        # bound density of remaining snow layers (superimposed ice patch)
-        too_dense_snow = self.snow_mask & (self.ldensity > DENSITY_ICE)
-        self.ldensity[too_dense_snow] = DENSITY_ICE
+    # idx is the layer being removed and merged down into target_idx
+    target_idx = idx + 1
 
-        return
+    # calculate mass weights between the two existing layers
+    m_removed = properties['lice'][:, idx]
+    m_target = properties['lice'][:, target_idx]
+    m_total = m_removed + m_target
+
+    # combine point mask with index mask
+    target_mask = mask[:, None] & (layers_idx == target_idx)[None, :]
+
+    # take weighted average for intensive variables
+    for var in args.intensive_vars:
+        data = properties[var]
+        removed_vals = data[:, idx]
+        target_vals = data[:, target_idx]
+
+        # calculate mass-weighted average of values (N_POINTS)
+        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_total
+        
+        if var in ['ltype','lage']:
+            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            target_mask,
+            weighted_avg[:, None],
+            data
+        )
+
+    # sum for extensive variables
+    for var in args.extensive_vars:
+        data = properties[var]
+
+        # sum values
+        summed_data = data[:, idx] + data[:, target_idx]
+
+        properties[var] = jnp.where(
+            target_mask,
+            summed_data[:, None],
+            data
+        )
+
+    # combine point mask with index mask
+    # (layers at or below target index move up one)
+    shift_mask = mask[:, None] & (layers_idx >= target_idx)[None, :]
+
+    for var in args.all_layer_vars:
+        data = properties[var]
+
+        # shift everything upwards by one
+        fully_shifted = data.at[:, :-1].set(data[:, 1:])
+
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            shift_mask,
+            fully_shifted,
+            data
+        )
+    
+    # write these properties to state 
+    state = state._replace(**properties)
+    
+    # add bottom layer to replaced removed
+    state = add_bottom_layer(state, mask, args.all_layer_vars)
+
+    # recalculate layer heights
+    updated_lheight = state.lice / state.ldensity 
+    state = state._replace(lheight=updated_lheight)
+
+    # finally, send state through the profile updates utility
+    state = update_layer_props(state, args.density_ice)
+    
+    return state
+
+def merge_new_layer(state, mask, new_layer, args):
+    """
+    Merges accumulation into existing top layer
+    for points in mask. Extensive properties are 
+    added and intensive properties are averaged.
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS)
+        Boolean mask for points where a new layer is added
+    new_layer : object
+        Namespace container with new layer properties
+    """
+    properties = state._asdict()
+    layers_idx = jnp.arange(state.lice.shape[1])
+
+    # calculate mass weights between the two existing layers
+    m_new = new_layer['lice']
+    m_target = properties['lice'][:, 0]
+    m_total = m_new + m_target
+
+    # combine point mask with index mask
+    target_mask = mask[:, None] & (layers_idx == 0)[None, :]
+
+    # take weighted average for intensive variables
+    for var in args.intensive_vars:
+        data = properties[var]
+        new_vals = new_layer[var]
+        target_vals = data[:, 0]
+
+        # calculate mass-weighted average of values (N_POINTS)
+        weighted_avg = (target_vals * m_target + new_vals * m_new) / m_total
+        
+        if var in ['ltype','lage']:
+            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+
+        # replace it only at points / layers in mask
+        properties[var] = jnp.where(
+            target_mask,
+            weighted_avg[:, None],
+            data
+        )
+
+    # sum for extensive variables
+    for var in args.extensive_vars:
+        data = properties[var]
+
+        # sum values
+        summed_data = data[:, 0] + new_layer[var]
+
+        properties[var] = jnp.where(
+            target_mask,
+            summed_data[:, None],
+            data
+        )
+
+    # write these properties to state 
+    state = state._replace(**properties)
+
+    # recalculate layer heights
+    updated_lheight = state.lice / state.ldensity 
+    state = state._replace(lheight=updated_lheight)
+
+    # finally, send state through the profile updates utility
+    state = update_layer_props(state, args.density_ice)
+    
+    return state
+
+def check_layer_sizes(self):
+    """
+    Scans through layers sequentially from top to bottom.
+    If a layer is below the minimum height threshold, it is 
+    merged with the layer directly beneath it.
+    """
+    args = self.args
+
+    # remove dead layers (mass ~ 0) across the entire grid
+    # run this from bottom up so layer indices don't shift
+    for idx in reversed(range(self.N_LAYERS)):
+        dead_mask = self.lice[:, idx] < (args.mb_threshold / 1000.0)
+        if jnp.any(dead_mask):
+            self.remove_layer(dead_mask, idx)
+
+    # sequential check for miniscule layers
+    # only loop to idx -2 because bottom layer cannot be merged
+    idx = 0
+    while idx < self.N_LAYERS - 1:
+        dz = self.lheight[:, idx]
+        
+        # identify where the current layer is too thin
+        merge_mask = dz < args.min_dz
+        
+        # only merge snow if it matches the type underneath
+        # ice or firn merge unconditionally
+        is_snow = self.ltype[:, idx] == 0
+        type_matches_below = self.ltype[:, idx] == self.ltype[:, idx + 1]
+        merge_mask &= (~is_snow | type_matches_below)
+
+        if jnp.any(merge_mask):
+            # merge any points where this layer msut be merged
+            self.merge_existing_layers(merge_mask, idx)
+            
+            # do not update idx since layers just shifted up
+            continue
+        else:
+            # no profiles were merged, so move to the next layer idx
+            idx += 1
+        
+    return
+
+def update_layer_props(state, DENSITY_ICE):
+    """
+    Recalculates nlayers, depths, and density. 
+    Can specify to only update certain properties.
+
+    Parameters
+    ==========
+    do : list-like
+        List of any combination of depth, density to be updated
+    """
+    new_ice_mask = state.ltype == 2
+    new_density = jnp.where(
+        new_ice_mask,
+        DENSITY_ICE,
+        state.lice / state.lheight
+    )
+
+    lh = state.lheight
+    new_depth = jnp.cumsum(lh, axis=1) - (lh / 2.0)
+
+    # update state
+    state = state._replace(
+        ldepth = new_depth,
+        ldensity = new_density,
+        snow_mask = state.ltype == 0,
+        firn_mask = state.ltype == 1,
+        ice_mask = new_ice_mask
+    )
+
+    return state
+
+def update_layer_types(state, DENSITY_ICE):
+    """
+    Checks if new ice layers have been created by 
+    the densification of firn.
+    """
+
+    # find which firn layers have crossed the ice density threshold
+    is_firn = state.ltype == 'firn'
+    density_check = state.ldensity >= DENSITY_ICE
+    trans_mask = is_firn & density_check
+
+    # apply the ice transformation
+    new_ltype = jnp.where(trans_mask, 2, state.ltype)
+    new_ldensity = jnp.where(trans_mask, DENSITY_ICE, state.ldensity)
+
+    # update state
+    state = state._replace(
+        ltype = new_ltype, ldensity = new_ldensity
+    )
+    return state

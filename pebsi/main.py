@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 # Local libraries
 import pebsi.energybalance as eb
-import pebsi.massbalance as mb
+from pebsi.massbalance import MassBalanceDriver
 import pebsi.surface as surface
 
 @jax.jit(static_argnames=['args'])
@@ -15,19 +15,31 @@ def main(initial_state, all_forcings, point_attrs, args):
     for all mass balance and energy balance 
     calculations.
     """
+    # initiate drivers
+    mb = MassBalanceDriver(None, args)
 
     # define function for a single timestep
     def step(current_state, current_forcings):
         out = {}
-        step_idx = current_forcings.step_idx
+        time_idx = current_forcings.time_idx
         
         # parse time index for daily functions
-        is_day_start = (current_forcings.hour == 0)
+        is_midnight = (current_forcings.hour == 0)
         is_albedo_step = jnp.any(current_forcings.hour == jnp.array(args.albedo_TOD))
 
-        # # 1. get amounts of rain and snow; add accumulation
-        # rainfall, snowfall = mb.get_precip_amounts()
-        # snowfall = mb.accumulation(snowfall)
+        # 1. get amounts of rain and snow; add dry deposition
+        rainfall, snowfall, current_state = mb.add_new_mass(
+            current_state, current_forcings
+        )
+
+        # ACTUAL ORDER TO IMPLMEMENT:
+        # 1: add mass (accumulation, dry deposition)
+        # 2: solve energy balance equation
+        # 3: vertical heat/mass exchange 
+        #   (melt->phase changes-> temp profile->percolation->refreezing)
+        # 4: densification
+        # 5: layer management and trackers 
+        # 6: mass conservation
 
         # # 2. add dry deposition
         # mb.add_dry_deposition()

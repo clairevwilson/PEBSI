@@ -17,6 +17,7 @@ class GlacierState(NamedTuple):
     albedo: jnp.ndarray         # Albedo [-]
     albedo_surr: jnp.ndarray    # Albedo of off-glacier surroundings [-]
     surftemp: jnp.ndarray       # Surface temperature [C]
+    last_snow: jnp.ndarray      # Index of last snowfall [-]
 
     # ------------------------------- Trackers -------------------------------
     annual_firn_converted: jnp.ndarray  # True when snow is converted to firn
@@ -24,12 +25,16 @@ class GlacierState(NamedTuple):
     annual_max_snow: jnp.ndarray        # Maximum mass of snow reset annually
     days_since_snowfall: jnp.ndarray    # Days since last snowfall event
     delayed_snow: jnp.ndarray           # Snow that fell but wasn't yet added
+    cum_mass_error: jnp.ndarray         # Mass error accumulator
 
     # ============================ Layer Attributes ==========================
     # ========================== (N_POINTS, N_LAYERS) ========================
     
     lheight: jnp.ndarray        # Layer height [m]
     ldepth: jnp.ndarray         # Depth of layer midpoint [m]
+    snow_mask: jnp.ndarray      # Mask of snow layers
+    firn_mask: jnp.ndarray      # Mask of firn layers
+    ice_mask: jnp.ndarray       # Mask of ice layers
 
     # ------------------------- Intensive Properties -------------------------
     ldensity: jnp.ndarray       # Layer density [kg m-3]
@@ -59,7 +64,7 @@ class ClimateState(NamedTuple):
 
     # ================================= Time =================================
 
-    step_idx: jnp.ndarray       # Scalar integer tracking current time index
+    time_idx: jnp.ndarray       # Scalar integer tracking current time index
     year: jnp.ndarray           # Calendar year (e.g. 2026)
     month: jnp.ndarray          # Calendar month (1 to 12)
     day: jnp.ndarray            # Calendar day (1 to 31)

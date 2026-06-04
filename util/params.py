@@ -204,6 +204,11 @@ wvs = [round(x/100., 2) for x in range(20, 500)]# 480 bands used by SNICAR
 band_indices = {}                       # dictionary for storing spectral albedo
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 
+# INTENSIVE AND EXTENSIVE LAYER VARIABLES
+intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
+extensive_vars = ['lice','lwater','lBC','lOC','ldust','ldrefreeze','lrefreeze']
+all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
+
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS
 # ====================================================================================================================

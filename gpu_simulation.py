@@ -11,8 +11,7 @@ single point.
 """
 import os 
 os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-import jax
-jax.config.update("jax_enable_x64", True)
+os.environ['JAX_DEFAULT_DTYPE_BITS'] = "32"
 
 # Built-in libraries
 import argparse
@@ -156,7 +155,7 @@ class PEBSI():
 
         # ================== CLIMATE ==================
         forcings = ClimateState(
-            step_idx=jnp.array(jnp.arange(len(dates)), dtype=jnp.int32),
+            time_idx=jnp.array(jnp.arange(len(dates)), dtype=jnp.int32),
             year=jnp.array(dates.year, dtype=jnp.int32),
             month=jnp.array(dates.month, dtype=jnp.int32),
             day=jnp.array(dates.day, dtype=jnp.int32),
@@ -194,6 +193,7 @@ class PEBSI():
             albedo=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float32),
             albedo_surr=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float32),
             surftemp=jnp.full((N_POINTS,), 0.0, dtype=jnp.float32),
+            last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 
             # these may not need to be stored to state --- they will be passed to func
             # previous_mass=jnp.array(self.layers.mass, dtype=jnp.float32),
@@ -206,10 +206,14 @@ class PEBSI():
             annual_min_albedo=jnp.ones((N_POINTS,), dtype=jnp.float32),
             annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float32),
             days_since_snowfall=jnp.zeros((N_POINTS,), dtype=jnp.int32),
+            cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float32),
 
             # layer properties
             lheight=jnp.array(self.layers.lheight, dtype=jnp.float32),
             ldepth=jnp.array(self.layers.ldepth, dtype=jnp.float32),
+            snow_mask=jnp.array(self.layers.snow_mask, dtype=bool),
+            firn_mask=jnp.array(self.layers.firn_mask, dtype=bool),
+            ice_mask=jnp.array(self.layers.ice_mask, dtype=bool),
             ltype=jnp.array(self.layers.ltype, dtype=jnp.int32),
             lice=jnp.array(self.layers.lice, dtype=jnp.float32),
             lwater=jnp.array(self.layers.lwater, dtype=jnp.float32),
