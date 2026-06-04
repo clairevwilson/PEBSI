@@ -33,6 +33,7 @@ use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
+testing = True          # FOR TESTING PURPOSES DURING DEVELOPMENT
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
@@ -255,9 +256,9 @@ Lv_evap = 2514000           # latent heat of evaporation [J kg-1]
 Lv_sub = 2849000            # latent heat of sublimation [J kg-1]
 Lh_rf = 333550              # Latent heat of fusion of ice [J kg-1]
 viscosity_snow = 3.7e7      # Viscosity of snow [Pa-s]
-firn_grainsize = 5000       # Grain size of firn [um]
-rfz_grainsize = 1500        # Grain size of refrozen snow [um]
-ice_grainsize = 5000        # Grain size of ice [um] (placeholder; unused)
+grainsize_firn = 5000       # Grain size of firn [um]
+grainsize_rfz = 1500        # Grain size of refrozen snow [um]
+grainsize_ice = 5000        # Grain size of ice [um] (placeholder; unused)
 frac_absrad_snow = 0.9      # Fraction of shortwave absorbed radiation for snow [-] 
 frac_absrad_ice = 1         # Fraction of shortwave absorbed radiation for ice/firn [-] 
 extinct_coef_snow = 17.1    # Extinction coefficient for snow [-]

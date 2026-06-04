@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import pebsi.energybalance as eb
 from pebsi.massbalance import MassBalanceDriver
 import pebsi.surface as surface
+from util.layers import *
 
 @jax.jit(static_argnames=['args'])
 def main(initial_state, all_forcings, point_attrs, args):
@@ -22,15 +23,17 @@ def main(initial_state, all_forcings, point_attrs, args):
     def step(current_state, current_forcings):
         out = {}
         time_idx = current_forcings.time_idx
-        
-        # parse time index for daily functions
-        is_midnight = (current_forcings.hour == 0)
-        is_albedo_step = jnp.any(current_forcings.hour == jnp.array(args.albedo_TOD))
+
+        mask = point_attrs.elevation > 1000
+        current_state = remove_layer(current_state, mask, 0, args)
 
         # 1. get amounts of rain and snow; add dry deposition
         rainfall, snowfall, current_state = mb.add_new_mass(
             current_state, current_forcings
         )
+
+        # 2. surface property updates
+        current_state = mb.run_daily_routines(current_state, current_forcings)
 
         # ACTUAL ORDER TO IMPLMEMENT:
         # 1: add mass (accumulation, dry deposition)
@@ -40,39 +43,6 @@ def main(initial_state, all_forcings, point_attrs, args):
         # 4: densification
         # 5: layer management and trackers 
         # 6: mass conservation
-
-        # # 2. add dry deposition
-        # mb.add_dry_deposition()
-
-        # # 3. update daily properties
-        # def run_daily_routines(state):
-        #     # calculate daily updated vectors across all points
-        #     new_grain_size = mb.evolve_grain_size(state, current_forcings, args)
-        #     new_albedo = surface.get_albedo(state, current_forcings, point_attrs, args)
-
-        #     # *** need surface type, days_since_snowfall
-
-        #     # only update the properties requested based on hour of day
-        #     updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
-        #     updated_albedo_surr = jnp.where(is_day_start, new_albedo_surr, state.albedo_surr)
-        #     updated_grain_size = jnp.where(is_day_start, new_grain_size, state.lgrain_size)
-            
-        #     # Return the modified state snapshot
-        #     return state._replace(
-        #         albedo=updated_albedo,
-        #         lgrainsize=updated_grain_size,
-        #         albedo_surr=updated_albedo_surr
-        #     )
-
-        # def skip_daily_routines(state):
-        #     return state
-
-        # current_state = jax.lax.cond(
-        #     is_day_start or is_albedo_step,
-        #     run_daily_routines,
-        #     skip_daily_routines,
-        #     current_state
-        # )
 
         # # 4. simultaneously solve energy balance and surface temperature
         # surface.solve_energy_balance()

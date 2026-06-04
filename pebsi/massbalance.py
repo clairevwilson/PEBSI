@@ -28,6 +28,7 @@ class MassBalanceDriver:
         self.prms = params 
         self.args = static_args
 
+    # 1. ========== ADDING NEW MASS ==========
     def add_new_mass(self, state, forcings):
         # divide incoming precip to rain and snow
         rainfall, snowfall = self.get_precip_amounts(forcings)
@@ -236,6 +237,45 @@ class MassBalanceDriver:
         )
 
         return state._replace(**new_properties)
+    
+    # 2. SUP-HOURLY UPDATES
+    def run_daily_routines(self, state, forcings):
+        albedo_TOD = self.args.albedo_TOD
+
+        # parse time index for daily functions
+        is_day_start = (forcings.hour == 0)
+        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
+
+        # either run or skip daily routines depending on hour of day
+        state = jax.lax.cond(
+            is_day_start | is_albedo_step,
+            self.get_daily_updates,
+            self.skip_daily_updates,
+            state
+        )
+        return state
+    
+    def daily_updates(self, state, forcings, point_attrs):
+        # calculate daily updated vectors across all points
+        new_grain_size = self.evolve_grain_size(state, forcings)
+        # new_albedo = surface.get_albedo(state, forcings, point_attrs)
+
+        # *** need surface type, days_since_snowfall
+
+        # only update the properties requested based on hour of day
+        updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
+        updated_albedo_surr = jnp.where(is_day_start, new_albedo_surr, state.albedo_surr)
+        updated_grain_size = jnp.where(is_day_start, new_grain_size, state.lgrain_size)
+        
+        # Return the modified state snapshot
+        return state._replace(
+            albedo=updated_albedo,
+            lgrainsize=updated_grain_size,
+            albedo_surr=updated_albedo_surr
+        )
+
+    def skip_daily_updates(self, state):
+        return state
 
     # def get_grain_size(self):
     #     """

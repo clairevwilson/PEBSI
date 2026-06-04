@@ -250,7 +250,7 @@ class Terrain:
         vrt_path = self.args.vrt_path.format(r=region)
         
         # load the master DEM using the VRT file produced in preprocessing
-        if os.path.exists(vrt_path):
+        if False: # os.path.exists(vrt_path):
             master_dem = (rxr.open_rasterio(vrt_path)
                         .squeeze().drop_vars("band"))
             self.dem_crs = dem_crs = master_dem.rio.crs

@@ -211,8 +211,8 @@ class Layers():
             grainsize_data['depth'],
             grainsize_data['grainsize']
         ).reshape(self.shape)
-        lgrainsize[self.ltype == 1] = args.firn_grainsize
-        lgrainsize[self.ltype == 2] = args.ice_grainsize
+        lgrainsize[self.ltype == 1] = args.grainsize_firn
+        lgrainsize[self.ltype == 2] = args.grainsize_ice
 
         # ===== DENSITY [kg m-3] =====
         if args.initialize_density == 'interpolate':
@@ -353,7 +353,7 @@ class Layers():
         return
     
 # ========= UTILITY FUNCTIONS ==========
-def add_top_layer(state, mask, new_layer):
+def add_top_layer(state, mask, new_layer,):
     """
     Adds a new layer to the top of layers
     for the points in mask.
@@ -367,12 +367,19 @@ def add_top_layer(state, mask, new_layer):
     new_layer : dict
         Dictionary with new layer properties
     """
+    # first need to make room. push the bottom layer mass into the basal reservoir
+    mass_leaving = state.lice[:, state.lice.shape[1] - 1]
+    new_reservoir = jnp.where(
+        mask, state.basal_reservoir + mass_leaving, state.basal_reservoir
+    )
+    state = state._replace(basal_reservoir = new_reservoir)
+
     # convert namespace to a dictionary of {attribute_name: array_values}
     properties = state._asdict()
     for attr, new_values in new_layer.items():
         data = properties[attr]
         
-        # shift layers down one idx for points where a layer is added
+        # shift everything downwards by one
         shifted = data.at[:, 1:].set(data[:, :-1])
         
         # insert the new layer data to index 0
@@ -384,14 +391,20 @@ def add_top_layer(state, mask, new_layer):
             shifted_new, 
             data
         )
-    return state._replace(**properties)
+    
+    state = state._replace(**properties)
+    return state
 
-def add_bottom_layer(state, mask, all_layer_vars):
+def add_bottom_layer(state, mask, args):
     """
     Fills in data for a new bottom layer added
-    as a result of a different layer being removed
-    for the points in mask. Data is copied from
-    the layer that was previously the bottom (-2).
+    as a result of a different layer being removed.
+
+    For points with ice layers, all ice layers have
+    their mass redistributed evenly.
+
+    For points with no ice layers, a new ice bottom
+    layer is pulled up from the basal reservoir.
 
     Parameters
     ==========
@@ -399,21 +412,109 @@ def add_bottom_layer(state, mask, all_layer_vars):
         Boolean mask for points where a new layer is added
     """
     properties = state._asdict()
-    for var in all_layer_vars:
-        data = properties[var]
+    N_POINTS = state.lice.shape[0]
+    ice_mask = properties['ice_mask']
 
-        # copy the second-from-bottom to the bottom layer
-        dupe_bottom = data.at[:, -1].set(data[:, -2])
+    # calculate amount of ice at each point
+    ice_masses = jnp.where(ice_mask, properties['lice'], 0.0)
+    point_ice_mass = jnp.sum(ice_masses, axis=1, keepdims=True)
+    has_ice_pt = (point_ice_mass > 0).squeeze()
+
+    # case 1: redistribute mass across existing ice layers
+    DZ_ICE = args.dz_icelayer
+    DZ_TOP = args.dz_toplayer 
+    LAYER_GROWTH = args.layer_growth
+
+    layers_idx = jnp.arange(state.lice.shape[1])
+    initial_ice_heights = DZ_TOP * jnp.exp(layers_idx * LAYER_GROWTH)
+
+    # cap initial ice heights like we did in initialization
+    initial_ice_heights = jnp.minimum(initial_ice_heights, DZ_ICE)
+    
+    # make layerheight 0 anywhere that isn't ice
+    ice_heights_2D = jnp.where(ice_mask, initial_ice_heights[None, :], 0)
+
+    # calculate fraction of ice height each layer should have
+    sum_ice_heights = jnp.sum(ice_heights_2D, axis=1, keepdims=True)
+    safe_sum = jnp.where(sum_ice_heights > 0, sum_ice_heights, 1.0)
+    ice_fractions = ice_heights_2D / safe_sum
+
+    # scale the weight of mass per layer (non-ice get weight of 0)
+    mass_redistributed = point_ice_mass * ice_fractions
+    
+    # distribute the lost mass according to those exponential weights
+    properties['lice'] = jnp.where(
+        mask[:, None] & has_ice_pt[:, None] & ice_mask,
+        mass_redistributed,
+        properties['lice']
+    )
+
+    # recalculate layer heights
+    properties['lheight'] = properties['lice'] / properties['ldensity']
+    
+    # case 2: pull new ice layer from reservoir into bottom
+    pull_from_reservoir_pt = mask & ~has_ice_pt.squeeze()
+
+    DENSITY_ICE = args.density_ice 
+    TEMP_TEMP = args.temp_temp
+    GRAINSIZE_ICE = args.grainsize_ice
+
+    # create new ice layer
+    new_bottom_layer = {
+        'ldepth': properties['ldepth'][:, -1],
+        'lheight': jnp.full(N_POINTS, DZ_ICE),
+        'ldensity': jnp.full(N_POINTS, DENSITY_ICE),
+        'lice': jnp.full(N_POINTS, DENSITY_ICE* DZ_ICE),
+        'ltemp': jnp.full(N_POINTS, TEMP_TEMP),
+        'ltype': jnp.full(N_POINTS, 2, dtype=jnp.int32),
+        'lage': properties['lage'][:, -2] + 365,
+        'lgrainsize': jnp.full(N_POINTS, GRAINSIZE_ICE),
+        'lwater': jnp.zeros(N_POINTS),
+        'lrefreeze': jnp.zeros(N_POINTS),
+        'ldrefreeze': jnp.zeros(N_POINTS),
+        'lBC': jnp.zeros(N_POINTS),
+        'lOC': jnp.zeros(N_POINTS),
+        'ldust': jnp.zeros(N_POINTS),
+    }
+
+    # make sure there is sufficient mass in the reservoir
+    new_bottom_layer['lice'] = jnp.minimum(
+        new_bottom_layer['lice'], properties['basal_reservoir']
+    )
+
+    # re-calculate the layer height in case mass changed
+    new_bottom_layer['lheight'] = new_bottom_layer['lice'] \
+                                 / new_bottom_layer['ldensity']
+
+    for var in args.all_layer_vars:
+        data = properties[var]
+        new_data = new_bottom_layer[var]
+
+        # stage the update
+        updated_column = data.at[:, -1].set(new_data)
 
         # replace it only at points in mask
         properties[var] = jnp.where(
-            mask[:, None],
-            dupe_bottom,
+            pull_from_reservoir_pt[:, None],
+            updated_column,
             data
         )
-    return state._replace(**properties)
 
-def remove_layer(state, mask, idx, all_layer_vars):
+    # remove added mass from reservoir
+    properties['basal_reservoir'] = jnp.where(
+        pull_from_reservoir_pt,
+        properties['basal_reservoir'] - new_bottom_layer['lice'],
+        properties['basal_reservoir']
+    )
+
+    # save these properties to state
+    state = state._replace(**properties)
+
+    # update layers 
+    state = update_layer_props(state, DENSITY_ICE)
+    return state
+
+def remove_layer(state, mask, idx, args):
     """
     Removes a single layer from layers class
     for the points in mask.
@@ -425,7 +526,7 @@ def remove_layer(state, mask, idx, all_layer_vars):
     idx : int
         Index of the layer to remove
     """
-    properties = state.asdict()
+    properties = state._asdict()
 
     # load layer index array
     layers_idx = jnp.arange(state.lice.shape[1])
@@ -434,11 +535,17 @@ def remove_layer(state, mask, idx, all_layer_vars):
     # (shift layers below removed up by one)
     target_mask = mask[:, None] & (layers_idx >= idx)[None, :]
 
-    for var in all_layer_vars:
+    for var in args.all_layer_vars:
         data = properties[var]
 
         # shift everything upwards by one
         fully_shifted = data.at[:, :-1].set(data[:, 1:])
+
+        # make sure new bottom layer is filled with no mass
+        if var == 'ltype':
+            fully_shifted = fully_shifted.at[:, -1].set(-1)
+        else:
+            fully_shifted = fully_shifted.at[:, -1].set(0.0)
         
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
@@ -450,8 +557,11 @@ def remove_layer(state, mask, idx, all_layer_vars):
     # write these properties to state
     state = state._replace(**properties)
 
+    # update ice mask
+    state = update_layer_props(state, args.density_ice)
+
     # add a new bottom layer
-    state = add_bottom_layer(state, mask, all_layer_vars)        
+    state = add_bottom_layer(state, mask, args)        
     return state
 
 def split_layer(state, mask, idx, args):
@@ -468,6 +578,12 @@ def split_layer(state, mask, idx, args):
         Index of the layer to split for points in mask
     """
     properties = state._asdict()
+
+    # first need to make room. push the bottom layer mass into the basal reservoir
+    mass_leaving = state.lice[:, state.lice.shape[1] - 1]
+    properties['basal_reservoir'] = jnp.where(
+        mask, state.basal_reservoir + mass_leaving, state.basal_reservoir
+    )
 
     # load layer index array
     layers_idx = jnp.arange(state.lice.shape[1])
@@ -578,7 +694,7 @@ def merge_existing_layers(state, mask, idx, args):
 
     # combine point mask with index mask
     # (layers at or below target index move up one)
-    shift_mask = mask[:, None] & (layers_idx >= target_idx)[None, :]
+    shift_mask = mask[:, None] & (layers_idx >= idx)[None, :]
 
     for var in args.all_layer_vars:
         data = properties[var]
@@ -586,18 +702,27 @@ def merge_existing_layers(state, mask, idx, args):
         # shift everything upwards by one
         fully_shifted = data.at[:, :-1].set(data[:, 1:])
 
+        # make sure new bottom layer is filled with no mass
+        if var == 'ltype':
+            fully_shifted = fully_shifted.at[:, -1].set(-1)
+        else:
+            fully_shifted = fully_shifted.at[:, -1].set(0.0)
+
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
             shift_mask,
             fully_shifted,
             data
         )
+
+    # update ice mask
+    properties['ice_mask'] = properties['ltype'].astype(jnp.int32) == 2
     
     # write these properties to state 
     state = state._replace(**properties)
     
     # add bottom layer to replaced removed
-    state = add_bottom_layer(state, mask, args.all_layer_vars)
+    state = add_bottom_layer(state, mask, args)
 
     # recalculate layer heights
     updated_lheight = state.lice / state.ldensity 

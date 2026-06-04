@@ -11,7 +11,9 @@ single point.
 """
 import os 
 os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-os.environ['JAX_DEFAULT_DTYPE_BITS'] = "32"
+os.environ['JAX_DEFAULT_DTYPE_BITS'] = "64"
+import jax
+jax.config.update("jax_enable_x64", True)
 
 # Built-in libraries
 import argparse
@@ -207,6 +209,7 @@ class PEBSI():
             annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float32),
             days_since_snowfall=jnp.zeros((N_POINTS,), dtype=jnp.int32),
             cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float32),
+            basal_reservoir=jnp.zeros((N_POINTS), dtype=jnp.float32),
 
             # layer properties
             lheight=jnp.array(self.layers.lheight, dtype=jnp.float32),
@@ -292,7 +295,69 @@ class PEBSI():
         else:
             print(f'~ Running {self.terrain.N_POINTS} points in region {self.args.rgi_region} for {n_months} months starting in {start_fmtd} ~')
         return
+    
+    ############################ TESTING FUNCTIONALITY ############################
+    
+    def load_single_forcing_step_jax(self, all_forcings):
+        """Uses jax.tree_util to cleanly slice a whole forcing structure at index 0."""
+        import jax
+        
+        # grab the first forcing state for testing
+        single_forcing_state = jax.tree_util.tree_map(
+            lambda x: x[0], 
+            all_forcings
+        )
+        return single_forcing_state
+    
+    def test(self):
+        # ======== INITIALIZE THE INPUTS ========
+        self.prepare_inputs()
+        self.prepare_initial_state()
+        state, forcings, point_attrs = self.pack_states()
+        forcings = self.load_single_forcing_step_jax(forcings)
 
+        mock_mask = jnp.array([True, False, False])
+
+        # TEST ONE FUNCTION
+        import pebsi.massbalance as pmb
+        mb = pmb.MassBalanceDriver(None, self.args)
+        ice_before = jnp.sum(state.lice)
+        _,_, updated_state, =  mb.add_new_mass(state, forcings)
+        print('Mass change:', jnp.sum(updated_state.lice) - ice_before)
+        print('Reservoir:', updated_state.basal_reservoir)
+
+        self.plot_test_diagnostic(state, updated_state, title="add_layer test", bottom = 2)
+        return
+
+    def plot_test_diagnostic(self, old_state, new_state, bottom = 10, title="Component Test"):
+        """Plots the vertical profile of layer masses to verify grid scaling."""
+        import matplotlib.pyplot as plt
+        
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
+        
+        layers = jnp.arange(bottom)
+        
+        axes[0].plot(old_state.lice[0, :bottom], layers, 'o--', label='Before', color='gray')
+        axes[0].plot(new_state.lice[0, :bottom], layers, 's-', label='After', color='blue')
+        axes[0].set_title("Point 0 (Mask = True)")
+        axes[0].set_xlabel("Layer Mass (lice)")
+        axes[0].set_ylabel("Layer Index")
+        axes[0].grid(True)
+        axes[0].legend()
+        
+        # Plot Point 1 (where mask was False)
+        axes[1].plot(old_state.lice[1, :bottom], layers, 'o--', label='Before', color='gray')
+        axes[1].plot(new_state.lice[1, :bottom], layers, 's-', label='After', color='orange')
+        axes[1].set_title("Point 1 (Mask = False)")
+        axes[1].set_xlabel("Layer Mass (lice)")
+        axes[1].grid(True)
+        axes[1].legend()
+        
+        plt.suptitle(title)
+        plt.gca().invert_yaxis() # Put layer 0 at the top, layer 49 at the bottom
+        plt.savefig(title.replace(' ','_').lower() + '.png')
+        plt.close()
+    
 # execute the model if this script is called from command line
 if __name__ == '__main__':
     # get command-line args
@@ -300,4 +365,9 @@ if __name__ == '__main__':
 
     # initialize and run the model
     model = PEBSI(args)
-    model.run()
+
+    if model.args.testing:
+        # tests a single function in a single timestep so you can inspect output
+        model.test()
+    else:
+        model.run()

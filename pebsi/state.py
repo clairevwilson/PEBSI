@@ -26,6 +26,8 @@ class GlacierState(NamedTuple):
     days_since_snowfall: jnp.ndarray    # Days since last snowfall event
     delayed_snow: jnp.ndarray           # Snow that fell but wasn't yet added
     cum_mass_error: jnp.ndarray         # Mass error accumulator
+    basal_reservoir: jnp.ndarray        # Reservoir for accumulated ice mass that
+                                        # is pushed out of the layer domain
 
     # ============================ Layer Attributes ==========================
     # ========================== (N_POINTS, N_LAYERS) ========================
