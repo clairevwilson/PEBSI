@@ -4,7 +4,7 @@ from pebsi.state import StepOutputs
 import jax.numpy as jnp
 
 # Local libraries
-import pebsi.energybalance as eb
+from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver
 import pebsi.surface as surface
 from util.layers import *
@@ -18,14 +18,11 @@ def main(initial_state, all_forcings, point_attrs, args):
     """
     # initiate drivers
     mb = MassBalanceDriver(None, args)
+    eb = EnergyBalanceDriver(None, args)
 
     # define function for a single timestep
     def step(current_state, current_forcings):
-        out = {}
         time_idx = current_forcings.time_idx
-
-        mask = point_attrs.elevation > 1000
-        current_state = remove_layer(current_state, mask, 0, args)
 
         # 1. get amounts of rain and snow; add dry deposition
         rainfall, snowfall, current_state = mb.add_new_mass(
@@ -33,7 +30,19 @@ def main(initial_state, all_forcings, point_attrs, args):
         )
 
         # 2. surface property updates
-        current_state = mb.run_daily_routines(current_state, current_forcings)
+        current_state = mb.run_daily_routines(
+            current_state, current_forcings, point_attrs
+        )
+
+        # 3. simultaneously solve energy balance and surface temperature
+        current_state, fluxes = eb.solve_energy_balance(
+            current_state, current_forcings, point_attrs
+        )
+
+        # 4. vertical heat and mass exchange
+        mb.vertical_processes(
+            current_state, current_forcings, point_attrs, fluxes
+        )
 
         # ACTUAL ORDER TO IMPLMEMENT:
         # 1: add mass (accumulation, dry deposition)
@@ -43,9 +52,6 @@ def main(initial_state, all_forcings, point_attrs, args):
         # 4: densification
         # 5: layer management and trackers 
         # 6: mass conservation
-
-        # # 4. simultaneously solve energy balance and surface temperature
-        # surface.solve_energy_balance()
 
         # # 5. melting: melt mass due to surface melt energy and penetrating shortwave
         # mb.melting() # ** do this a lot better -- handle subsurface, melted layers and surface in one

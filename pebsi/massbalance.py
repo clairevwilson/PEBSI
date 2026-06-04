@@ -73,7 +73,7 @@ class MassBalanceDriver:
         rain = jnp.where(forcings.tempC <= SNOW_THRESHOLD_LOW, 0, rain)
         snow = jnp.where(forcings.tempC > SNOW_THRESHOLD_HIGH, 0, snow)
         
-        return rain,snow  # kg m-2
+        return rain,snow # kg m-2
 
     def add_accumulation(self, snowfall, state, forcings):
         """
@@ -238,183 +238,78 @@ class MassBalanceDriver:
 
         return state._replace(**new_properties)
     
-    # 2. SUP-HOURLY UPDATES
-    def run_daily_routines(self, state, forcings):
+    # 2. DAILY / SUB-DAILY UPDATES
+    def run_daily_routines(self, state, forcings, point_attrs):
+        """
+        Checks if we are running sup-hourly updates and
+        executes get_daily_updates or skip_daily_updates.
+        """
         albedo_TOD = self.args.albedo_TOD
 
         # parse time index for daily functions
-        is_day_start = (forcings.hour == 0)
+        is_day_start = forcings.hour == 0
         is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
 
         # either run or skip daily routines depending on hour of day
         state = jax.lax.cond(
             is_day_start | is_albedo_step,
-            self.get_daily_updates,
-            self.skip_daily_updates,
+            lambda s: self.get_daily_updates(s, forcings, point_attrs),
+            lambda s: self.skip_daily_updates(s),
             state
         )
         return state
     
-    def daily_updates(self, state, forcings, point_attrs):
-        # calculate daily updated vectors across all points
-        new_grain_size = self.evolve_grain_size(state, forcings)
+    def get_daily_updates(self, state, forcings, point_attrs):
+        """
+        Executes daily update functions (albedo, surrounding 
+        albedo, days since snowfall).
+        """
+        albedo_TOD = self.args.albedo_TOD
+        is_day_start = forcings.hour == 0
+        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
+
+        # === albedo ===
         # new_albedo = surface.get_albedo(state, forcings, point_attrs)
 
-        # *** need surface type, days_since_snowfall
+        # === surrounding albedo ===
+        ALBEDO_GROUND = self.args.albedo_ground
+        ALBEDO_SNOW = self.args.albedo_fresh_snow
+
+        # update max snow if snow mass is greater than running max
+        current_snow = jnp.sum(state.lice * state.snow_mask, axis=1)
+        new_annual_max_snow = jnp.maximum(current_snow, state.annual_max_snow)
+        
+        # get fraction of max annual snow at each point and scale albedo
+        snow_fraction = jnp.clip(current_snow / new_annual_max_snow, 0.0, 1.0)
+        new_albedo_surr = ALBEDO_GROUND + (ALBEDO_SNOW - ALBEDO_GROUND) * snow_fraction
+
+        # === days since snowfall ===
+        time_idx = jnp.full(state.lice.shape[0], forcings.time_idx)
+        hours_since_snowfall = time_idx - state.days_since_snowfall
+        new_days_since_snowfall = jnp.round(hours_since_snowfall / 24).astype(jnp.int32)
 
         # only update the properties requested based on hour of day
-        updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
-        updated_albedo_surr = jnp.where(is_day_start, new_albedo_surr, state.albedo_surr)
-        updated_grain_size = jnp.where(is_day_start, new_grain_size, state.lgrain_size)
+        # updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
+        new_albedo_surr = jnp.where(
+            is_day_start, new_albedo_surr, state.albedo_surr
+        )
+        new_annual_max_snow = jnp.where(
+            is_day_start, new_annual_max_snow, state.annual_max_snow
+        )
+        new_days_since_snowfall = jnp.where(
+            is_day_start, new_days_since_snowfall, state.days_since_snowfall
+        )
         
-        # Return the modified state snapshot
+        # return the modified state snapshot
         return state._replace(
-            albedo=updated_albedo,
-            lgrainsize=updated_grain_size,
-            albedo_surr=updated_albedo_surr
+            # albedo=updated_albedo,
+            days_since_snowfall=new_days_since_snowfall,
+            annual_max_snow=new_annual_max_snow,
+            albedo_surr=new_albedo_surr
         )
 
     def skip_daily_updates(self, state):
         return state
-
-    # def get_grain_size(self):
-    #     """
-    #     Updates grain size according to wet and dry
-    #     metamorphism, refreeze, and addition of fresh
-    #     snow.
-    #     """
-    #     # get classes
-    #     enbal = self.enbal
-    #     layers = self.layers
-    #     surface = self.surface
-    #     args = self.args
-
-    #     # CONSTANTS
-    #     WET_C = self.args.wet_grain_C
-    #     PI = np.pi
-    #     RFZ_GRAINSIZE = args.rfz_grainsize
-    #     FIRN_GRAINSIZE = args.firn_grainsize
-    #     ICE_GRAINSIZE = args.ice_grainsize
-    #     CTOK = args.celsius_to_kelvin
-    #     dt = args.dt
-
-    #     # get temperatures
-    #     airtemp = enbal.tempC
-    #     surftemp = surface.stemp
-
-    #     # find fresh snow grainsize
-    #     if args.constant_freshgrainsize:
-    #         FRESH_GRAINSIZE = args.constant_freshgrainsize
-    #     else:
-    #         FRESH_GRAINSIZE = jnp.select(
-    #             [airtemp <= -30, airtemp < 0],
-    #             [54.5, 54.5 + 5 * (airtemp + 30)],
-    #             default=204.5
-    #         )[:, jnp.newaxis]
-
-    #     # define snow, firn and ice masks 
-    #     snow_mask = layers.snow_mask 
-    #     firn_mask = layers.firn_mask 
-    #     ice_mask = layers.ice_mask
-
-    #     # exit function if there are no snow layers anywhere
-    #     if not jnp.any(snow_mask):
-    #         layers.lgrainsize[firn_mask] = FIRN_GRAINSIZE
-    #         layers.lgrainsize[ice_mask] = ICE_GRAINSIZE
-    #         return
-            
-    #     # grab layer masses
-    #     m_total = layers.lice
-    #     m_refreeze = layers.drefreeze       # differential refreeze: added this step
-    #     m_snow = layers.lice - m_refreeze   # "old snow" (includes old refreeze)
-        
-    #     # define mass fractions of old snow and refreeze
-    #     f_snow = m_snow / m_total
-    #     f_rfz = m_refreeze / m_total
-        
-    #     # calculate liquid water fraction
-    #     mw_total = layers.lwater + layers.lice
-    #     f_liq = layers.lwater / mw_total    # fraction of total mass inc. liquid water
-
-    #     # grab arrays needed for dry grain metamorphosis lookup
-    #     dz = layers.lheight.copy()
-    #     T = layers.ltemp.copy() + CTOK
-    #     p = layers.ldensity.copy()
-    #     grainsize = layers.lgrainsize.copy()
-        
-    #     # calculate surface temperature in K
-    #     surftempK = surftemp + CTOK
-
-    #     # DRY METAMORPHISM
-    #     if args.constant_drdry:
-    #         # apply constant drdry growth rate except where grainsize is too large
-    #         drdry = jnp.ones_like(grainsize) * args.constant_drdry * dt
-    #         drdry[grainsize >= RFZ_GRAINSIZE] = 0.0
-    #     else:
-    #         # calculate dTdz in 2D
-    #         dTdz = jnp.zeros_like(T)
-            
-    #         # top layer gradient utilizes surface temperature
-    #         dTdz[:, 0] = (surftempK - (T[:, 0] * dz[:, 0] + T[:, 1] * dz[:, 1]) \
-    #                         / (dz[:, 0] + dz[:, 1])) / dz[:, 0]
-            
-    #         # interior layers using a vectorized slice formulation
-    #         t_upper = (T[:, :-2] * dz[:, :-2] + T[:, 1:-1] * dz[:, 1:-1]) \
-    #                         / (dz[:, :-2] + dz[:, 1:-1])
-    #         t_lower = (T[:, 1:-1] * dz[:, 1:-1] + T[:, 2:] * dz[:, 2:]) \
-    #                         / (dz[:, 1:-1] + dz[:, 2:])
-    #         dTdz[:, 1:-1] = (t_upper - t_lower) / dz[:, 1:-1]
-            
-    #         # bottom layer gets assigned the same dTdz as the layer above
-    #         dTdz[:, -1] = dTdz[:, -2]
-
-    #         # take absolute value (direction does not matter)
-    #         dTdz = jnp.abs(dTdz)
-
-    #         # Fast matrix bounding to lookup table limits
-    #         p = jnp.clip(p, 50.0, 400.0)
-    #         dTdz = jnp.clip(dTdz, 0.0, 300.0)
-    #         T = jnp.clip(T, 223.15, 273.15)
-
-    #         # flatten matrices to feed your grid interpolators in a single parallel operation
-    #         input_matrix = jnp.column_stack((T.ravel(), dTdz.ravel(), p.ravel()))
-
-    #         tau = args.interp_tau(input_matrix).reshape(layers.shape)
-    #         kap = args.interp_kap(input_matrix).reshape(layers.shape)
-    #         dr0 = args.interp_dr0(input_matrix).reshape(layers.shape)
-
-    #         # calculate denominator in drdry equation
-    #         avoid_div_zero_mask = (tau + grainsize) <= FRESH_GRAINSIZE
-    #         denominator = jnp.where(
-    #             avoid_div_zero_mask, 
-    #             tau + 1e-6, # avoid 0 denominator
-    #             tau + grainsize - FRESH_GRAINSIZE
-    #         )
-            
-    #         # determine actual dry grain growth rate from parameters
-    #         drdrydt = dr0 * jnp.power(tau / denominator, 1.0 / kap) / dt
-    #         drdry = drdrydt * dt
-
-    #     # WET METAMORPHISM
-    #     grainsize_m = grainsize / 1e6
-    #     drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * (grainsize_m ** 2))
-    #     drwet = drwetdt * dt * 1e6
-        
-    #     # accelerate grain growth?
-    #     if args.option_accel_grains:
-    #         F = jnp.exp(0.01 * layers.ldensity)
-    #         drwet *= F
-
-    #     # apply metamorphosis and refreezing 
-    #     aged_grainsize = grainsize + drdry + drwet
-    #     updated_grainsize = aged_grainsize * f_snow + RFZ_GRAINSIZE * f_rfz
-    #     updated_grainsize = jnp.clip(updated_grainsize, None, RFZ_GRAINSIZE)
-
-    #     # store the updated snow grainsize
-    #     layers.lgrainsize[snow_mask] = updated_grainsize[snow_mask]
-    #     layers.lgrainsize[firn_mask] = FIRN_GRAINSIZE
-    #     layers.lgrainsize[ice_mask] = ICE_GRAINSIZE
-    #     return
 
     # def subsurface_heating(self):
     #     """
@@ -904,6 +799,178 @@ class MassBalanceDriver:
     #     change = np.sum(layers.lice + layers.lwater) - initial_mass
     #     assert np.abs(change) < args.mb_threshold, f'refreezing failed mass conservation in {self.output.out_fn}'
     #     return np.sum(refreeze)
+
+    def evolve_grain_size(self, state, forcings):
+        """
+        Updates grain size according to wet and dry
+        metamorphism, refreeze, and addition of fresh
+        snow.
+        """
+        args = self.args
+
+        # CONSTANTS
+        WET_C = args.wet_grain_C
+        PI = jnp.pi
+        RFZ_GRAINSIZE = args.grainsize_rfz
+        FIRN_GRAINSIZE = args.grainsize_firn
+        ICE_GRAINSIZE = args.grainsize_ice
+        CTOK = args.celsius_to_kelvin
+        dt = args.dt
+
+        # get temperatures
+        airtemp = forcings.tempC
+        surftemp = state.surftemp
+
+        # find fresh snow grainsize
+        if args.constant_freshgrainsize:
+            FRESH_GRAINSIZE = args.constant_freshgrainsize
+        else:
+            FRESH_GRAINSIZE = jnp.select(
+                [airtemp <= -30, airtemp < 0],
+                [54.5, 54.5 + 5 * (airtemp + 30)],
+                default=204.5
+            )[:, jnp.newaxis]
+
+        # define snow, firn and ice masks 
+        snow_mask = state.snow_mask 
+        ice_mask = state.ice_mask
+            
+        # grab layer masses everywhere
+        m_total = state.lice
+        m_refreeze = state.ldrefreeze       # differential refreeze: added this step
+        m_snow = state.lice - m_refreeze   # "old snow" (includes old refreeze)
+        
+        # define mass fractions of old snow and refreeze
+        f_snow = m_snow / m_total
+        f_rfz = m_refreeze / m_total
+        
+        # calculate liquid water fraction everywhere
+        mw_total = state.lwater + state.lice
+        f_liq = state.lwater / mw_total    # fraction of total mass inc. liquid water
+
+        # grab arrays needed for dry grain metamorphosis lookup
+        dz = state.lheight
+        T = state.ltemp + CTOK
+        p = state.ldensity
+        grainsize = state.lgrainsize
+        
+        # calculate surface temperature in K
+        surftempK = surftemp + CTOK
+
+        # DRY METAMORPHISM
+        if args.constant_drdry:
+            # apply constant drdry growth rate except where grainsize is too large
+            drdry = jnp.where(
+                grainsize < RFZ_GRAINSIZE,
+                jnp.full_like(grainsize, args.constant_drdry * dt),
+                jnp.zeros_like(grainsize)
+            )
+        else:
+            # calculate dTdz in 2D
+            dTdz = jnp.zeros_like(T)
+
+            # top layer gradient utilizes surface temperature
+            top_layer_val = (surftempK - (T[:, 0] * dz[:, 0] + T[:, 1] * dz[:, 1]) \
+                            / (dz[:, 0] + dz[:, 1])) / dz[:, 0]
+            dTdz = dTdz.at[:, 0].set(top_layer_val)
+
+            # interior layers using vectorized slice formulation
+            t_upper = (T[:, :-2] * dz[:, :-2] + T[:, 1:-1] * dz[:, 1:-1]) \
+                            / (dz[:, :-2] + dz[:, 1:-1])
+            t_lower = (T[:, 1:-1] * dz[:, 1:-1] + T[:, 2:] * dz[:, 2:]) \
+                            / (dz[:, 1:-1] + dz[:, 2:])
+            interior_vals = (t_upper - t_lower) / dz[:, 1:-1]
+            dTdz = dTdz.at[:, 1:-1].set(interior_vals)
+
+            # bottom layer gets assigned the same dTdz as the layer above
+            dTdz = dTdz.at[:, -1].set(dTdz[:, -2])
+
+            # take absolute value (direction does not matter)
+            dTdz = jnp.abs(dTdz)
+
+            # clip data to lookup table limits
+            p = jnp.clip(p, 50.0, 400.0)
+            dTdz = jnp.clip(dTdz, 0.0, 300.0)
+            T = jnp.clip(T, 223.15, 273.15)
+
+            # flatten matrices to feed grid interpolators in one parallel operation
+            input_matrix = jnp.column_stack((T.ravel(), dTdz.ravel(), p.ravel()))
+
+            tau = args.interp_tau(input_matrix).reshape(state.lice.shape)
+            kap = args.interp_kap(input_matrix).reshape(state.lice.shape)
+            dr0 = args.interp_dr0(input_matrix).reshape(state.lice.shape)
+
+            # calculate denominator in drdry equation
+            avoid_div_zero_mask = (tau + grainsize) <= FRESH_GRAINSIZE
+            denominator = jnp.where(
+                avoid_div_zero_mask, 
+                tau + 1e-6, # avoid 0 denominator
+                tau + grainsize - FRESH_GRAINSIZE
+            )
+            
+            # determine actual dry grain growth rate from parameters
+            drdrydt = dr0 * jnp.power(tau / denominator, 1.0 / kap) / dt
+            drdry = drdrydt * dt
+
+        # WET METAMORPHISM
+        grainsize_m = grainsize / 1e6
+        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * (grainsize_m ** 2))
+        drwet = drwetdt * dt * 1e6
+        
+        # accelerate grain growth?
+        if args.option_accel_grains:
+            F = jnp.exp(0.01 * layers.ldensity)
+            drwet *= F
+
+        # apply metamorphosis and refreezing 
+        aged_grainsize = grainsize + drdry + drwet
+        updated_grainsize = aged_grainsize * f_snow + RFZ_GRAINSIZE * f_rfz
+        updated_snow_grainsize = jnp.clip(updated_grainsize, None, RFZ_GRAINSIZE)
+
+        # store the updated snow grainsize
+        all_updated_grainsize = jnp.where(
+            snow_mask, updated_snow_grainsize, FIRN_GRAINSIZE
+        )
+        all_updated_grainsize = jnp.where(
+            ice_mask, ICE_GRAINSIZE, all_updated_grainsize,
+        )
+
+        return all_updated_grainsize
+    
+    def get_roughness(self, state):
+        """
+        Function to determine the roughness length of the
+        surface. This assumes the roughness of snow
+        linearly degrades with time in 60 days from that 
+        of fresh snow to firn.
+
+        Parameters
+        ==========
+        days_since_snowfall : int
+            Number of days since fresh snow occurred
+        layers
+            Class object from pebsi.layers
+        """
+        # CONSTANTS
+        ROUGHNESS_FRESH_SNOW = self.args.roughness_fresh_snow
+        ROUGHNESS_AGED_SNOW = self.args.roughness_aged_snow
+        ROUGHNESS_FIRN = self.args.roughness_firn
+        ROUGHNESS_ICE = self.args.roughness_ice
+        AGING_RATE = self.args.roughness_aging_rate
+
+        # determine roughness from surface type
+        layertype = state.ltype
+        roughness = jnp.minimum(
+            ROUGHNESS_FRESH_SNOW + AGING_RATE * state.days_since_snowfall, 
+            ROUGHNESS_AGED_SNOW
+        )
+
+        # overwrite firn and ice values
+        roughness = jnp.where(layertype[:, 0] == 1, ROUGHNESS_FIRN, roughness)
+        roughness = jnp.where(layertype[:, 0] == 2, ROUGHNESS_ICE, roughness)
+
+        # return roughness in m
+        return roughness / 1000
 
     # def densification(self):
     #     """

@@ -80,6 +80,9 @@ def get_args(parse=True):
     # CLIMATE OPTOINS
     parser.add_argument('-use_aws', action='store_true',
                         help='use AWS or just reanalysis?')
+    
+    parser.add_argument('-testing', action='store_true',
+                        help='test a single function?')
 
     if parse:
         args = parser.parse_args()
@@ -162,81 +165,86 @@ class PEBSI():
             month=jnp.array(dates.month, dtype=jnp.int32),
             day=jnp.array(dates.day, dtype=jnp.int32),
             hour=jnp.array(dates.hour, dtype=jnp.int32),
+            doy=jnp.array(dates.day_of_year, dtype=jnp.int32),
 
             # basic climate variables
-            tempC=jnp.array(self.climate.temp, dtype=jnp.float32).T,
-            tempK=jnp.array(self.climate.temp, dtype=jnp.float32).T + CTOK,
-            tp=jnp.array(self.climate.tp, dtype=jnp.float32).T,
-            prec=jnp.array(self.climate.tp, dtype=jnp.float32).T / SPH,
-            wind=jnp.array(self.climate.wind, dtype=jnp.float32).T,
-            winddir=jnp.array(self.climate.winddir, dtype=jnp.float32).T,
-            rh=jnp.array(self.climate.rh, dtype=jnp.float32).T,
-            sp=jnp.array(self.climate.sp, dtype=jnp.float32).T,
-            tcc=jnp.array(self.climate.tcc, dtype=jnp.float32).T,
+            tempC=jnp.array(self.climate.temp, dtype=jnp.float64).T,
+            tempK=jnp.array(self.climate.temp, dtype=jnp.float64).T + CTOK,
+            tp=jnp.array(self.climate.tp, dtype=jnp.float64).T,
+            prec=jnp.array(self.climate.tp, dtype=jnp.float64).T / SPH,
+            wind=jnp.array(self.climate.wind, dtype=jnp.float64).T,
+            winddir=jnp.array(self.climate.winddir, dtype=jnp.float64).T,
+            rh=jnp.array(self.climate.rh, dtype=jnp.float64).T,
+            sp=jnp.array(self.climate.sp, dtype=jnp.float64).T,
+            tcc=jnp.array(self.climate.tcc, dtype=jnp.float64).T,
 
             # deposition fluxes for light-absorbing particles
-            bcwet=jnp.array(self.climate.bcwet, dtype=jnp.float32).T,
-            bcdry=jnp.array(self.climate.bcdry, dtype=jnp.float32).T,
-            ocwet=jnp.array(self.climate.ocwet, dtype=jnp.float32).T,
-            ocdry=jnp.array(self.climate.ocdry, dtype=jnp.float32).T,
-            dustwet=jnp.array(self.climate.dustwet, dtype=jnp.float32).T,
-            dustdry=jnp.array(self.climate.dustdry, dtype=jnp.float32).T,
+            bcwet=jnp.array(self.climate.bcwet, dtype=jnp.float64).T,
+            bcdry=jnp.array(self.climate.bcdry, dtype=jnp.float64).T,
+            ocwet=jnp.array(self.climate.ocwet, dtype=jnp.float64).T,
+            ocdry=jnp.array(self.climate.ocdry, dtype=jnp.float64).T,
+            dustwet=jnp.array(self.climate.dustwet, dtype=jnp.float64).T,
+            dustdry=jnp.array(self.climate.dustdry, dtype=jnp.float64).T,
 
             # radiation terms
-            shortwave_in=jnp.array(self.climate.SWin, dtype=jnp.float32).T,
-            longwave_in=jnp.array(self.climate.LWin, dtype=jnp.float32).T,
+            shortwave_in=jnp.array(self.climate.SWin, dtype=jnp.float64).T,
+            longwave_in=jnp.array(self.climate.LWin, dtype=jnp.float64).T,
             shadow_mask=jnp.array(self.terrain.shadow_mask, dtype=bool).T,
+            solar_azimuth=jnp.array(self.terrain.solar_azimuth, dtype=jnp.float64).T,
+            solar_zenith=jnp.array(self.terrain.solar_zenith, dtype=jnp.float64).T,
         )
 
         # ================== GLACIERS ==================
         glacier_state = GlacierState(
 
             # surface properties
-            albedo=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float32),
-            albedo_surr=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float32),
-            surftemp=jnp.full((N_POINTS,), 0.0, dtype=jnp.float32),
+            albedo=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float64),
+            albedo_surr=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float64),
+            surftemp=jnp.full((N_POINTS,), self.args.surftemp_guess, dtype=jnp.float64),
+            roughness=jnp.full((N_POINTS,), self.args.roughness_fresh_snow, dtype=jnp.float64),
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 
             # these may not need to be stored to state --- they will be passed to func
-            # previous_mass=jnp.array(self.layers.mass, dtype=jnp.float32),
-            # previous_ice=jnp.array(self.layers.mass_ice, dtype=jnp.float32),
-            # previous_water=jnp.array(self.layers.mass_water, dtype=jnp.float32),
+            # previous_mass=jnp.array(self.layers.mass, dtype=jnp.float64),
+            # previous_ice=jnp.array(self.layers.mass_ice, dtype=jnp.float64),
+            # previous_water=jnp.array(self.layers.mass_water, dtype=jnp.float64),
 
             # trackers
-            delayed_snow=jnp.zeros((N_POINTS,), dtype=jnp.float32),
+            delayed_snow=jnp.zeros((N_POINTS,), dtype=jnp.float64),
             annual_firn_converted=jnp.zeros((N_POINTS,), dtype=bool),
-            annual_min_albedo=jnp.ones((N_POINTS,), dtype=jnp.float32),
-            annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float32),
+            annual_min_albedo=jnp.ones((N_POINTS,), dtype=jnp.float64),
+            annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float64),
             days_since_snowfall=jnp.zeros((N_POINTS,), dtype=jnp.int32),
-            cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float32),
-            basal_reservoir=jnp.zeros((N_POINTS), dtype=jnp.float32),
+            cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float64),
+            basal_reservoir=jnp.zeros((N_POINTS), dtype=jnp.float64),
 
             # layer properties
-            lheight=jnp.array(self.layers.lheight, dtype=jnp.float32),
-            ldepth=jnp.array(self.layers.ldepth, dtype=jnp.float32),
+            lheight=jnp.array(self.layers.lheight, dtype=jnp.float64),
+            ldepth=jnp.array(self.layers.ldepth, dtype=jnp.float64),
             snow_mask=jnp.array(self.layers.snow_mask, dtype=bool),
             firn_mask=jnp.array(self.layers.firn_mask, dtype=bool),
             ice_mask=jnp.array(self.layers.ice_mask, dtype=bool),
             ltype=jnp.array(self.layers.ltype, dtype=jnp.int32),
-            lice=jnp.array(self.layers.lice, dtype=jnp.float32),
-            lwater=jnp.array(self.layers.lwater, dtype=jnp.float32),
-            ltemp=jnp.array(self.layers.ltemp, dtype=jnp.float32),
-            ldensity=jnp.array(self.layers.ldensity, dtype=jnp.float32),
+            lice=jnp.array(self.layers.lice, dtype=jnp.float64),
+            lwater=jnp.array(self.layers.lwater, dtype=jnp.float64),
+            ltemp=jnp.array(self.layers.ltemp, dtype=jnp.float64),
+            ldensity=jnp.array(self.layers.ldensity, dtype=jnp.float64),
             lage=jnp.array(self.layers.lage, dtype=jnp.int32),
-            lgrainsize=jnp.array(self.layers.lgrainsize, dtype=jnp.float32),
-            lrefreeze=jnp.array(self.layers.lrefreeze, dtype=jnp.float32),
-            ldrefreeze=jnp.array(self.layers.drefreeze, dtype=jnp.float32),
-            lBC=jnp.array(self.layers.lBC, dtype=jnp.float32),
-            lOC=jnp.array(self.layers.lOC, dtype=jnp.float32),
-            ldust=jnp.array(self.layers.ldust, dtype=jnp.float32),
+            lgrainsize=jnp.array(self.layers.lgrainsize, dtype=jnp.float64),
+            lrefreeze=jnp.array(self.layers.lrefreeze, dtype=jnp.float64),
+            ldrefreeze=jnp.array(self.layers.drefreeze, dtype=jnp.float64),
+            lBC=jnp.array(self.layers.lBC, dtype=jnp.float64),
+            lOC=jnp.array(self.layers.lOC, dtype=jnp.float64),
+            ldust=jnp.array(self.layers.ldust, dtype=jnp.float64),
         
         )
 
         point_attrs = PointAttributes(
-            elevation=jnp.array(self.terrain.elev_n, dtype=jnp.float32),
-            slope=jnp.array(self.terrain.slope_n, dtype=jnp.float32),
-            aspect=jnp.array(self.terrain.aspect_n, dtype=jnp.float32),
-            timezone=jnp.array(self.terrain.tz_n, dtype=jnp.float32)
+            elevation=jnp.array(self.terrain.elev_n, dtype=jnp.float64),
+            slope=jnp.array(self.terrain.slope_n, dtype=jnp.float64),
+            aspect=jnp.array(self.terrain.aspect_n, dtype=jnp.float64),
+            timezone=jnp.array(self.terrain.tz_n, dtype=jnp.float64),
+            sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
         )
         return glacier_state, forcings, point_attrs
 
@@ -319,14 +327,19 @@ class PEBSI():
         mock_mask = jnp.array([True, False, False])
 
         # TEST ONE FUNCTION
-        import pebsi.massbalance as pmb
-        mb = pmb.MassBalanceDriver(None, self.args)
-        ice_before = jnp.sum(state.lice)
-        _,_, updated_state, =  mb.add_new_mass(state, forcings)
-        print('Mass change:', jnp.sum(updated_state.lice) - ice_before)
-        print('Reservoir:', updated_state.basal_reservoir)
+        import pebsi.energybalance as pmb
+        eb = pmb.EnergyBalanceDriver(None, self.args)
+        state, fluxes = eb.solve_energy_balance(
+            state, forcings, point_attrs
+        )
+        print(state.surftemp, fluxes)
+        # ice_before = jnp.sum(state.lice)
+        # updated_state = mb.run_daily_routines(state, forcings, point_attrs)
+        # print('Mass change:', jnp.sum(updated_state.lice) - ice_before)
+        # print('Reservoir:', updated_state.basal_reservoir)
+        # print(updated_state.albedo_surr)
 
-        self.plot_test_diagnostic(state, updated_state, title="add_layer test", bottom = 2)
+        # self.plot_test_diagnostic(state, updated_state, title="daily_updates test", bottom = 2)
         return
 
     def plot_test_diagnostic(self, old_state, new_state, bottom = 10, title="Component Test"):

@@ -54,6 +54,9 @@ class Shading:
         self.dZdx = dZdx
         self.dZdy = -dZdy
 
+        self.center_latitude = float(dem.latitude.mean().values)
+        self.center_longitude = float(dem.longitude.mean().values)
+
         # CUDA kernel setup (GPU only)
         self.kernel = None
         if self.gpu:
@@ -186,8 +189,15 @@ class Shading:
         # preallocate a single 3D array for all masks
         masks_cpu = np.zeros((total_steps, ny, nx), dtype=np.int8)
 
+        # allocate 1D arrays for the solar position
+        sun_zenith = np.zeros(total_steps, dtype=np.float32)
+        sun_azimuth = np.zeros(total_steps, dtype=np.float32)
+
         for idx, dt in enumerate(tqdm(datetimes, desc="shadow masks", unit="step")):
             altitude, azimuth = self.solar_position(dt)
+            sun_zenith[idx] = np.radians(90.0 - altitude)
+            sun_azimuth[idx] = np.radians(azimuth)
+
             if altitude <= 0:
                 continue # sun below horizon, mask remains zero
             else:
@@ -196,7 +206,10 @@ class Shading:
 
                 # clear the gpu_mask from VRAM
                 del mask_gpu
-        return masks_cpu
+
+        # calculate time-invariant sky-view factor 
+        sky_view = self.skyviewfactor()
+        return masks_cpu, sun_azimuth, sun_zenith, sky_view
     
     def skyviewfactor(self, num_azimuths = 16):
         """

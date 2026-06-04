@@ -5,6 +5,7 @@ import geopandas as gpd
 import numpy as np
 import os, sys
 import time
+from pysolar.solar import get_altitude, get_azimuth
 import shapely.geometry as geom
 from dataclasses import dataclass
 from shading.gpu_shading import Shading
@@ -305,7 +306,7 @@ class Terrain:
                    .to_dataset(name='elevation'))
             yield dem, glaciers_in_block
 
-    def run_dem_functions(self, block_size_deg=4.0, buffer_meters=20000):
+    def run_dem_functions(self, block_size_deg=0.5, buffer_meters=5000):
         """
         Processes DEM-dependent variables by chunking
         a large COP30 DEM into pieces.
@@ -388,13 +389,16 @@ class Terrain:
             shading_model.longitude = centroid_geo.x
             
             datetimes_utc = pd.date_range('2000-01-01', '2000-12-31', freq='h', tz='UTC')
-            masks_gpu = shading_model.compute_shadow_masks(datetimes_utc)
+            masks_gpu, sun_az, sun_elev, svf = shading_model.compute_shadow_masks(datetimes_utc)
             
             mask_3d_cpu = masks_gpu.get() if hasattr(masks_gpu, 'get') else masks_gpu
 
             datetimes_clean = datetimes_utc.tz_localize(None)
             subregion_masks = xr.Dataset(
-                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool))},
+                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool)),
+                 'solar_azimuth': (['time'], sun_az),
+                 'solar_zenith': (['time'], sun_zen),
+                 'sky_view_factor': (['y','x'], svf)},
                 coords={'time': datetimes_clean, 'y': cropped_dem_ds['y'], 'x': cropped_dem_ds['x']}
             )
 
@@ -440,6 +444,9 @@ class Terrain:
         N_POINTS = self.N_POINTS 
         N_TIME = len(dates)
         masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
+        azimuth = np.full((N_POINTS, N_TIME), np.pi)
+        zenith = np.zeros((N_POINTS, N_TIME))
+        sky_view_factor = np.ones(N_POINTS)
 
         # # find unique RGI IDs in the list of all points
         # unique_ids = np.unique(self.rgiid_n)
@@ -462,15 +469,21 @@ class Terrain:
         #     target_time_idx = xr.DataArray(target_indices, dims='time')
             
         #     # select data for the lats, lons, and times
-        #     selected_values = (ds
+        #     selected = (ds
         #         .sel(y=target_lat, x=target_lon, method='nearest')
         #         .isel(time=target_time_idx)
-        #         .transpose('points','time'))['shadow_mask'].values
+        #         .transpose('points','time'))
 
-        #     masks[idx, :] = selected_values
+        #     masks[idx, :] = selected['shadow_mask'].values
+        #     azimuth[idx, :] = selected['solar_azimuth'].values
+        #     zenith[idx, :] = selected['solar_zenith'].values
+        #     sky_view_factor[idx, :] = selected['sky_view_factor'].values
 
         # assert ~np.any(masks == 2), 'Missed points in load_shading'
         masks *= 0
+        self.sky_view_factor = sky_view_factor
+        self.solar_zenith = zenith 
+        self.solar_azimuth = azimuth
         self.shadow_mask = masks.astype(bool)
         return
 

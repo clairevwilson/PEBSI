@@ -17,6 +17,7 @@ class GlacierState(NamedTuple):
     albedo: jnp.ndarray         # Albedo [-]
     albedo_surr: jnp.ndarray    # Albedo of off-glacier surroundings [-]
     surftemp: jnp.ndarray       # Surface temperature [C]
+    roughness: jnp.ndarray      # Surface roughness [m]
     last_snow: jnp.ndarray      # Index of last snowfall [-]
 
     # ------------------------------- Trackers -------------------------------
@@ -71,6 +72,7 @@ class ClimateState(NamedTuple):
     month: jnp.ndarray          # Calendar month (1 to 12)
     day: jnp.ndarray            # Calendar day (1 to 31)
     hour: jnp.ndarray           # Calendar hour (0 to 23)
+    doy: jnp.ndarray            # Calendar day of year (0 to 366)
     
     # =========================== Climate variables ==========================
 
@@ -88,6 +90,8 @@ class ClimateState(NamedTuple):
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]
     longwave_in: jnp.ndarray    # Incoming longwave radiation [J m-2]
     shadow_mask: jnp.ndarray    # Boolean shadow mask [-]
+    solar_azimuth: jnp.ndarray  # Solar azimuth angle [rad]
+    solar_zenith: jnp.ndarray   # Solar zenith angle [rad]
 
     # --------------------------- Deposition terms --------------------------
     bcdry: jnp.ndarray          # Dry black carbon deposition [kg m-2 s-1]
@@ -103,10 +107,11 @@ class PointAttributes(NamedTuple):
     
     Array dimensions: (N_POINTS,)
     """
-    elevation: jnp.ndarray
-    slope: jnp.ndarray
-    aspect: jnp.ndarray
-    timezone: jnp.ndarray
+    elevation: jnp.ndarray          # Point elevation [m a.s.l.]
+    slope: jnp.ndarray              # Point slope [deg]
+    aspect: jnp.ndarray             # Point aspect [deg, 0=N]
+    timezone: jnp.ndarray           # Timezone [hrs from UTC]
+    sky_view_factor: jnp.ndarray    # Sky-view factor [-]
 
 class StepOutputs(NamedTuple):
     """

@@ -8,7 +8,6 @@ the site elevation
 @author: clairevwilson
 """
 # Built-in libraries
-import threading
 import os,sys
 import time
 # External libraries

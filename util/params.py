@@ -33,7 +33,7 @@ use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
-testing = True          # FOR TESTING PURPOSES DURING DEVELOPMENT
+testing = False         # FOR TESTING PURPOSES DURING DEVELOPMENT
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
