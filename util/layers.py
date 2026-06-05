@@ -516,8 +516,8 @@ def add_bottom_layer(state, mask, args):
 
 def remove_layer(state, mask, idx, args):
     """
-    Removes a single layer from layers class
-    for the points in mask.
+    Removes layers from layer idx (scalar or 
+    1D array) for the points in mask.
 
     Parameters
     ==========
@@ -533,7 +533,9 @@ def remove_layer(state, mask, idx, args):
 
     # combine point mask with index mask
     # (shift layers below removed up by one)
-    target_mask = mask[:, None] & (layers_idx >= idx)[None, :]
+    target_mask = mask[:, None] & (
+        layers_idx[None, :] >= jnp.atleast_1d(idx)[:, None]
+    )
 
     for var in args.all_layer_vars:
         data = properties[var]

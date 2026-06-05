@@ -327,12 +327,19 @@ class PEBSI():
         mock_mask = jnp.array([True, False, False])
 
         # TEST ONE FUNCTION
-        import pebsi.energybalance as pmb
-        eb = pmb.EnergyBalanceDriver(None, self.args)
+        import pebsi.massbalance as pmb
+        import pebsi.energybalance as peb
+        mb = pmb.MassBalanceDriver(None, self.args)
+        eb = peb.EnergyBalanceDriver(None, self.args)
+
+        # CHECK ENERGY BALANCE
         state, fluxes = eb.solve_energy_balance(
             state, forcings, point_attrs
         )
-        print(state.surftemp, fluxes)
+        # print(state.surftemp, fluxes)
+        # state, melt, mass = mb.heating_melting(state, fluxes)
+        # print(state.lice, mass)
+
         # ice_before = jnp.sum(state.lice)
         # updated_state = mb.run_daily_routines(state, forcings, point_attrs)
         # print('Mass change:', jnp.sum(updated_state.lice) - ice_before)

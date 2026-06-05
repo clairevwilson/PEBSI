@@ -28,7 +28,7 @@ class MassBalanceDriver:
         self.prms = params 
         self.args = static_args
 
-    # 1. ========== ADDING NEW MASS ==========
+    # -------------------- ADDING NEW MASS --------------------
     def add_new_mass(self, state, forcings):
         # divide incoming precip to rain and snow
         rainfall, snowfall = self.get_precip_amounts(forcings)
@@ -238,7 +238,7 @@ class MassBalanceDriver:
 
         return state._replace(**new_properties)
     
-    # 2. DAILY / SUB-DAILY UPDATES
+    # -------------------- DAILY / SUB-DAILY UPDATES --------------------
     def run_daily_routines(self, state, forcings, point_attrs):
         """
         Checks if we are running sup-hourly updates and
@@ -311,419 +311,326 @@ class MassBalanceDriver:
     def skip_daily_updates(self, state):
         return state
 
-    # def subsurface_heating(self):
-    #     """
-    #     Calculates melt in subsurface layers (excluding
-    #     layer 0) due to penetrating shortwave radiation.
+    # -------------------- VERTICAL EXCHANGES --------------------
+    def vertical_processes(self, state, forcings, point_attrs, fluxes):
+        # subsurface heating and melting
+        state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
 
-    #     Returns
-    #     -------
-    #     layermelt : np.ndarray
-    #         Subsurface melt for each layer [kg m-2]
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     enbal = self.enbal
-    #     args = self.args
+        # percolate meltwater and route LAPs
+        for var, data in mass_to_route.items():
+            fluxes[var] = jnp.sum(data, axis=1)
+        state, runoff, fluxes = self.percolation(state, fluxes)
+        state = self.route_particles(state, forcings, fluxes)
 
-    #     # check if this function can be skipped
-    #     if layers.nlayers == 1: # only one layer: no subsurface to heat
-    #         return [0.] # surface melt is filled in melting()
-    #     if enbal.SWnet_penetrating < 1e-6: # no penetrating radiation
-    #         return np.zeros(layers.nlayers)
+        return state 
+    
+    def heating_melting(self, state, fluxes):
+        args = self.args
+        layers_idx = jnp.arange(state.lice.shape[1])[None, :]
+
+        # CONSTANTS
+        EXTINCT_SNOW = args.extinct_coef_snow 
+        EXTINCT_ICE = args.extinct_coef_ice 
+        CP_ICE = args.Cp_ice
+        CP_WATER = args.Cp_water
+        LH_RF = args.Lh_rf
+        dt = args.dt
+
+        # load the amount of heat added to each layer
+        Q_abs_surface = fluxes['melt_heat'][:, None]
+        Q_penetrating = fluxes['SWnet_penetrating'][:, None]
+        extinct_coefs = jnp.where(state.ice_mask, EXTINCT_ICE, EXTINCT_SNOW)
+
+        f_top = jnp.exp(-1 * extinct_coefs * (state.ldepth - state.lheight / 2))
+        f_bottom = jnp.exp(-1 * extinct_coefs * (state.ldepth + state.lheight / 2))
+        Q_abs_layer = Q_penetrating * (f_top - f_bottom)
+
+        layer_heat = jnp.where(layers_idx > 0, Q_abs_layer, Q_abs_surface)
+
+        # recalculate layer temperatures using effective heat capacity
+        lmass = state.lice + state.lwater
+        cp_eff = (state.lice * CP_ICE + state.lwater * CP_WATER) / lmass
+
+        # ---------- CASCADE FUNCTION ----------
+        # transpose all arrays to (N_LAYERS, N_POINTS) for lax.scan
+        scan_heat = jnp.transpose(layer_heat)
+        scan_lice = jnp.transpose(state.lice)
+        scan_lwater = jnp.transpose(state.lwater)
+        scan_ltemp = jnp.transpose(state.ltemp)
+        scan_lmass = jnp.transpose(lmass)
+        scan_cp_eff = jnp.transpose(cp_eff)
+
+        # pack all the inputs into a tuple
+        layer_inputs = (scan_heat, scan_lice, scan_lwater, 
+                        scan_ltemp, scan_lmass, scan_cp_eff)
+
+        # define the sequential step (one layer at a time)
+        def _melt_energy_cascade(carry, inputs):
+            surplus_energy = carry
+            lheat, lice, lwater, ltemp, lmass, lcp = inputs
+
+            # energy flux into this layer, including surplus from above [J m-2]
+            total_heat_in = (lheat + surplus_energy) * dt
+
+            # energy needed to warm this layer to 0.
+            energy_to_zero = -1 * ltemp * lmass * lcp
+            
+            # check if we have more energy tha needed to warm to 0.
+            warmed_past_zero = total_heat_in > energy_to_zero
+            
+            # calculate temperature from all heat, regardless of how much
+            partial_warm_temp = ltemp + (total_heat_in / (lmass * lcp))
+            # clip ptemperature of points that were warmed past melting point
+            intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
+            
+            # leftover energy after melting to 0. converted to mass
+            melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
+            potential_melt = melt_energy_available / LH_RF
+            
+            # actual melt is capped by how much solid ice physically exists in this layer
+            actual_melt = jnp.minimum(potential_melt, lice)
+            
+            # calculate unspent melt energy that must cascade lower [W m-2]
+            carry = jnp.maximum(
+                0., (melt_energy_available - (actual_melt * args.Lh_rf)) / dt
+            )
+
+            # update layer states based on calculations
+            updated_lice = lice - actual_melt
+            updated_lwater = lwater + actual_melt
+            updated_ltemp = intermediate_temp  # Will be 0.0 if any melting occurred
+
+            # Return the carry for the next iteration, and save outputs for this layer
+            return carry, (updated_lice, updated_lwater, updated_ltemp, actual_melt)
+
+        # no additional energy enters the first layer
+        initial_carry = jnp.zeros(state.lice.shape[0]) 
         
-    #     # CONSTANTS
-    #     HEAT_CAPACITY_ICE = args.Cp_ice
-    #     HEAT_CAPACITY_WATER = args.Cp_water
-    #     LH_RF = args.Lh_rf
+        # execute the lax.scan for cascading melt calculations
+        _, (out_lice, out_lwater, out_ltemp, layermelt) = jax.lax.scan(
+            _melt_energy_cascade, initial_carry, layer_inputs
+        )
 
-    #     # LAYERS IN
-    #     ld = layers.ldepth.copy()
-    #     lT = layers.ltemp.copy()
-    #     lm = layers.lice.copy()
-    #     lw = layers.lwater.copy()
-    #     lmw = lm + lw
-
-    #     # determine extinction coefficient from surface layer type
-    #     if layers.ltype[0] == 'snow':
-    #         EXTINCT_COEF = args.extinct_coef_snow
-    #     else:
-    #         EXTINCT_COEF = args.extinct_coef_ice
-
-    #     # get layer boundaries
-    #     d_bottom = ld 
-    #     d_top = np.concatenate(([0], d_bottom[:-1]))
-
-    #     # absorbed shortwave for each layer
-    #     SWnet_pen = enbal.SWnet_penetrating
-    #     SW_at_top = SWnet_pen * np.exp(-EXTINCT_COEF * d_top)
-    #     SW_at_bottom = SWnet_pen * np.exp(-EXTINCT_COEF * d_bottom)
-    #     layerSW = SW_at_top - SW_at_bottom
-    #     layerSW[layerSW < 1e-6] = 0 # cut off tiny amounts of energy
-    #     layerSW[0] = 0 # surface layer handled separately
-
-    #     # recalculate layer temperatures, excluding the top layer (calculated separately)
-    #     cp_eff = ((lm*HEAT_CAPACITY_ICE) + (lw*HEAT_CAPACITY_WATER)) / (lmw)
-    #     lT[1:] += layerSW[1:]*self.dt/(lmw[1:]*cp_eff[1:])
-
-    #     # calculate melt from temperatures above 0
-    #     layermelt = np.zeros(layers.nlayers)
-    #     leftover_melt = 0
-
-    #     for layer in range (1, layers.nlayers):
-    #         temp = lT[layer]
-
-    #         # convert leftover melt to energy [J m-2]
-    #         leftover_energy = leftover_melt * LH_RF
-
-    #         if temp > 0.:
-    #             # melting: calculate melt energy from layer temperature
-    #             sensible_energy = temp * lmw[layer] * cp_eff[layer]
-    #             total_energy = sensible_energy + leftover_energy
-    #             melt = total_energy / LH_RF
-    #             # set layer temp to the melting point
-    #             lT[layer] = 0.
-    #         else:
-    #             # calculate energy needed to warm the layer to melting point
-    #             required_energy = abs(temp) * lmw[layer] * cp_eff[layer]
-
-    #             if leftover_energy >= required_energy:
-    #                 # use leftover energy to warm to melting point and melt
-    #                 lT[layer] = 0.
-    #                 leftover_energy -= required_energy
-    #                 melt = leftover_energy / LH_RF
-    #             else:
-    #                 # not enough energy to warm to melting point; warm partially
-    #                 lT[layer] += leftover_energy / (lmw[layer] * cp_eff[layer])
-    #                 melt = 0
-
-    #         # cap melt at available layer mass
-    #         if melt > lm[layer]:
-    #             layermelt[layer] = lm[layer]
-    #             leftover_melt = melt - lm[layer]
-    #         else:
-    #             layermelt[layer] = melt
-    #             leftover_melt = 0
-
-    #     # force surface layer melt to be 0 (calculated in melting)
-    #     layermelt[0] = 0
-
-    #     # LAYERS OUT
-    #     layers.ltemp = lT
-    #     return layermelt
-
-    # def melting(self,subsurf_melt):
-    #     """
-    #     For cases when layers are melting. Can melt 
-    #     multiple surface layers at once if Qm is 
-    #     sufficiently high. Otherwise, adds the surface
-    #     layer melt to the array containing subsurface 
-    #     melt to return the total layer melt. 
+        # transpose updated quantities back to original (N_POINTS, N_LAYERS) shape
+        properties = state._asdict()
+        properties['lice'] = jnp.transpose(out_lice)
+        properties['lwater'] = jnp.transpose(out_lwater)
+        properties['ltemp'] = jnp.transpose(out_ltemp)
         
-    #     This function DOES NOT remove melted mass from 
-    #     layers. That is done in percolation().
-
-    #     Parameters
-    #     ==========
-    #     subsurf_melt : np.ndarray
-    #         Subsurface melt for each layer [kg m-2]
+        # store updated properties
+        state = state._replace(**properties)
         
-    #     Returns
-    #     -------
-    #     layermelt : np.ndarray
-    #         Melt for each layer [kg m-2]
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     args = self.args
+        # layermelt is now actual melt amounts in (N_POINTS, N_LAYERS) shape
+        layermelt = jnp.transpose(layermelt)
 
-    #     # CONSTANTS
-    #     LH_RF = args.Lh_rf
+        # store the mass in the layers that are about to be deleted
+        fully_melted_mask = properties['lice'] <= 0.001
+        mass_to_route = {}
+        mass_to_route['meltwater'] = jnp.where(fully_melted_mask, properties['lwater'], 0)
+        mass_to_route['BC'] = jnp.where(fully_melted_mask, properties['lBC'], 0)
+        mass_to_route['OC'] = jnp.where(fully_melted_mask, properties['lOC'], 0)
+        mass_to_route['dust'] = jnp.where(fully_melted_mask, properties['ldust'], 0)
 
-    #     # LAYERS IN
-    #     lm = layers.lice.copy()
-    #     layermelt = subsurf_melt.copy()       # mass of melt due to penetrating SW [kg m-2]
-    #     initial_mass = np.sum(layers.lice + layers.lwater)
+        # collapse grid to purge melted layers
+        for _ in range(3):
+            # looping more than once is rarely needed
+            # only if multiple layers fully melted in the same point
+            fully_melted_mask = properties['lice'] <= 0.001
+            melt_point_mask = jnp.any(fully_melted_mask, axis=1)
+            melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
 
-    #     # calculate surface melt
-    #     surface_melt = max(0,self.surface.Qm*self.dt/LH_RF)     # mass of melt due to SEB [kg m-2]
+            # collapse one layer per point where mask if True
+            state = layers.remove_layer(
+                state, melt_point_mask, melt_layer_idx, args
+            )
 
-    #     # check if melt by surface energy balance completely melts surface layer
-    #     if surface_melt > lm[0]: 
-    #         # distribute surface melt into next layers down
-    #         layer = 0
-    #         while surface_melt > 0 and layer < len(layermelt):
-    #             capacity = lm[layer] - layermelt[layer]  # how much more this layer can take
-    #             melt_added = min(surface_melt, capacity)
-    #             layermelt[layer] += melt_added
-    #             surface_melt -= melt_added
-    #             layer += 1
-    #     else:
-    #         # only surface layer is melting or surface melt is 0
-    #         layermelt[0] = surface_melt
-
-    #     # check how many layers fully melted
-    #     fully_melted = []
-    #     if np.any(lm - layermelt <= 0):
-    #         melted_subsurf = np.where(lm - layermelt <= 0)[0]
-    #         for i in melted_subsurf:
-    #             if i not in fully_melted:
-    #                 fully_melted.append(i)
-    #         fully_melted = np.array(fully_melted, dtype=int)
+        return state, layermelt, mass_to_route
         
-    #     # create melted layers class 
-    #     self.melted_layers = MeltedLayers(layers, fully_melted)
+    def percolation(self, state, fluxes):
+        """
+        Updates the liquid water content in each layer
+        with downward percolation and removes melted
+        mass from layer dry mass.
 
-    #     # remove layers that were completely melted 
-    #     removed = 0 # accounts for indexes of layers changing with loop
-    #     for layer in fully_melted:
-    #         layers.remove_layer(layer-removed)
-    #         removed += 1
+        Parameters
+        ==========
+        layermelt: np.ndarray
+            Array containing melt amount for each layer
+        rainfall : float
+            Additional liquid water input from 
+            rainfall [kg m-2]
 
-    #     # remove fully melted layers from layermelt
-    #     mask = np.ones(len(layermelt))
-    #     mask[fully_melted] = False
-    #     layermelt = layermelt[np.array(mask,dtype=bool)]
+        Returns
+        -------
+        runoff : float
+            Runoff of liquid water lost to system [kg m-2]
+        """
+        properties = state._asdict()
+        args = self.args
 
-    #     # CHECK MASS CONSERVATION
-    #     change = np.sum(layers.lice + layers.lwater) - initial_mass
-    #     if len(fully_melted) > 0: # account for melted layers
-    #         change += np.sum(self.melted_layers.mass)
-    #     assert np.abs(change) < args.mb_threshold, f'melting failed mass conservation in {self.output.out_fn}'
+        # CONSTANTS
+        DENSITY_WATER = args.density_water
+        DENSITY_ICE = args.density_ice
 
-    #     return layermelt
+        # transpose arrays for layer cascade
+        scan_lice = jnp.transpose(properties['lice'])
+        scan_lwater = jnp.transpose(properties['lwater'])
+        scan_lheight = jnp.transpose(properties['lheight'])
+        scan_ldensity = jnp.transpose(properties['ldensity'])
+        scan_ice_mask = jnp.transpose(properties['ice_mask'])
+
+        # calculate porosity
+        vol_f_ice = scan_lice / (scan_lheight * DENSITY_ICE)
+        porosity = jnp.maximum(0.0, 1.0 - vol_f_ice)
+
+        # calculate irreducible water content
+        if args.constant_irrwater:
+            frac_irreduc = jnp.full_like(porosity, args.Sr)
+        else:
+            frac_irreduc = jnp.where(scan_ldensity > 500.0, args.Sr_dense, args.Sr_light)
+        water_irreduc_capacity = porosity * scan_lheight * DENSITY_WATER * frac_irreduc
+
+        # pack all the inputs
+        layer_inputs = (scan_lwater, water_irreduc_capacity, scan_ice_mask)
+
+        # define cascade function
+        def _percolation_cascade(carry, inputs):
+            # carry tracks: (current water flux in, cumulative runoff)
+            q_in, current_runoff = carry
+            lwater, capacity, is_barrier = inputs
+
+            # if this is an ice layer, everything here and below runs off
+            q_in = jnp.where(is_barrier, 0.0, q_in)
+            q_in_blocked = jnp.where(is_barrier, q_in, 0.0)
+
+            # remaining room for water before hitting irreducible water content
+            available_room = jnp.maximum(0.0, capacity - lwater)
+            q_out = jnp.maximum(0.0, q_in - available_room)
+
+            # update layer liquid water content
+            updated_lwater = lwater + (q_in - q_out)
+
+            # accumulate runoff from both barriers and any water escaping the bottom layer
+            next_runoff = current_runoff + q_in_blocked
+
+            return (q_out, next_runoff), (updated_lwater, q_out)
         
-    # def percolation(self,layermelt,rainfall=0):
-    #     """
-    #     Updates the liquid water content in each layer
-    #     with downward percolation and removes melted
-    #     mass from layer dry mass.
+        # water into top layer includes rainfall and melted layer mass
+        water_in = fluxes['rainfall'] + fluxes['meltwater']
+        initial_carry = (water_in, jnp.zeros_like(water_in))
 
-    #     Parameters
-    #     ==========
-    #     layermelt: np.ndarray
-    #         Array containing melt amount for each layer
-    #     rainfall : float
-    #         Additional liquid water input from 
-    #         rainfall [kg m-2]
+        # execute the lax.scan for cascading melt calculations
+        (bottom_q, runoff), (updated_lwater, q_outs) = jax.lax.scan(
+            _percolation_cascade, initial_carry, layer_inputs
+        )
 
-    #     Returns
-    #     -------
-    #     runoff : float
-    #         Runoff of liquid water lost to system [kg m-2]
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     args = self.args
+        # sum any last leaks of water out the bottom with runoff
+        total_runoff = runoff + bottom_q
 
-    #     # CONSTANTS
-    #     DENSITY_WATER = args.density_water
-    #     DENSITY_ICE = args.density_ice
-    #     FRAC_IRREDUC = args.Sr
+        # update layer water
+        state = state._replace(
+            lwater=jnp.transpose(updated_lwater)
+        )
 
-    #     # get index of percolating (snow/firn) layers
-    #     snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
-    #     # check if there is an ice layer within the snow/firn
-    #     if len(snow_firn_idx) > 0 and layers.ice_idx[0] < snow_firn_idx[-1]:
-    #         if layers.ice_idx[0] == 0: 
-    #             # surface ice layer: all melt/rain runs off
-    #             snow_firn_idx = []
-    #         else:
-    #             # internal layer caused by densification/refreeze
-    #             # flow stops (runs off) at ice lens
-    #             snow_firn_idx = snow_firn_idx[:layers.ice_idx[0]]
+        # store arrays of actual flow into and out of each layer
+        fluxes['q_out'] = jnp.transpose(q_outs)
 
-    #     # initialize variables
-    #     initial_mass = np.sum(layers.lice + layers.lwater)
-    #     rain_bool = rainfall > 0
-    #     runoff = 0  # any flow that leaves the point laterally
-
-    #     # get incoming water flux
-    #     if len(self.melted_layers.mass) > 0:
-    #         # sum of rainfall and mass of fully melted layers
-    #         water_in = rainfall + np.sum(self.melted_layers.mass)
-    #     else:
-    #         # no melted layers, incoming water is just rain
-    #         water_in = rainfall
-
-    #     if len(snow_firn_idx) > 0:
-    #         # LAYERS IN
-    #         lm = layers.lice.copy()[snow_firn_idx]
-    #         lw = layers.lwater.copy()[snow_firn_idx]
-    #         lh = layers.lheight.copy()[snow_firn_idx]
-    #         layermelt_sf = layermelt[snow_firn_idx]
-
-    #         # calculate volumetric fractions (theta)
-    #         vol_f_ice = lm / (lh*DENSITY_ICE)
-    #         porosity = 1 - vol_f_ice
-
-    #         # remove / move snow melt to layer water
-    #         lm -= layermelt_sf
-    #         lh -= layermelt_sf / layers.ldensity[snow_firn_idx]
-    #         lw += layermelt_sf
-
-    #         # reduce layer refreeze (refreeze melts first)
-    #         layers.lrefreeze[snow_firn_idx] -= layermelt_sf
-    #         layers.lrefreeze[layers.lrefreeze < 0] = 0
-
-    #         # initialize flow into the top layer
-    #         q_out = water_in
-    #         q_in_store = []
-    #         q_out_store = []
-    #         for layer in snow_firn_idx:
-    #             # set flow in equal to flow out of the previous layer
-    #             q_in = q_out
-
-    #             # irreducible water content depends on density?
-    #             if args.constant_irrwater:
-    #                 water_irreduc = porosity[layer] * lh[layer] * DENSITY_WATER * FRAC_IRREDUC
-    #             else:
-    #                 if layers.ldensity[layer] > 500:
-    #                     FRAC_IRREDUC = args.Sr_dense
-    #                 else:
-    #                     FRAC_IRREDUC = args.Sr_light
-                        
-    #             # calculate flow out of layer i
-    #             if q_in < (water_irreduc - lw[layer]):
-    #                 q_out = 0
-    #             else:
-    #                 q_out = q_in - (water_irreduc - lw[layer])
-
-    #             # cannot be negative
-    #             q_out = max(0,q_out)
-
-    #             # layer mass balance
-    #             lw[layer] += q_in - q_out
-    #             q_in_store.append(q_in)
-    #             q_out_store.append(q_out)
-
-    #         # LAYERS OUT
-    #         layers.lheight[snow_firn_idx] = lh
-    #         layers.lwater[snow_firn_idx] = lw
-    #         layers.lice[snow_firn_idx] = lm
-    #         runoff += q_out + np.sum(layermelt[layers.ice_idx])
-
-    #         # remove melted ice mass (only snow/firn mass was handled above)
-    #         for layer in layers.ice_idx:
-    #             layers.lice[layer] -= layermelt[layer]
-    #             layers.lheight[layer] -= layermelt[layer] / layers.ldensity[layer]
-
-    #         # move LAPs 
-    #         if self.args.switch_LAPs == 1:
-    #             self.move_LAPs(np.array(q_out_store),rain_bool,snow_firn_idx)
-    #     else:
-    #         # no percolation, but need to move melt to runoff
-    #         layers.lice -= layermelt
-    #         layers.lheight -= layermelt / layers.ldensity
-    #         runoff += water_in + np.sum(layermelt)
-
-    #     # make sure layers didn't get too small from removing melt
-    #     layers.check_layer_sizes()
-
-    #     # CHECK MASS CONSERVATION
-    #     ins = water_in
-    #     outs = runoff
-    #     change = np.sum(layers.lice + layers.lwater) - initial_mass
-    #     assert np.abs(change - (ins-outs)) < args.mb_threshold, f'percolation failed mass conservation in {self.output.out_fn}'
-    #     return runoff
+        return state, total_runoff, fluxes
         
-    # def move_LAPs(self,q_out,rain_bool,snow_firn_idx):
-    #     """
-    #     Moves LAPs vertically through the snow and firn
-    #     layers according to water flow from percolation.
+    def route_particles(self, state, forcings, fluxes):
+        """
+        Moves LAPs vertically through the snow and firn
+        layers according to water flow from percolation.
 
-    #     Parameters
-    #     ==========
-    #     q_out : np.ndarray
-    #         Water flow out of each layer [kg m-2]
-    #     rain_bool : Bool
-    #         Raining or not?
-    #     snow_firn_idx : np.ndarray
-    #         Indices of snow and firn layers
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     enbal = self.enbal
-    #     args = self.args
+        Parameters
+        ==========
+        q_out : np.ndarray
+            Water flow out of each layer [kg m-2]
+        rain_bool : Bool
+            Raining or not?
+        snow_firn_idx : np.ndarray
+            Indices of snow and firn layers
+        """
+        args = self.args
+        properties = state._asdict()
+        layers_idx = jnp.arange(state.lice.shape[1])[None, :]
 
-    #     # CONSTANTS
-    #     PARTITION_COEF_BC = args.ksp_BC
-    #     PARTITION_COEF_OC = args.ksp_OC
-    #     PARTITION_COEF_DUST = args.ksp_dust
-    #     dt = args.dt
+        # CONSTANTS
+        PARTITION_COEF_BC = args.ksp_BC
+        PARTITION_COEF_OC = args.ksp_OC
+        PARTITION_COEF_DUST = args.ksp_dust
+        dt = args.dt
 
-    #     # LAYERS IN
-    #     lw = layers.lwater[snow_firn_idx]
-    #     lm = layers.lice[snow_firn_idx]
+        # transpose arrays for layer cascade
+        scan_lwater = jnp.transpose(properties['lwater'])
+        scan_lice = jnp.transpose(properties['lice'])
+        scan_mBC = jnp.transpose(properties['lBC'])
+        scan_mOC = jnp.transpose(properties['lOC'])
+        scan_mdust = jnp.transpose(properties['ldust'])
+        scan_q_out = jnp.transpose(fluxes['q_out'])
 
-    #     # layer mass of each species in kg m-2
-    #     mBC = layers.lBC[snow_firn_idx]
-    #     mOC = layers.lOC[snow_firn_idx]
-    #     mdust = layers.ldust[snow_firn_idx]
+        # pre-calculate mixing ratios [kg kg-1]
+        scan_lmass = scan_lwater + scan_lice
+        safe_mass = jnp.where(scan_lmass > 0.0, scan_lmass, 1.0)
 
-    #     # get wet deposition into top layer if it's raining
-    #     if rain_bool and args.switch_LAPs == 1: # Switch runs have no BC
-    #         mBC[0] += enbal.bcwet * dt
-    #         mOC[0] += enbal.ocwet * dt
-    #         mdust[0] += enbal.dustwet * dt
+        # inject wet-deposited particles into water flowing in
+        BC_wet_flux = forcings.bcwet * dt 
+        OC_wet_flux = forcings.ocwet * dt 
+        dust_wet_flux = forcings.dustwet * dt
 
-    #     # layer mass mixing ratio in kg kg-1
-    #     cBC = mBC / (lw + lm)
-    #     cOC = mOC / (lw + lm)
-    #     cdust = mdust / (lw + lm)
+        # pack all the inputs
+        layer_inputs = (safe_mass, scan_mBC, scan_mOC, scan_mdust, 
+                        scan_q_out, (layers_idx[0, :] == 0))
+        
+        # define cascade function
+        def _particle_cascade(carry, inputs):
+            BCin, OCin, dustin = carry
+            mass, mBC, mOC, mdust, q_out, is_surface = inputs 
 
-    #     # add LAPs from fully melted layers
-    #     if self.melted_layers != 0:
-    #         m_BC_in_val = np.array(np.sum(self.melted_layers.BC))
-    #         m_OC_in_val = np.array(np.sum(self.melted_layers.OC))
-    #         m_dust_in_val = np.array(np.sum(self.melted_layers.dust))
-    #     else:
-    #         m_BC_in_val = np.array([0],dtype=float) 
-    #         m_OC_in_val = np.array([0],dtype=float) 
-    #         m_dust_in_val = np.array([0],dtype=float)
+            # add wet deposition if this is the top layer
+            BCin = jnp.where(is_surface, BCin + BC_wet_flux, BCin)
+            OCin = jnp.where(is_surface, OCin + OC_wet_flux, OCin)
+            dustin = jnp.where(is_surface, dustin + dust_wet_flux, dustin)
 
-    #     # initiate arrays to store flow
-    #     m_BC_in = np.zeros_like(mBC)
-    #     m_BC_out = np.zeros_like(mBC)
-    #     m_OC_in = np.zeros_like(mOC)
-    #     m_OC_out = np.zeros_like(mOC)
-    #     m_dust_in = np.zeros_like(mdust)
-    #     m_dust_out = np.zeros_like(mdust)
+            # instantly mix new particles into this layer
+            cBC = jnp.where(mass > 0.0, mBC / mass, 0.0)
+            cOC = jnp.where(mass > 0.0, mOC / mass, 0.0)
+            cdust = jnp.where(mass > 0.0, mdust / mass, 0.0)
 
-    #     for i in range(len(mBC)):
-    #         # inflow for this layer
-    #         m_BC_in[i] = m_BC_in_val
-    #         m_OC_in[i] = m_OC_in_val
-    #         m_dust_in[i] = m_dust_in_val
+            # compute partition leaving the layer
+            BCout_pot = PARTITION_COEF_BC * q_out * cBC 
+            OCout_pot = PARTITION_COEF_OC * q_out * cOC 
+            dustout_pot = PARTITION_COEF_DUST * q_out * cdust 
 
-    #         # potential outflow
-    #         out_BC = PARTITION_COEF_BC * q_out[i] * cBC[i]
-    #         out_OC = PARTITION_COEF_OC * q_out[i] * cOC[i]
-    #         out_dust = PARTITION_COEF_DUST * q_out[i] * cdust[i]
+            # cap mass at amount previously in the layer
+            BCout = jnp.minimum(BCout_pot, mBC)
+            OCout = jnp.minimum(OCout_pot, mOC)
+            dustout = jnp.minimum(dustout_pot, mdust)
 
-    #         # outflow cannot exceed what was already there + what just flowed in
-    #         m_BC_out[i] = min(out_BC, mBC[i] + m_BC_in[i])
-    #         m_OC_out[i] = min(out_OC, mOC[i] + m_OC_in[i])
-    #         m_dust_out[i] = min(out_dust, mdust[i] + m_dust_in[i])
+            # update mass of particles 
+            updated_mBC = mBC + (BCin - BCout)
+            updated_mOC = mOC + (OCin - OCout)
+            updated_mdust = mdust + (dustin - dustout)
 
-    #         # set inflow for the next layer
-    #         m_BC_in_val = m_BC_out[i]
-    #         m_OC_in_val = m_OC_out[i]
-    #         m_dust_in_val = m_dust_out[i]
+            # carry forward mass leaving this layer
+            next_carry = (BCout, OCout, dustout)
+            outputs = (updated_mBC, updated_mOC, updated_mdust)
 
-    #     # mass balance on each constituent
-    #     dmBC = m_BC_in - m_BC_out
-    #     dmOC = m_OC_in - m_OC_out
-    #     dmdust = m_dust_in - m_dust_out
-    #     mBC += dmBC.astype(float)
-    #     mOC += dmOC.astype(float)
-    #     mdust += dmdust.astype(float)
+            return next_carry, outputs
+        
+        # initialize carry with the flow in from fully melted layers
+        initial_carry = (fluxes['BC'], fluxes['OC'], fluxes['dust'])
 
-    #     # LAYERS OUT
-    #     layers.lBC[snow_firn_idx] = mBC
-    #     layers.lOC[snow_firn_idx] = mOC
-    #     layers.ldust[snow_firn_idx] = mdust
-    #     return
+        _, (out_mBC, out_mOC, out_mdust) = jax.lax.scan(
+            _particle_cascade, initial_carry, layer_inputs
+        )
+
+        properties['lBC'] = jnp.transpose(out_mBC)
+        properties['lOC'] = jnp.transpose(out_mOC)
+        properties['ldust'] = jnp.transpose(out_mdust)
+        
+        state = state._replace(**properties)
+        return state
 
     # def refreezing(self):
     #     """

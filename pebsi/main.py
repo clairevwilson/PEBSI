@@ -40,8 +40,12 @@ def main(initial_state, all_forcings, point_attrs, args):
         )
 
         # 4. vertical heat and mass exchange
-        mb.vertical_processes(
-            current_state, current_forcings, point_attrs, fluxes
+        fluxes_to_vert = {'rainfall': rainfall,
+            'melt_heat': fluxes['melt_heat'],
+            'SWnet_penetrating': fluxes['SWnet_penetrating']
+        }
+        current_state = mb.vertical_processes(
+            current_state, current_forcings, point_attrs, fluxes_to_vert
         )
 
         # ACTUAL ORDER TO IMPLMEMENT:
