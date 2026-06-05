@@ -160,7 +160,7 @@ initial_firn_depth = 10                 # default amount of initial firn [m] * o
 initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
-store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
+store_vars = ['MB','EB','layers']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
 
 # METHODS
 method_distribute = 'scatter'          # 'weighted', 'constant'
@@ -234,7 +234,7 @@ max_nlayers = 50            # Maximum number of vertical layers allowed (more la
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
 mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
-min_glacier_depth = 2       # Minimum ice depth to end the model run [m]
+min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 max_wet_metamorph = 200     # Maximum possible wet grain metamorphosis in a timestep for a single layer [um]
 # <<<<<< Boundary conditions >>>>>>

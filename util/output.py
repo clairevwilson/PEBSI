@@ -63,9 +63,7 @@ class Output():
         for v in args.store_vars: assert v in all_variables, f'Invalid output group: {v}'
 
         # extract the actual variables to store
-        self.store = store_vars = [v for g in args.store_vars for v in all_variables[g]]
-        n_vars_1d = len([v for v in store_vars if 'layer' not in v])
-        n_vars_2d = len([v for v in store_vars if 'layer' in v])
+        self.store = [v for g in args.store_vars for v in all_variables[g]]
 
         # generate dummy variables of the correct shape
         N_TIME = self.n_timesteps = len(time)

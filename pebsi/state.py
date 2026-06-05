@@ -85,6 +85,7 @@ class ClimateState(NamedTuple):
     sp: jnp.ndarray             # Surface pressure [Pa]
     rh: jnp.ndarray             # 2 meter relative humidity [%]
     tcc: jnp.ndarray            # Total cloud cover [-]
+    upcoming_snow: jnp.ndarray  # Forward-looking snow total [m w.e.]
 
     # --------------------------- Radiation terms ---------------------------
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]
@@ -120,32 +121,33 @@ class StepOutputs(NamedTuple):
     Array dimensions: (N_POINTS,)
     """
 
-    # # =========================== Energy balance ==========================
+    # =========================== Energy balance ==========================
 
-    # melt_energy: jnp.ndarray        # Energy available for melt [W m-2]
-    # shortwave_in: jnp.ndarray       # Incoming shortwave radiation [W m-2]
-    # shortwave_ref: jnp.ndarray      # Reflected shortwave radiation [W m-2]
-    # longwave_in: jnp.ndarray        # Incoming longwave radiation [W m-2]
-    # longwave_out: jnp.ndarray       # Emitted longwave radiation [W m-2]
-    # sensible_heat: jnp.ndarray      # Sensible heat flux [W m-2]
-    # latent_heat: jnp.ndarray        # Latent heat flux [W m-2]
-    # rain_heat: jnp.ndarray          # Rain heat flux [W m-2]
-    # ground_heat: jnp.ndarray        # Ground heat flux [W m-2]
-    # albedo: jnp.ndarray             # Broadband albedo [-]
-    # surftemp: jnp.ndarray           # Surface temperature
+    melt_energy: jnp.ndarray        # Energy available for melt [W m-2]
+    shortwave_in: jnp.ndarray       # Incoming shortwave radiation [W m-2]
+    shortwave_ref: jnp.ndarray      # Reflected shortwave radiation [W m-2]
+    longwave_in: jnp.ndarray        # Incoming longwave radiation [W m-2]
+    longwave_out: jnp.ndarray       # Emitted longwave radiation [W m-2]
+    sensible_heat: jnp.ndarray      # Sensible heat flux [W m-2]
+    latent_heat: jnp.ndarray        # Latent heat flux [W m-2]
+    rain_heat: jnp.ndarray          # Rain heat flux [W m-2]
+    ground_heat: jnp.ndarray        # Ground heat flux [W m-2]
+    albedo: jnp.ndarray             # Broadband albedo [-]
+    surftemp: jnp.ndarray           # Surface temperature
 
-    # # =========================== Mass balance ===========================
+    # =========================== Mass balance ===========================
 
-    # melt: jnp.ndarray               # Melt [m w.e.]
-    # refreeze: jnp.ndarray           # Refreeze [m w.e.]
-    # accumulation: jnp.ndarray       # Accumulation [m w.e.]
-    # runoff: jnp.ndarray             # Runoff [m w.e.]
-    # rainfall: jnp.ndarray           # Rainfall [m w.e.]
-    # sublimation: jnp.ndarray        # Sublimation (ice->vapor) [m w.e.]
-    # deposition: jnp.ndarray         # Deposition (vapor->ice) [m w.e.]
-    # evaporation: jnp.ndarray        # Evaporation (water->vapor) [m w.e.]
-    # condensation: jnp.ndarray       # Condensation (vapor->water) [m w.e.]
-    # cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
+    error: jnp.ndarray              # Mass conservation error [m w.e.]
+    melt: jnp.ndarray               # Melt [m w.e.]
+    refreeze: jnp.ndarray           # Refreeze [m w.e.]
+    accumulation: jnp.ndarray       # Accumulation [m w.e.]
+    runoff: jnp.ndarray             # Runoff [m w.e.]
+    rainfall: jnp.ndarray           # Rainfall [m w.e.]
+    sublimation: jnp.ndarray        # Sublimation (ice->vapor) [m w.e.]
+    deposition: jnp.ndarray         # Deposition (vapor->ice) [m w.e.]
+    evaporation: jnp.ndarray        # Evaporation (water->vapor) [m w.e.]
+    condensation: jnp.ndarray       # Condensation (vapor->water) [m w.e.]
+    cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
 
     # ============================= Climate ==============================
     airtemp: jnp.ndarray            # Air temperature [C]

@@ -685,7 +685,41 @@ class Climate():
         setattr(self, var, adjusted)
         return
     
-    def get_emulator_inputs(self):
+    def precompute_upcoming_snow(self):
+        temp = self.temp 
+        tp = self.tp
+
+        T_LOW = self.args.snow_threshold_low
+        T_HIGH = self.args.snow_threshold_high
+
+        rain_scale = np.linspace(1, 0, 20)
+        temp_scale = np.linspace(T_LOW, T_HIGH, 20)
+        snow_fraction = np.interp(temp, temp_scale, rain_scale)
+        hourly_snow = tp * snow_fraction
+
+        look_ahead_steps = int(self.args.new_snow_days * 24)
+        
+        # calculate the running total on time axis
+        running_total = np.cumsum(hourly_snow, axis=1)
+
+        # define storage for upcoming snow
+        upcoming_snow = np.zeros_like(hourly_snow)
+    
+        # calculate snow upcoming in upcoming days
+        upcoming_snow[:, :-look_ahead_steps] = (
+            running_total[:, look_ahead_steps:] - \
+                running_total[:, :-look_ahead_steps]
+        )
+
+        # for final hours where can't look into the future,
+        # subtract the current toal from the absolute final total
+        final_total = running_total[:, -1:]
+        upcoming_snow[:, -look_ahead_steps:] = final_total - running_total[:, -look_ahead_steps:]
+        
+        self.upcoming_snow = upcoming_snow
+        return
+        
+    def precompute_emulator_inputs(self):
         """
         Loads the SNICAR emulator inputs.
         """

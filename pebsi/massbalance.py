@@ -254,7 +254,7 @@ class MassBalanceDriver:
         state = jax.lax.cond(
             is_day_start | is_albedo_step,
             lambda s: self.get_daily_updates(s, forcings, point_attrs),
-            lambda s: self.skip_daily_updates(s),
+            lambda s: s,
             state
         )
         return state
@@ -308,9 +308,6 @@ class MassBalanceDriver:
             albedo_surr=new_albedo_surr
         )
 
-    def skip_daily_updates(self, state):
-        return state
-
     # -------------------- VERTICAL EXCHANGES --------------------
     def vertical_processes(self, state, forcings, point_attrs, fluxes):
         # subsurface heating and melting
@@ -319,10 +316,26 @@ class MassBalanceDriver:
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
-        state, runoff, fluxes = self.percolation(state, fluxes)
+        state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
 
-        return state 
+        # refreezing
+        state = self.refreezing(state)
+
+        # phase changes (e.g., sublimation, condensation)
+        state, condensation_runoff, mass_fluxes = self.phase_changes(
+            state, fluxes['latent_heat']
+        )
+
+        # resolve temperature profile
+        state = self.resolve_temperature_profile(state)
+
+        # calculate total runoff and store mass fluxes together
+        runoff = melt_runoff + condensation_runoff
+        mass_fluxes['runoff'] = runoff 
+        mass_fluxes['melt_2D'] = melt_array
+
+        return state, mass_fluxes
     
     def heating_melting(self, state, fluxes):
         args = self.args
@@ -337,7 +350,7 @@ class MassBalanceDriver:
         dt = args.dt
 
         # load the amount of heat added to each layer
-        Q_abs_surface = fluxes['melt_heat'][:, None]
+        Q_abs_surface = fluxes['melt_energy'][:, None]
         Q_penetrating = fluxes['SWnet_penetrating'][:, None]
         extinct_coefs = jnp.where(state.ice_mask, EXTINCT_ICE, EXTINCT_SNOW)
 
@@ -632,81 +645,475 @@ class MassBalanceDriver:
         state = state._replace(**properties)
         return state
 
-    # def refreezing(self):
-    #     """
-    #     Calculates refreeze in layers due to temperatures 
-    #     below freezing with liquid water content.
+    def refreezing(self, state):
+        """
+        Calculates refreeze in layers due to temperatures 
+        below freezing with liquid water content.
 
-    #     Returns:
-    #     --------
-    #     refreeze : float
-    #         Total amount of refreeze [kg m-2]
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     args = self.args
+        Returns:
+        --------
+        refreeze : float
+            Total amount of refreeze [kg m-2]
+        """
+        properties = state._asdict()
+        args = self.args
 
-    #     # CONSTANTS
-    #     HEAT_CAPACITY_ICE = args.Cp_ice
-    #     DENSITY_ICE = args.density_ice
-    #     LH_RF = args.Lh_rf
+        # CONSTANTS
+        CP_ICE = args.Cp_ice
+        CP_WATER = args.Cp_water
+        DENSITY_ICE = args.density_ice
+        LH_RF = args.Lh_rf
 
-    #     # LAYERS IN
-    #     snow_firn_idx = np.concatenate([layers.snow_idx,layers.firn_idx])
-    #     lT = layers.ltemp.copy()[snow_firn_idx]
-    #     lw = layers.lwater.copy()[snow_firn_idx]
-    #     lm = layers.lice.copy()[snow_firn_idx]
-    #     lh = layers.lheight.copy()[snow_firn_idx]
-    #     lmw = lm + lw
+        ltemp = properties['ltemp']
+        lwater = properties['lwater']
+        lice = properties['lice']
+        lheight = properties['lheight']
+        lmass = lice + lwater
 
-    #     # skip if no snow or firn
-    #     if len(snow_firn_idx) < 1:
-    #         return 0
+        # calculate actual heat capacity including water
+        bulk_heat_capacity = (lice * CP_ICE) + (lwater * CP_WATER)
+        safe_heat_capacity = jnp.where(
+            bulk_heat_capacity > 0, bulk_heat_capacity, 1.
+        )
 
-    #     # define initial mass for conservation check
-    #     initial_mass = np.sum(layers.lice + layers.lwater)
+        # define potential for refreeze [J m-2]
+        E_cold = jnp.abs(ltemp) * bulk_heat_capacity # cold content available
+        E_water = lwater * LH_RF # liquid water present to refreeze
+        E_pore = (DENSITY_ICE * lheight - lice) * LH_RF # pore space available
 
-    #     # initialize refreeze at  0
-    #     refreeze = np.zeros(len(snow_firn_idx))
+        # calculate mass of refreeze [kg m-2]
+        dm_rfz = jnp.minimum(
+            jnp.abs(E_cold), jnp.minimum(jnp.abs(E_water), jnp.abs(E_pore))
+        ) / LH_RF
 
-    #     # loop through layers
-    #     for layer, T in enumerate(lT):
-    #         if T < 0. and lw[layer] > 0:
-    #             # calculate potential for refreeze [J m-2]
-    #             E_cold = np.abs(T)*lm[layer]*HEAT_CAPACITY_ICE  # cold content available 
-    #             E_water = lw[layer]*LH_RF  # amount of water to freeze
-    #             E_pore = (DENSITY_ICE*lh[layer]-lm[layer])*LH_RF # pore space available
-                
-    #             # calculate amount of refreeze in kg m-2
-    #             dm_ref = np.min([abs(E_cold),abs(E_water),abs(E_pore)])/LH_RF
+        # mask amount of refreeze to layers that were below 0.
+        dm_rfz = jnp.where(ltemp < 0, dm_rfz, 0)
 
-    #             # add refreeze to array in kg m-2
-    #             refreeze[layer] = dm_ref
+        # calculate temperature change due to refreezing
+        dT_rfz = dm_rfz * LH_RF / safe_heat_capacity
 
-    #             # add refreeze to layer ice mass
-    #             lm[layer] += dm_ref
-    #             # update layer temperature from latent heat (cannot exceed 0)
-    #             T_new = lT[layer] + dm_ref*LH_RF/(HEAT_CAPACITY_ICE*lm[layer])
-    #             lT[layer] = min(0,T_new)
+        # update layer properties
+        properties['lwater'] = jnp.maximum(0.0, lwater - dm_rfz) 
+        properties['lice'] = lice + dm_rfz 
+        properties['ltemp'] = jnp.minimum(0.0, ltemp + dT_rfz)
 
-    #             # update water content
-    #             lw[layer] = max(0,lw[layer]-dm_ref)
+        # update layer refreeze quantities
+        properties['lrefreeze'] += dm_rfz 
+        properties['ldrefreeze'] = dm_rfz
+
+        # store to state
+        state = state._replace(**properties)
+
+        # update density from refreeze
+        state = layers.update_layer_props(state, DENSITY_ICE)
+        return state
+    
+    def phase_changes(self, state, latent_heat):
+        """
+        Calculates mass lost or gained from latent heat
+        exchange (sublimation, deposition, evaporation,
+        or condensation).
+        """
+        properties = state._asdict()
+        args = self.args
+
+        # CONSTANTS
+        LV_SUB = args.Lv_sub
+        LV_VAP = args.Lv_evap
+        dt = args.dt
+
+        # load inputs
+        ice_mask = properties['ice_mask']
+        lwater = properties['lwater']
+        lice = properties['lice']
+        ldensity = properties['ldensity']
+        surftemp = properties['surftemp']
+
+        # phase changes are vapor<-->solid if surface is below freezing
+        is_sublimation_phase = surftemp < 0.0
         
-    #     # update refreeze with new refreeze content
-    #     layers.drefreeze[snow_firn_idx] = refreeze      # change in refreeze this timestep
-    #     layers.lrefreeze[snow_firn_idx] += refreeze     # total layer refrozen mass
+        dm_sub_pot = (latent_heat * dt) / LV_SUB
+        dm_vap_pot = (latent_heat * dt) / LV_VAP
+        
+        # calculate mass loss/gain potential
+        dm_potential = jnp.where(is_sublimation_phase, dm_sub_pot, dm_vap_pot)
 
-    #     # LAYERS OUT
-    #     layers.ltemp[snow_firn_idx] = lT
-    #     layers.lwater[snow_firn_idx] = lw
-    #     layers.lice[snow_firn_idx] = lm
-    #     layers.update_layer_props()
+        # separate into mass gain (deposition, condensation) 
+        mass_gain = jnp.maximum(0.0, dm_potential)
+        # and mass loss (sublimation, evaporation)
+        mass_loss_demand = jnp.abs(jnp.minimum(0.0, dm_potential))
 
-    #     # CHECK MASS CONSERVATION
-    #     change = np.sum(layers.lice + layers.lwater) - initial_mass
-    #     assert np.abs(change) < args.mb_threshold, f'refreezing failed mass conservation in {self.output.out_fn}'
-    #     return np.sum(refreeze)
+        # MASS GAIN: add mass to solid / liquid of top layer
+        lice_gain = jnp.where(is_sublimation_phase, mass_gain, 0.0)
+        lwater_gain = jnp.where(~is_sublimation_phase, mass_gain, 0.0)
 
+        # update state properties
+        updated_lice = lice.at[:, 0].add(lice_gain)
+        updated_lwater = lwater.at[:, 0].add(lwater_gain)
+
+        # MASS LOSS: need to cascade in case an entire layer is sublimated
+        target_mass_reservoir = jnp.transpose(jnp.where(
+            is_sublimation_phase[:, None], updated_lice, updated_lwater
+        ))
+        
+        # define cascade function
+        def _phase_change_cascade(remaining_demand, layer_mass):
+            # check how much mass the layer can give up
+            actual_loss = jnp.minimum(remaining_demand, layer_mass)
+            new_layer_mass = layer_mass - actual_loss
+
+            # send the remainder to the next layer
+            next_demand = remaining_demand - actual_loss
+            return next_demand, (new_layer_mass, actual_loss)
+
+        # execute cascade down the column
+        unmet_demand, (new_mass, mass_lost) = jax.lax.scan(
+            _phase_change_cascade, mass_loss_demand, target_mass_reservoir
+        )
+        new_mass = jnp.transpose(new_mass)
+        mass_lost = jnp.transpose(mass_lost)
+
+        # re-assign the updated reservoirs
+        updated_lice = jnp.where(
+            is_sublimation_phase[:, None], new_mass, updated_lice
+        )
+        updated_lwater = jnp.where(
+            ~is_sublimation_phase[:, None], new_mass, updated_lwater
+        )
+
+        # calculate actual total mass lost for diagnostics
+        total_actual_loss = jnp.sum(mass_lost, axis=1)
+
+        # recalculate layer heights due to sublimation
+        updated_lheight = jnp.maximum(0.0, updated_lice / ldensity)
+
+        # ice cannot hold water so it goes to runoff
+        runoff_per_layer = jnp.where(ice_mask, updated_lwater, 0.0)
+        updated_lwater = jnp.where(ice_mask, 0.0, updated_lwater)
+        total_runoff = jnp.sum(runoff_per_layer, axis=1)
+
+        # store properties back
+        properties['lwater'] = updated_lwater
+        properties['lice'] = updated_lice
+        properties['lheight'] = updated_lheight
+
+        # calculate actual sublimation and evaporation
+        sublimation = jnp.where(is_sublimation_phase, total_actual_loss, 0.0)
+        evaporation = jnp.where(~is_sublimation_phase, total_actual_loss, 0.0)
+        
+        surface_mass_fluxes = {
+            'sublimation': sublimation,
+            'deposition': lice_gain,
+            'evaporation': evaporation,
+            'condensation': lwater_gain
+        }
+
+        state = state._replace(**properties)
+        return state, total_runoff, surface_mass_fluxes
+        
+    def resolve_temperature_profile(self, state):    
+        """
+        Resolves the temperature profile with vertical
+        heat conduction following the Forward-in-Time-
+        Central-in-Space (FTCS) scheme
+
+        Parameters
+        ==========
+        layers
+            Class object from pebsi.layers
+        surftemp : float
+            Surface temperature [C]
+        """   
+        # check layer sizes for numeric stability
+        state = layers.check_layer_sizes(state, self.args)
+        args = self.args
+
+        # CONSTANTS
+        CP_ICE = args.Cp_ice
+        DENSITY_ICE = args.density_ice
+        DENSITY_WATER = args.density_water
+        TEMP_TEMP = args.temp_temp
+        TEMP_DEPTH = args.temp_depth
+        K_ICE = args.k_ice
+        K_WATER = args.k_water
+        K_AIR = args.k_air
+        MAX_DT = args.max_temp_change
+
+        # load inputs
+        surftemp = state.surftemp
+        lheight = state.lheight
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+        lice = state.lice
+        lwater = state.lwater
+        ldepth = state.ldepth
+        ice_mask = state.ice_mask
+
+        # determine temperate depth relative to ice surface
+        snow_firn_heights = jnp.where(ice_mask, 0.0, lheight)
+        ice_surf_depth = jnp.sum(snow_firn_heights, axis=1)
+        temperate_depth = TEMP_DEPTH + ice_surf_depth
+        is_temperate = ldepth >= temperate_depth[:, None]
+
+        safe_lheight = jnp.where(lheight > 0, lheight, 1)
+
+        # get thermal conductivity for every layer
+        if args.method_conductivity in ['Sauter']:
+            # handles snow or ice
+            f_ice = (lice / DENSITY_ICE) / safe_lheight
+            f_liq = (lwater / DENSITY_WATER) / safe_lheight
+            f_air = jnp.clip(1 - f_ice - f_liq, 0, None)
+            lcond = f_ice * K_ICE + f_liq * K_WATER + f_air * K_AIR
+        else:
+            # get snow and firn conductivity
+            if args.method_conductivity in ['VanDusen']:
+                lcond = 0.21e-01 + 0.42e-03 * ldensity + 0.22e-08 * ldensity**3
+            elif args.method_conductivity in ['Douville']:
+                lcond = 2.2 * jnp.power(ldensity / DENSITY_ICE, 1.88)
+            elif args.method_conductivity in ['Jansson']:
+                lcond = 0.02093 + 0.7953e-3 * ldensity + 1.512e-12 * ldensity **4
+            elif args.method_conductivity in ['OstinAndersson']:
+                lcond = -8.71e-3 + 0.439e-3 * ldensity + 1.05e-6 * ldensity**2
+            
+            # mask ice layers with constant conductivity
+            lcond = jnp.where(ice_mask, K_ICE, lcond)
+
+        # get timestep for heat equation
+        dt_heat = args.dt / args.n_heat_steps
+        dT_limit = MAX_DT / args.n_heat_steps
+
+        # inter-layer spacing
+        # dz is the distance between center of layer i and layer i+1
+        dz = 0.5 * (lheight[:, :-1] + lheight[:, 1:])
+        safe_dz = jnp.where(dz > 0, dz, 1.0)
+        k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
+
+        # define the function to loop over dt_heat
+        def _conduction_step(step_idx, temps):
+            # flux from surface boundary into layer 0 (1D)
+            flux_surf = lcond[:, 0] * (surftemp - temps[:, 0]) / (0.5 * safe_lheight[:, 0])
+            
+            # flux matrix between all internal layer columns (2D)
+            flux_inter = k_inter * (temps[:, :-1] - temps[:, 1:]) / safe_dz
+
+            # top layer update logic
+            safe_thermal_mass_0 = CP_ICE * ldensity[:, 0] * safe_lheight[:, 0]
+            dT_0 = (flux_surf - flux_inter[:, 0]) * dt_heat / safe_thermal_mass_0
+            
+            # mid-layer Updates Logic
+            safe_thermal_mass_mid = CP_ICE * ldensity[:, 1:-1] * safe_lheight[:, 1:-1]
+            
+            # net flux difference: flux in - flux out
+            net_flux_mid = flux_inter[:, :-1] - flux_inter[:, 1:]
+            dT_mid = net_flux_mid * dt_heat / jnp.where(
+                safe_thermal_mass_mid > 0, safe_thermal_mass_mid, 1.0)
+            dT_mid = jnp.clip(dT_mid, -dT_limit, dT_limit)
+
+            # assemble updated temperatures array
+            next_temps = temps
+            next_temps = next_temps.at[:, 0].add(dT_0)
+            next_temps = next_temps.at[:, 1:-1].add(dT_mid)
+
+            # top layer numerical stability checker fallback
+            # very small top layer can experience extreme cooling / heating
+            unstable_top = (next_temps[:, 0] > 0.0) | (next_temps[:, 0] < -50.0)
+            fallback_top_temp = 0.5 * (surftemp + next_temps[:, 1])
+            next_temps = next_temps.at[:, 0].set(jnp.where(
+                unstable_top, fallback_top_temp, next_temps[:, 0]))
+
+            # overlay layers below TEMP_DEPTH with temperate temperature
+            next_temps = jnp.where(is_temperate, TEMP_TEMP, next_temps)
+            
+            return next_temps
+
+        # execute time-stepping loop
+        final_temperatures = jax.lax.fori_loop(
+            0, args.n_heat_steps, _conduction_step, ltemp
+        )
+
+        # save back to state
+        state = state._replace(ltemp = final_temperatures)
+        
+        return state
+    
+    def state_updates(self, state, forcings):
+        # densification is only run daily
+        is_day_start = forcings.hour == 0
+        state, water_squeezed_out = jax.lax.cond(
+            is_day_start,
+            lambda s: self.densification(s),
+            lambda s: (s, jnp.zeros_like(state.albedo)),
+            state
+        )
+
+        # update surface roughness
+        new_roughness = self.roughness(state)
+
+        # update grain sizes
+        new_grainsize = self.evolve_grain_size(state, forcings)
+
+        # store updated properties to state
+        state = state._replace(
+            lgrainsize = new_grainsize,
+            roughness = new_roughness
+        )
+        return state, water_squeezed_out
+
+    def densification(self, state):
+        """
+        Calculates densification of layers due to 
+        compression from overlying mass.
+        """
+        args = self.args
+
+        # CONSTANTS
+        GRAVITY = args.gravity
+        R = args.R_gas
+        VISCOSITY_SNOW = args.viscosity_snow
+        rho = args.constant_snowfall_density
+        DENSITY_FRESH_SNOW = rho if rho else 50
+        DENSITY_ICE = args.density_ice
+        DENSITY_WATER = args.density_water
+        CTOK = args.celsius_to_kelvin
+        dt = args.daily_dt
+
+        # load inputs
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+        lice = state.lice
+        lwater = state.lwater
+        lmass = lice + lwater
+        N_POINTS = lice.shape[0]
+
+        # Boone / Anderson (1976) method (COSIPY)
+        if args.method_densification in ['Boone']:
+            # EMPIRICAL PARAMETERS
+            c1 = args.Boone_c1
+            c2 = args.Boone_c2
+            c3 = args.Boone_c3
+            c4 = args.Boone_c4
+            c5 = args.Boone_c5
+
+            # shift cumulative mass down by one (top layer has no weight above)
+            cumulative_mass = jnp.cumsum(lmass, axis=1)[:, :-1]
+            
+            # fill top layer with zeros and calculate weight 
+            weight_above = GRAVITY * jnp.hstack([jnp.zeros((N_POINTS, 1)), cumulative_mass])
+
+            # get terms in Boone equation
+            viscosity = VISCOSITY_SNOW * jnp.exp(c4 * (0.0 - ltemp) + c5 * ldensity)
+            mass_term = weight_above / viscosity
+            temp_term = -c2 * (0.0 - ltemp)
+            dens_term = -c3 * jnp.maximum(0.0, ldensity - DENSITY_FRESH_SNOW)
+            
+            # calculate delta Rho for the entire matrix
+            dRho = (mass_term + c1 * jnp.exp(temp_term + dens_term)) * ldensity * dt
+
+        # Herron Langway (1980) method
+        elif args.method_densification in ['HerronLangway']:
+            # yearly accumulation is the maximum layer snow mass in mm w.e. yr-1
+            a = layers.max_snow / (dt*365) # kg m-2 = mm w.e.
+            k = jnp.zeros_like(ldensity)
+            b = jnp.zeros_like(ldensity)
+            ltemp_K = ltemp + CTOK
+
+            b = jnp.where(ldensity < 550, 1, 0.5)
+            k = jnp.where(
+                ldensity < 550, 
+                11 * jnp.exp(-10160 / (R * ltemp_K)),
+                575 * jnp.exp(-21400 / (R * ltemp_K))
+            )
+            dRho = k * a**b * (DENSITY_ICE - ldensity) / DENSITY_ICE * dt
+
+        # Kojima (1967) method (JULES)
+        elif args.method_densification in ['Kojima']:
+            NU_0 = 1e7      # Pa s
+            RHO_0 = 50      # kg m-3
+            k_S = 4000      # K
+            T_m = 0. + CTOK
+            ltemp_K = ltemp + CTOK
+
+            # same weight_above calculation as Boone method
+            cumulative_mass = jnp.cumsum(lmass, axis=1)[:, :-1]
+            weight_above = GRAVITY * jnp.hstack([jnp.zeros((N_POINTS, 1)), cumulative_mass])
+
+            # calculate terms in Kojima equation
+            exp_term = jnp.exp(k_S / T_m - k_S / ltemp_K - ldensity / RHO_0)
+            dRho = ldensity * weight_above / NU_0 * exp_term
+
+        # calculated updated properties 
+        new_ldensity = ldensity + dRho 
+        new_lheight = lice / new_ldensity 
+
+        # check if any water was squeezed out by densification
+        if args.constant_irrwater:
+            frac_irreduc = jnp.full_like(new_ldensity, args.Sr)
+        else:
+            frac_irreduc = jnp.where(new_ldensity > 500.0, args.Sr_dense, args.Sr_light)
+        porosity = 1 - new_ldensity / DENSITY_ICE 
+        water_irreduc = porosity * new_lheight * DENSITY_WATER * frac_irreduc
+    
+        # update water in squeezed_out and new_lwater
+        squeezed_out = jnp.sum(jnp.where(
+            lwater > water_irreduc, 
+            lwater - water_irreduc,
+            0), axis = 1)
+        new_lwater = jnp.where(
+            lwater > water_irreduc,
+            water_irreduc,
+            lwater
+        )
+
+        # LAYERS OUT
+        state = state._replace(
+            ldensity = new_ldensity,
+            lheight = new_lheight,
+            lwater = new_lwater
+        )
+
+        # check if new firn or ice layers were created
+        state = layers.update_layer_types(state, DENSITY_ICE)
+
+        # update ldepth and types
+        state = layers.update_layer_props(state, DENSITY_ICE)
+
+        return state, squeezed_out
+    
+    def roughness(self, state):
+        """
+        Function to determine the roughness length of the
+        surface. This assumes the roughness of snow
+        linearly degrades with time in 60 days from that 
+        of fresh snow to firn.
+
+        Parameters
+        ==========
+        days_since_snowfall : int
+            Number of days since fresh snow occurred
+        layers
+            Class object from pebsi.layers
+        """
+        # CONSTANTS
+        ROUGHNESS_FRESH_SNOW = self.args.roughness_fresh_snow
+        ROUGHNESS_AGED_SNOW = self.args.roughness_aged_snow
+        ROUGHNESS_FIRN = self.args.roughness_firn
+        ROUGHNESS_ICE = self.args.roughness_ice
+        AGING_RATE = self.args.roughness_aging_rate
+
+        # determine roughness from surface type
+        layertype = state.ltype
+        roughness = jnp.minimum(
+            ROUGHNESS_FRESH_SNOW + AGING_RATE * state.days_since_snowfall, 
+            ROUGHNESS_AGED_SNOW
+        )
+
+        # overwrite firn and ice values
+        roughness = jnp.where(layertype[:, 0] == 1, ROUGHNESS_FIRN, roughness)
+        roughness = jnp.where(layertype[:, 0] == 2, ROUGHNESS_ICE, roughness)
+
+        # return roughness in m
+        return roughness / 1000
+    
     def evolve_grain_size(self, state, forcings):
         """
         Updates grain size according to wet and dry
@@ -827,7 +1234,7 @@ class MassBalanceDriver:
         # accelerate grain growth?
         if args.option_accel_grains:
             F = jnp.exp(0.01 * layers.ldensity)
-            drwet *= F
+            drwet = drwet * F
 
         # apply metamorphosis and refreezing 
         aged_grainsize = grainsize + drdry + drwet
@@ -844,584 +1251,97 @@ class MassBalanceDriver:
 
         return all_updated_grainsize
     
-    def get_roughness(self, state):
-        """
-        Function to determine the roughness length of the
-        surface. This assumes the roughness of snow
-        linearly degrades with time in 60 days from that 
-        of fresh snow to firn.
+    def run_annual_routines(self, state, forcings):
+        args = self.args
 
-        Parameters
-        ==========
-        days_since_snowfall : int
-            Number of days since fresh snow occurred
-        layers
-            Class object from pebsi.layers
-        """
-        # CONSTANTS
-        ROUGHNESS_FRESH_SNOW = self.args.roughness_fresh_snow
-        ROUGHNESS_AGED_SNOW = self.args.roughness_aged_snow
-        ROUGHNESS_FIRN = self.args.roughness_firn
-        ROUGHNESS_ICE = self.args.roughness_ice
-        AGING_RATE = self.args.roughness_aging_rate
+        # are we in the end-of-summer window?
+        is_summer_end_window = (forcings.doy >= args.start_end_summer) & \
+            (forcings.doy <= args.start_end_summer + 60)
+        is_midnight = forcings.hour == 0 
+        # does upcoming snowfall surpass the threshold to consider winter?
+        weather_trigger = forcings.upcoming_snow >= args.new_snow_threshold
+        # put temporal triggers together
+        time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
 
-        # determine roughness from surface type
-        layertype = state.ltype
-        roughness = jnp.minimum(
-            ROUGHNESS_FRESH_SNOW + AGING_RATE * state.days_since_snowfall, 
-            ROUGHNESS_AGED_SNOW
+        # only run end of summer if we met all temporal conditions
+        state = jax.lax.cond(
+            time_to_merge, 
+            self.end_of_summer,
+            lambda s: s, 
+            state
         )
 
-        # overwrite firn and ice values
-        roughness = jnp.where(layertype[:, 0] == 1, ROUGHNESS_FIRN, roughness)
-        roughness = jnp.where(layertype[:, 0] == 2, ROUGHNESS_ICE, roughness)
+        # if it is the start of a year, reset firn converted trackers
+        is_year_start = (forcings.doy == 0) & (forcings.hour == 0)
+        new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
+        state = state._replace(annual_firn_converted = new_firn_converted)
+        return state
 
-        # return roughness in m
-        return roughness / 1000
+    def end_of_summer(self, state):
+        """
+        Checks prognostically if enough snow will fall
+        in the upcoming days to constitute the start
+        of the accumulation season. If so, snow layers
+        are transformed to firn and cumulative refreeze
+        is reset to 0.
+        """
+        args = self.args
+        N_LAYERS = state.lice.shape[1]
 
-    # def densification(self):
-    #     """
-    #     Calculates densification of layers due to 
-    #     compression from overlying mass.
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     args = self.args
+        # load state (spatial) inputs
+        annual_firn_converted = state.annual_firn_converted
 
-    #     # CONSTANTS
-    #     GRAVITY = args.gravity
-    #     R = args.R_gas
-    #     VISCOSITY_SNOW = args.viscosity_snow
-    #     rho = args.constant_snowfall_density
-    #     DENSITY_FRESH_SNOW = rho if rho else 50
-    #     DENSITY_ICE = args.density_ice
-    #     DENSITY_WATER = args.density_water
-    #     CTOK = args.celsius_to_kelvin
-    #     dt = args.daily_dt
+        # points where firn has not been converted yet
+        convert_firn_pt = ~annual_firn_converted
 
-    #     # LAYERS IN
-    #     snowfirn_idx = np.append(layers.snow_idx,layers.firn_idx)
-    #     lp = layers.ldensity.copy()
-    #     lT = layers.ltemp.copy()
-    #     lm = layers.lice.copy()
-    #     lw = layers.lwater.copy()
-
-    #     # define initial mass for conservation check
-    #     initial_mass = np.sum(layers.lice + layers.lwater)
-
-    #     # Boone / Anderson (1976) method (COSIPY)
-    #     if args.method_densification in ['Boone']:
-    #         # EMPIRICAL PARAMETERS
-    #         c1 = args.Boone_c1
-    #         c2 = args.Boone_c2
-    #         c3 = args.Boone_c3
-    #         c4 = args.Boone_c4
-    #         c5 = args.Boone_c5
-
-    #         for layer in snowfirn_idx:
-    #             weight_above = GRAVITY*np.sum(lm[:layer]+lw[:layer])
-    #             viscosity = VISCOSITY_SNOW*np.exp(c4*(0.-lT[layer])+c5*lp[layer])
-
-    #             # get change in density
-    #             mass_term = weight_above/viscosity
-    #             temp_term = -c2*(0.-lT[layer])
-    #             dens_term = -c3*max(0,lp[layer]-DENSITY_FRESH_SNOW)
-    #             dRho = (mass_term+c1*np.exp(temp_term+dens_term))*lp[layer]*dt
-    #             lp[layer] += dRho
-
-    #     # Herron Langway (1980) method
-    #     elif args.method_densification in ['HerronLangway']:
-    #         # yearly accumulation is the maximum layer snow mass in mm w.e. yr-1
-    #         a = layers.max_snow / (dt*365) # kg m-2 = mm w.e.
-    #         k = np.zeros_like(lp)
-    #         b = np.zeros_like(lp)
-    #         for layer,density in enumerate(lp[snowfirn_idx]):
-    #             lTK = lT[layer] + CTOK
-    #             if density < 550:
-    #                 b[layer] = 1
-    #                 k[layer] = 11*np.exp(-10160/(R*lTK))
-    #             else:
-    #                 b[layer] = 0.5
-    #                 k[layer] = 575*np.exp(-21400/(R*lTK))
-    #         dRho = k*a**b*(DENSITY_ICE - lp)/DENSITY_ICE*dt
-    #         lp += dRho
-
-    #     # Kojima (1967) method (JULES)
-    #     elif args.method_densification in ['Kojima']:
-    #         NU_0 = 1e7      # Pa s
-    #         RHO_0 = 50      # kg m-3
-    #         k_S = 4000      # K
-    #         T_m = 0. + CTOK
-    #         for layer in snowfirn_idx:
-    #             weight_above = GRAVITY*np.sum(lm[:layer]+lw[:layer])
-
-    #             # get change in density
-    #             T_K = lT[layer] + CTOK
-    #             exp_term = np.exp(k_S/T_m - k_S/T_K - lp[layer]/RHO_0)
-    #             dRho = lp[layer]*weight_above/NU_0*exp_term
-    #             lp[layer] += dRho
-
-    #     # check if any water was squeezed out by densification
-    #     squeezed_out = 0
-    #     for layer in snowfirn_idx:
-    #         # irreducible water content depends on density
-    #         # if lp[layer] > 500:
-    #         #     FRAC_IRREDUC = args.Sr_dense
-    #         # else:
-    #         #     FRAC_IRREDUC = args.Sr_light
-    #         FRAC_IRREDUC = args.Sr
-    #         porosity = 1 - lp[layer] / DENSITY_ICE
-    #         lh = lm[layer] / lp[layer]
-    #         water_irreduc = porosity * lh * DENSITY_WATER * FRAC_IRREDUC
-    #         if lw[layer] > water_irreduc:
-    #             squeezed_out += lw[layer] - water_irreduc
-    #             lw[layer] = water_irreduc
-
-    #     # LAYERS OUT
-    #     layers.ldensity = lp
-    #     layers.lheight = lm / lp
-    #     layers.lwater = lw
-    #     layers.update_layer_props('depth')
-
-    #     # check if new firn or ice layers were created
-    #     layers.update_layer_types()
-
-    #     # CHECK MASS CONSERVATION
-    #     change = np.sum(layers.lice + layers.lwater) - initial_mass + squeezed_out
-    #     assert np.abs(change) < args.mb_threshold, f'densification failed mass conservation in {self.output.out_fn}'
-    #     return squeezed_out
-
-    # def phase_changes(self):
-    #     """
-    #     Calculates mass lost or gained from latent heat
-    #     exchange (sublimation, deposition, evaporation,
-    #     or condensation).
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     surface = self.surface
-    #     args = self.args
-
-    #     # CONSTANTS
-    #     LV_SUB = args.Lv_sub
-    #     LV_VAP = args.Lv_evap
-
-    #     # get initial mass for conservation check
-    #     initial_mass = np.sum(layers.lice + layers.lwater)
-
-    #     # get latent heat from enbal
-    #     latent = self.enbal.lat
-
-    #     # get mass fluxes from latent heat
-    #     if surface.stemp < 0.:
-    #         # SUBLIMATION / DEPOSITION
-    #         dm = latent*self.dt/(LV_SUB) # kg m-2
-    #         # yes solid-vapor fluxes
-    #         sublimation = -1*min(dm,0)
-    #         deposition = max(dm,0)
-    #         # no liquid-vapor fluxes
-    #         evaporation = 0
-    #         condensation = 0
-
-    #         # check if dm causes negativity
-    #         if layers.lice[0] + dm < 0: 
-    #             layer = 0
-    #             while np.abs(dm) > 0 and layer < layers.nlayers:
-    #                 # calculate the maximum mass loss possible for the current layer
-    #                 change = min(np.abs(dm), layers.lice[layer])
-    #                 layers.lice[layer] -= change
-    #                 layers.lheight[layer] -= change / layers.ldensity[layer]
-                    
-    #                 # reduce the absolute magnitude of dm
-    #                 if dm < 0:
-    #                     dm += change  # increase dm towards 0 when negative
-    #                 else:
-    #                     dm -= change  # decrease dm towards 0 when positive
-
-    #                 # remove or advance layer
-    #                 if layers.lice[layer] == 0:
-    #                     # layer fully sublimated: move liquid water to next layer and remove
-    #                     if layers.lwater[layer] > 0:
-    #                         layers.lwater[layer+1] += layers.lwater[layer]
-    #                     layers.remove_layer(0)
-    #                 else:
-    #                     # no layer was removed: advance layer
-    #                     layer += 1
+        # define function that will be looped to merge snow layers down
+        def run_merger_loop(state):
+            def _merge_snow_step(i, state):
+                # evaluate on the fly if layer i and the next layer down are old snow
+                is_layer_old_snow = (state.ltype[:, i] == 0) & (state.lage[:, i] >= args.firn_age)
+                is_next_old_snow = (state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= args.firn_age)
                 
-    #         else:
-    #             # add water to layer if it doesn't cause negativity
-    #             layers.lice[0] += dm
-    #     else:
-    #         # EVAPORATION / CONDENSATION
-    #         dm = latent*self.dt/(LV_VAP) # kg m-2
-    #         # no solid-vapor fluxes
-    #         sublimation = 0
-    #         deposition = 0
-    #         # yes liquid-vapor fluxes
-    #         evaporation = -1*min(dm,0)
-    #         condensation = max(dm,0)
-
-    #         # check if dm causes negativity
-    #         if layers.lwater[0] + dm < 0: 
-    #             # reset evaporation to 0 and accumulate actual mass lost
-    #             evaporation = 0
-    #             dm_to_process = np.abs(dm)
+                # only merge down if the column trigger is True and both layers are old snow
+                active_merge_mask = convert_firn_pt & is_layer_old_snow & is_next_old_snow
                 
-    #             layer = 0
-    #             while dm_to_process > args.mb_threshold and layer < layers.nlayers:
-    #                 change = min(dm_to_process, layers.lwater[layer])
-    #                 evaporation += change
-    #                 layers.lwater[layer] -= change
-    #                 dm_to_process -= change
-    #                 layer += 1
-                    
-    #         else:
-    #             # add water to layer if it doesn't cause negativity
-    #             layers.lwater[0] += dm
-
-    #     # check we didn't add liquid water to ice layer
-    #     runoff = 0
-    #     if layers.ltype[0] == 'ice':
-    #         for layer in layers.ice_idx:
-    #             runoff += layers.lwater[layer]
-    #             layers.lwater[layer] = 0
-
-    #     # set vapor fluxes to self
-    #     self.sublimation = sublimation
-    #     self.deposition = deposition
-    #     self.evaporation = evaporation
-    #     self.condensation = condensation
-    #     self.vapor_solid = sublimation if sublimation != 0 else deposition
-    #     self.vapor_liquid = evaporation if evaporation != 0 else condensation
-        
-    #     # CHECK MASS CONSERVATION
-    #     ins = deposition + condensation
-    #     outs = sublimation + evaporation + runoff
-    #     change = np.sum(layers.lice + layers.lwater) - initial_mass
-    #     if np.abs(change - (ins-outs)) >= args.mb_threshold:
-    #         print(self.time, 'change', change, 'ins', ins, 'outs', outs)
-    #     assert np.abs(change - (ins-outs)) < args.mb_threshold, f'phase change failed mass conservation in {self.output.out_fn}'
-    #     return runoff
-        
-    # def thermal_conduction(self):
-    #     """
-    #     Resolves the temperature profile with vertical
-    #     heat conduction following the Forward-in-Time-
-    #     Central-in-Space (FTCS) scheme
-
-    #     Parameters
-    #     ==========
-    #     layers
-    #         Class object from pebsi.layers
-    #     surftemp : float
-    #         Surface temperature [C]
-    #     """        
-    #     # get classes
-    #     layers = self.layers
-    #     surftemp = self.surface.stemp
-    #     args = self.args
-
-    #     # CONSTANTS
-    #     CP_ICE = args.Cp_ice
-    #     DENSITY_ICE = args.density_ice
-    #     DENSITY_WATER = args.density_water
-    #     TEMP_TEMP = args.temp_temp
-    #     TEMP_DEPTH = args.temp_depth
-    #     K_ICE = args.k_ice
-    #     K_WATER = args.k_water
-    #     K_AIR = args.k_air
-    #     MAX_DT = args.max_temp_change
-
-    #     # do not need this function if glacier is completely ripe
-    #     if np.sum(layers.ltemp) == 0.:
-    #         return
-        
-    #     # check layer sizes for numeric stability
-    #     layers.check_layer_sizes()
-
-    #     # determine layers that are below temperate ice depth
-    #     if layers.ice_idx[0] > 0:
-    #         # if there is snow/firn, adjust to be relative to the ice surface
-    #         TEMP_DEPTH += layers.ldepth[layers.ice_idx[0] - 1]
-    #     temperate_idx = np.where(layers.ldepth > TEMP_DEPTH)[0]
-    #     if len(temperate_idx) < 1:
-    #         temperate_idx = [layers.nlayers - 1]
-    #     diffusing_idx = np.arange(temperate_idx[0])
-    #     layers.ltemp[temperate_idx] = TEMP_TEMP
-
-    #     # LAYERS IN
-    #     nl = len(diffusing_idx)
-    #     lh = layers.lheight[diffusing_idx]
-    #     lp = layers.ldensity[diffusing_idx]
-    #     lT_prev = layers.ltemp[diffusing_idx]
-    #     lm = layers.lice[diffusing_idx]
-    #     lw = layers.lwater[diffusing_idx]
-    #     lT = layers.ltemp[diffusing_idx]
-
-    #     # get snow/firn layer conductivity 
-    #     ice_idx = layers.ice_idx
-    #     if args.method_conductivity in ['Sauter']:
-    #         f_ice = (lm/DENSITY_ICE) / lh
-    #         f_liq = (lw/DENSITY_WATER) / lh
-    #         f_air = 1 - f_ice - f_liq
-    #         f_air[f_air < 0] = 0
-    #         lcond = f_ice*K_ICE + f_liq*K_WATER + f_air*K_AIR
-    #     elif args.method_conductivity in ['VanDusen']:
-    #         lcond = 0.21e-01 + 0.42e-03*lp + 0.22e-08*lp**3
-    #     elif args.method_conductivity in ['Douville']:
-    #         lcond = 2.2*np.power(lp/DENSITY_ICE,1.88)
-    #     elif args.method_conductivity in ['Jansson']:
-    #         lcond = 0.02093 + 0.7953e-3*lp + 1.512e-12*lp**4
-    #     elif args.method_conductivity in ['OstinAndersson']:
-    #         lcond = -8.71e-3 + 0.439e-3*lp + 1.05e-6*lp**2
-    #     # get ice conductivity (constant)
-    #     diffusing_ice_idx = list(set(ice_idx)&set(diffusing_idx))
-    #     if len(diffusing_ice_idx) > 0:
-    #         lcond[diffusing_ice_idx] = K_ICE
-
-    #     # get timestep for heat equation
-    #     dt_heat = self.dt / args.n_heat_steps
-
-    #     # check number of layers
-    #     if nl > 2:
-    #         # distances between centers of layers
-    #         dz = 0.5 * (lh[:-1] + lh[1:]) 
-
-    #         # thermal conductivity at the interfaces
-    #         k_inter = 0.5 * (lcond[:-1] + lcond[1:])
-
-    #         # loop through timesteps
-    #         for _ in range(args.n_heat_steps):
-    #             # flux from surface into layer 0 [W m-2]
-    #             flux_surf = lcond[0] * (surftemp - lT_prev[0]) / (0.5 * lh[0])
-                
-    #             # flux between layers [W m-2]
-    #             flux_inter = k_inter * (lT_prev[:-1] - lT_prev[1:]) / dz
-
-    #             # temperature change of top layer
-    #             dT_0 = (flux_surf - flux_inter[0]) * dt_heat / (CP_ICE * lp[0] * lh[0])
-    #             lT[0] = lT_prev[0] + dT_0
-                
-    #             # temperature change of other layers
-    #             dT_mid = (flux_inter[:-1] - flux_inter[1:]) * dt_heat / (CP_ICE * lp[1:-1] * lh[1:-1])
-                
-    #             # cap temperature change to a limit
-    #             dT_limit = MAX_DT / args.n_heat_steps
-    #             dT_mid = np.clip(dT_mid, -dT_limit, dT_limit)
-    #             lT[1:-1] = lT_prev[1:-1] + dT_mid
-
-    #             # safety check for top layer stability
-    #             if lT[0] > 0 or lT[0] < -50:
-    #                 lT[0] = np.mean([surftemp, lT_prev[1]])
-
-    #             lT_prev = lT.copy()
-
-    #     # cases for less than 3 layers do not need to be iterated
-    #     elif nl > 1:
-    #         lT = np.array([surftemp/2,0])
-    #     else:
-    #         lT = np.array([0])
-
-    #     # LAYERS OUT
-    #     layers.ltemp[diffusing_idx] = lT
-    #     return 
-
-    # def end_of_summer(self):
-    #     """
-    #     Checks prognostically if enough snow will fall
-    #     in the upcoming days to constitute the start
-    #     of the accumulation season. If so, snow layers
-    #     are transformed to firn and cumulative refreeze
-    #     is reset to 0.
-    #     """
-    #     # get classes
-    #     layers = self.layers
-    #     surface = self.surface
-    #     args = self.args
-
-    #     # exit function if there is no snow
-    #     if len(layers.snow_idx) == 0:
-    #         return
-        
-    #     # CONSTANTS
-    #     NDAYS = args.new_snow_days
-    #     SNOW_THRESHOLD = args.new_snow_threshold
-    #     T_LOW = args.snow_threshold_low
-    #     T_HIGH = args.snow_threshold_high
-    #     FIRN_AGE = args.firn_age
-
-    #     # only merge firn if there is old snow
-    #     dates_snow = pd.to_datetime(layers.lage[layers.snow_idx])
-    #     snow_age_series = pd.Series(self.time - dates_snow)
-    #     snow_age = np.array(snow_age_series.dt.days)
-        
-    #     if np.any(snow_age >= FIRN_AGE):
-    #         # define rain vs snow scaling 
-    #         rain_scale = np.linspace(1,0,20)
-    #         temp_scale = np.linspace(T_LOW,T_HIGH,20)
-
-    #         # index the temperature and precipitation of the upcoming period
-    #         end_time = min(self.time_list[-1],self.time+pd.Timedelta(days=NDAYS))
-    #         check_dates = pd.date_range(self.time,end_time,freq='h')
-    #         check_temp = self.climate.cds.sel(time=check_dates)['temp'].values
-    #         check_tp = self.climate.cds.sel(time=check_dates)['tp'].values
-
-    #         # create array to mask tp to snow amounts
-    #         mask = np.interp(check_temp,temp_scale,rain_scale)
-    #         upcoming_snow = np.sum(check_tp*mask)
+                # call utility function to merge layers
+                return layers.merge_existing_layers(state, active_merge_mask, i, args)
             
-    #         # check if we are getting enough snow to surpass the threshold
-    #         if upcoming_snow < SNOW_THRESHOLD:
-    #             # not getting enough snow: exit function
-    #             return
-    #         else:
-    #             # getting new snow: set the timestamp
-    #             firn_merged_time = self.time
+            state = jax.lax.fori_loop(0, N_LAYERS - 1, _merge_snow_step, state)
 
-    #         # MERGING SNOW LAYERS INTO FIRN!
-    #         # first, store the past summer surface
-    #         year = self.time.year 
-    #         self.layers.firn_albedos[year] = surface.min_annual_albedo
-
-    #         # check which layers are old enough to merge
-    #         merge_layers = np.where(snow_age >= FIRN_AGE)[0]
-
-    #         # set age of layers to be the oldest layer
-    #         layers.lage[merge_layers] = layers.lage[merge_layers[-1]]
-            
-    #         # loop through layers and merge
-    #         for _ in range(merge_layers[0], merge_layers[-1]):
-    #             layers.merge_layers(merge_layers[0])
-
-    #         # make sure the layer type for the new firn layer is 'firn'
-    #         layers.ltype[merge_layers[0]] = 'firn'
-
-    #         # debugging print statement
-    #         if self.args.debug:
-    #             print('Converted firn on',firn_merged_time)
-
-    #         # update firn_idx and firn_converted
-    #         layers.update_layer_props([])
-    #         self.firn_converted = True
-
-    #         # reset cumulative refreeze and annual albedo
-    #         layers.lrefreeze *= 0
-    #         surface.min_annual_albedo = 1
-    #         return
-
-    # def current_state_prints(self):
-    #     """
-    #     Prints some useful information to keep track 
-    #     of a model run.
-
-    #     Parameters
-    #     ==========
-    #     timestamp : pd.Datetime
-    #         Current timestep
-    #     airtemp : float
-    #         Air temperature [C]
-    #     """
-    #     # get classes
-    #     timestamp = self.time
-    #     airtemp = self.enbal.tempC
-
-    #     # gather variables to print out
-    #     layers = self.layers
-    #     surftemp = self.surface.stemp
-    #     albedo = self.surface.bba
-    #     melte = np.mean(self.output.meltenergy_output[-720:])
-    #     melt = np.sum(self.output.melt_output[-720:])
-    #     accum = np.sum(self.output.accum_output[-720:])
-    #     ended_month = (timestamp - pd.Timedelta(days=1)).month_name()
-    #     year = timestamp.year if ended_month != 'December' else timestamp.year - 1
-
-    #     layers.update_layer_props()
-    #     snowdepth = np.sum(layers.lheight[layers.snow_idx])
-    #     firndepth = np.sum(layers.lheight[layers.firn_idx])
-    #     icedepth = np.sum(layers.lheight[layers.ice_idx])
-
-    #     # begin prints
-    #     self.timer.printout()
-    #     print(f'MONTH COMPLETED: {ended_month} {year} with +{accum:.2f} and -{melt:.2f} m w.e.')
-    #     print(f'Currently {airtemp:.2f} C with {melte:.0f} W m-2 melt energy')
-    #     print(f'----------surface albedo: {albedo:.3f} -----------')
-    #     print(f'-----------surface temp: {surftemp:.2f} C-----------')
-    #     if len(layers.snow_idx) > 0:
-    #         print(f'|       snow depth: {snowdepth:.2f} m      {len(layers.snow_idx)} layers      |')
-    #     if len(layers.firn_idx) > 0:
-    #         print(f'|       firn depth: {firndepth:.2f} m      {len(layers.firn_idx)} layers      |')
-    #     print(f'|       ice depth: {icedepth:.2f} m      {len(layers.ice_idx)} layers      |')
-    #     for l in range(min(2,layers.nlayers)):
-    #         print(f'--------------------layer {l}---------------------')
-    #         print(f'     T = {layers.ltemp[l]:.1f} C                 h = {layers.lheight[l]:.3f} m ')
-    #         print(f'                 p = {layers.ldensity[l]:.0f} kg/m3')
-    #         print(f'Water Mass : {layers.lwater[l]:.2f} kg/m2   Dry Mass : {layers.lice[l]:.2f} kg/m2')
-    #     print('================================================')
-    #     return
-
-    # def check_mass_conservation(self,mass_in,mass_out):
-    #     """
-    #     Checks mass was conserved within the last timestep
+            # code the old snow as firn
+            is_remaining_old_snow = (state.ltype == 0) & (state.lage >= args.firn_age)
+            new_ltype = jnp.where(
+                convert_firn_pt[:, None] & is_remaining_old_snow,
+                1, state.ltype
+            )
         
-    #     Parameters
-    #     ==========
-    #     mass_in : float
-    #         Sum of mass in (precipitation) (kg m-2)
-    #     mass_out : float
-    #         Sum of mass out (runoff) (kg m-2)
-    #     """
-    #     args = self.args
+            # reset cumulative refreeze and annual albedo
+            new_lrefreeze = jnp.zeros_like(state.lrefreeze)
+            new_annual_min_albedo = jnp.ones_like(state.albedo)
+            new_firn_converted = jnp.where(
+                convert_firn_pt, True, annual_firn_converted
+            )
 
-    #     # difference in mass since the last timestep
-    #     current_mass = np.sum(self.layers.lice + self.layers.lwater)
-    #     diff = current_mass - self.previous_mass
-    #     in_out = mass_in - mass_out
+            # store to state
+            state = state._replace(
+                ltype = new_ltype,
+                lrefreeze = new_lrefreeze,
+                annual_min_albedo = new_annual_min_albedo,
+                annual_firn_converted = new_firn_converted
+            )
 
-    #     # debugging print steps in case mass conservation is failed
-    #     if np.abs(diff - in_out) >= args.mb_threshold and self.args.debug:
-    #         print(self.time,'discrepancy of',np.abs(diff - in_out) - args.mb_threshold,self.output.out_fn)
-    #         print('in',mass_in,'out',mass_out,'currently',current_mass,'was',self.previous_mass)
-    #         print('ice before',self.lice_before,'ice after',np.sum(self.layers.lice))
-    #         print('w before',self.lwater_before,'w after',np.sum(self.layers.lwater))
-    #         print('melt',self.melt,'rfz',self.refreeze,'accum',self.accum)
-    #     assert np.abs(diff - in_out) < args.mb_threshold, f'Timestep {self.time} failed mass conservation in {self.output.out_fn}'
-        
-    #     # new initial mass
-    #     self.previous_mass = current_mass
-    #     self.lice_before = np.sum(self.layers.lice)
-    #     self.lwater_before = np.sum(self.layers.lwater)
-    #     return
+            # update layer masks
+            state = layers.update_layer_props(state, args.density_ice)
+            return state
 
-    # def check_glacier_exists(self):
-    #     """
-    #     Checks there is still a glacier. If not, ends 
-    #     the run and saves the output.
-    #     """
-    #     # load layer height
-    #     total_height = np.sum(self.layers.lheight)
-    #     if total_height < self.args.min_glacier_depth:
-    #         # new end date
-    #         start = self.time_list[0]
-    #         end = self.time
-    #         new_time = pd.date_range(start,end,freq='h')
-    #         self.output.n_timesteps = len(new_time)
+        # execute scanning function, if needed 
+        any_point_merging = jnp.any(convert_firn_pt)
+        state = jax.lax.cond(
+            any_point_merging, run_merger_loop, lambda s: s, state
+        )
 
-    #         # load the output
-    #         with xr.open_dataset(self.output.out_fn) as dataset:
-    #             ds = dataset.load()
-    #             # chop it to the new end date
-    #             ds = ds.sel(time=new_time)
-    #         # store output
-    #         ds.to_netcdf(self.output.out_fn)
-
-    #         # save the data
-    #         if self.args.store_data:
-    #             self.output.store_data()
-    #         print(f'Glacier fully melted on {self.time} in {self.args.output_fn}')
-            
-    #         return True # no glacier remaining
-    #     else:
-    #         return False # still glacier
+        return state
 
     # def store_simulation(self):
     #     """
@@ -1442,15 +1362,6 @@ class MassBalanceDriver:
 
     # def iterable(self, iterable, **kwargs):
     #     return tqdm(iterable, **kwargs) if self.args.progress_bar else iterable
-
-    # class MeltedLayers():
-    # def __init__(self, layers, fully_melted):
-    #     self.water = layers.lwater[fully_melted]
-    #     self.ice = layers.lice[fully_melted]
-    #     self.mass = self.water + self.ice 
-    #     self.BC = layers.lBC[fully_melted]
-    #     self.OC = layers.lOC[fully_melted]
-    #     self.dust = layers.ldust[fully_melted]
 
     # class ProgressTimer:
     # """

@@ -110,12 +110,12 @@ class EnergyBalanceDriver():
         # OUTPUTS
         Qm = SWnet_surf + LWnet + Qp + Qs + Ql + Qg
         fluxes = {
-            'SWin': SWin, 'SWref': SWref,
-            'LWin': LWin, 'LWout': LWout,
+            'shortwave_in': SWin, 'shortwave_ref': SWref,
+            'longwave_in': LWin, 'longwave_out': LWout,
             'sensible_heat': Qs, 'latent_heat': Ql,
             'rain_heat': Qp, 'ground_heat': Qg,
-            'melt_heat': Qm, 'SWnet_surface': SWnet_surf,
-            'SWnet_penetrating': SWnet_pen
+            'melt_energy': Qm, 'SWnet_surface': SWnet_surf,
+            'SWnet_penetrating': SWnet_pen, 'surftemp': surftemp_guess
         }
         return Qm, fluxes
     

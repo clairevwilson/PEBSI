@@ -16,7 +16,7 @@ import rioxarray as rxr
 import numpy as np
 import pandas as pd
 import xarray as xr
-from scipy.interpolate import RegularGridInterpolator
+from jax.scipy.interpolate import RegularGridInterpolator
 from collections import namedtuple 
 from types import SimpleNamespace
 from types import MappingProxyType

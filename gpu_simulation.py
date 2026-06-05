@@ -127,7 +127,10 @@ class PEBSI():
 
         # load data for emulator
         if self.config.args.method_snicar == 'emulator':
-            climate.get_emulator_inputs()
+            climate.precompute_emulator_inputs()
+
+        # precompute the upcoming snowfall amounts
+        climate.precompute_upcoming_snow()
 
         # ================== SHADING ==================
         terrain.load_shading(climate.dates_UTC)
@@ -177,6 +180,7 @@ class PEBSI():
             rh=jnp.array(self.climate.rh, dtype=jnp.float64).T,
             sp=jnp.array(self.climate.sp, dtype=jnp.float64).T,
             tcc=jnp.array(self.climate.tcc, dtype=jnp.float64).T,
+            upcoming_snow=jnp.array(self.climate.upcoming_snow, dtype=jnp.float64).T,
 
             # deposition fluxes for light-absorbing particles
             bcwet=jnp.array(self.climate.bcwet, dtype=jnp.float64).T,

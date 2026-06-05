@@ -418,7 +418,7 @@ def add_bottom_layer(state, mask, args):
     # calculate amount of ice at each point
     ice_masses = jnp.where(ice_mask, properties['lice'], 0.0)
     point_ice_mass = jnp.sum(ice_masses, axis=1, keepdims=True)
-    has_ice_pt = (point_ice_mass > 0).squeeze()
+    has_viable_ice = (point_ice_mass > args.min_glacier_depth).squeeze()
 
     # case 1: redistribute mass across existing ice layers
     DZ_ICE = args.dz_icelayer
@@ -444,7 +444,7 @@ def add_bottom_layer(state, mask, args):
     
     # distribute the lost mass according to those exponential weights
     properties['lice'] = jnp.where(
-        mask[:, None] & has_ice_pt[:, None] & ice_mask,
+        mask[:, None] & has_viable_ice[:, None] & ice_mask,
         mass_redistributed,
         properties['lice']
     )
@@ -453,7 +453,7 @@ def add_bottom_layer(state, mask, args):
     properties['lheight'] = properties['lice'] / properties['ldensity']
     
     # case 2: pull new ice layer from reservoir into bottom
-    pull_from_reservoir_pt = mask & ~has_ice_pt.squeeze()
+    pull_from_reservoir_pt = mask & ~has_viable_ice
 
     DENSITY_ICE = args.density_ice 
     TEMP_TEMP = args.temp_temp
@@ -506,6 +506,15 @@ def add_bottom_layer(state, mask, args):
         properties['basal_reservoir'] - new_bottom_layer['lice'],
         properties['basal_reservoir']
     )
+
+    # check if any points are dead and fill them up with zeros if so
+    reservoir_has_mass = properties['basal_reservoir'] > 0.0
+    dead_points = (pull_from_reservoir_pt & ~reservoir_has_mass)[:, None]
+    
+    properties['lice'] = jnp.where(dead_points, 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(dead_points, 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(dead_points, 0.0, properties['lheight'])
+    properties['ltype'] = jnp.where(dead_points, -1, properties['ltype'])
 
     # save these properties to state
     state = state._replace(**properties)
@@ -803,47 +812,48 @@ def merge_new_layer(state, mask, new_layer, args):
     
     return state
 
-def check_layer_sizes(self):
+def check_layer_sizes(state, args):
     """
     Scans through layers sequentially from top to bottom.
     If a layer is below the minimum height threshold, it is 
     merged with the layer directly beneath it.
     """
-    args = self.args
+    properties = state._asdict()
+    n_points, n_layers = properties['lice'].shape
 
-    # remove dead layers (mass ~ 0) across the entire grid
-    # run this from bottom up so layer indices don't shift
-    for idx in reversed(range(self.N_LAYERS)):
-        dead_mask = self.lice[:, idx] < (args.mb_threshold / 1000.0)
-        if jnp.any(dead_mask):
-            self.remove_layer(dead_mask, idx)
+    # zero out dead layers
+    threshold = args.mb_threshold / 1000.0
+    dead_mask = properties['lice'] < threshold
+    
+    properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
+    state = state._replace(**properties)
 
-    # sequential check for miniscule layers
-    # only loop to idx -2 because bottom layer cannot be merged
-    idx = 0
-    while idx < self.N_LAYERS - 1:
-        dz = self.lheight[:, idx]
+    # scan through layers, skipping the last layer because it cannot merge downward
+    for idx in range(n_layers - 1):
+        # always fetch the most up-to-date heights and types from evolving state
+        dz = state.lheight[:, idx]
+        curr_type = state.ltype[:, idx]
+        next_type = state.ltype[:, idx + 1]
         
-        # identify where the current layer is too thin
-        merge_mask = dz < args.min_dz
+        # determine which spatial columns need a merge at this specific vertical index
+        is_too_thin = dz < args.min_dz
+        is_snow = curr_type == 0
+        type_matches_below = curr_type == next_type
         
-        # only merge snow if it matches the type underneath
-        # ice or firn merge unconditionally
-        is_snow = self.ltype[:, idx] == 0
-        type_matches_below = self.ltype[:, idx] == self.ltype[:, idx + 1]
-        merge_mask &= (~is_snow | type_matches_below)
+        # build the boolean merge mask (N_POINTS)
+        merge_mask = is_too_thin & (~is_snow | type_matches_below)
 
-        if jnp.any(merge_mask):
-            # merge any points where this layer msut be merged
-            self.merge_existing_layers(merge_mask, idx)
-            
-            # do not update idx since layers just shifted up
-            continue
-        else:
-            # no profiles were merged, so move to the next layer idx
-            idx += 1
-        
-    return
+        # merge layers, if there are layers to merge
+        state = jax.lax.cond(
+            jnp.any(merge_mask),
+            lambda s: merge_existing_layers(s, merge_mask, idx, args),
+            lambda s: s,
+            operand=state
+        )
+
+    return state
 
 def update_layer_props(state, DENSITY_ICE):
     """
