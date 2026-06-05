@@ -28,8 +28,8 @@ class MassBalanceDriver:
         self.prms = params 
         self.args = static_args
 
-    # -------------------- ADDING NEW MASS --------------------
-    def add_new_mass(self, state, forcings):
+    # -------------------- WORKER FUNCTIONS --------------------
+    def run_new_mass(self, state, forcings):
         # divide incoming precip to rain and snow
         rainfall, snowfall = self.get_precip_amounts(forcings)
 
@@ -43,6 +43,107 @@ class MassBalanceDriver:
             state, forcings
         )
         return rainfall, snowfall, state
+    
+    def run_daily_routines(self, state, forcings, point_attrs):
+        """
+        Checks if we are running sup-hourly updates and
+        executes get_daily_updates or skip_daily_updates.
+        """
+        albedo_TOD = self.args.albedo_TOD
+
+        # parse time index for daily functions
+        is_day_start = forcings.hour == 0
+        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
+
+        # either run or skip daily routines depending on hour of day
+        state = jax.lax.cond(
+            is_day_start | is_albedo_step,
+            lambda s: self.get_daily_updates(s, forcings, point_attrs),
+            lambda s: s,
+            state
+        )
+        return state
+    
+    def run_vertical_processes(self, state, forcings, fluxes):
+        # subsurface heating and melting
+        state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
+
+        # percolate meltwater and route LAPs
+        for var, data in mass_to_route.items():
+            fluxes[var] = jnp.sum(data, axis=1)
+        state, melt_runoff, fluxes = self.percolation(state, fluxes)
+        state = self.route_particles(state, forcings, fluxes)
+
+        # refreezing
+        state = self.refreezing(state)
+
+        # phase changes (e.g., sublimation, condensation)
+        state, condensation_runoff, mass_fluxes = self.phase_changes(
+            state, fluxes['latent_heat']
+        )
+
+        # check layer sizes for numeric stability before running temp profile
+        state, dead_mass = layers.check_layer_sizes(state, self.args)
+
+        # resolve temperature profile
+        state = self.resolve_temperature_profile(state)
+
+        # calculate total runoff and store mass fluxes together
+        runoff = melt_runoff + condensation_runoff
+        mass_fluxes['runoff'] = runoff 
+        mass_fluxes['melt_2D'] = melt_array
+        mass_fluxes['dead'] = dead_mass
+
+        return state, mass_fluxes
+    
+    def run_state_updates(self, state, forcings):
+        # densification is only run daily
+        is_day_start = forcings.hour == 0
+        state, water_squeezed_out = jax.lax.cond(
+            is_day_start,
+            lambda s: self.densification(s),
+            lambda s: (s, jnp.zeros_like(state.albedo)),
+            state
+        )
+
+        # update surface roughness
+        new_roughness = self.roughness(state)
+
+        # update grain sizes
+        new_grainsize = self.evolve_grain_size(state, forcings)
+
+        # store updated properties to state
+        state = state._replace(
+            lgrainsize = new_grainsize,
+            roughness = new_roughness
+        )
+        return state, water_squeezed_out
+
+    def run_annual_routines(self, state, forcings):
+        args = self.args
+
+        # are we in the end-of-summer window?
+        is_summer_end_window = (forcings.doy >= args.start_end_summer) & \
+            (forcings.doy <= args.start_end_summer + 60)
+        is_midnight = forcings.hour == 0 
+        # does upcoming snowfall surpass the threshold to consider winter?
+        weather_trigger = forcings.upcoming_snow >= args.new_snow_threshold
+        # put temporal triggers together
+        time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
+
+        # only run end of summer if we met all temporal conditions
+        state = jax.lax.cond(
+            time_to_merge, 
+            self.end_of_summer,
+            lambda s: s, 
+            state
+        )
+
+        # if it is the start of a year, reset firn converted trackers
+        is_year_start = (forcings.doy == 0) & (forcings.hour == 0)
+        new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
+        state = state._replace(annual_firn_converted = new_firn_converted)
+        return state
 
     def get_precip_amounts(self, forcings):
         """
@@ -236,28 +337,7 @@ class MassBalanceDriver:
             mask, prev_dust + forcings.dustdry[:, None] * dt, prev_dust
         )
 
-        return state._replace(**new_properties)
-    
-    # -------------------- DAILY / SUB-DAILY UPDATES --------------------
-    def run_daily_routines(self, state, forcings, point_attrs):
-        """
-        Checks if we are running sup-hourly updates and
-        executes get_daily_updates or skip_daily_updates.
-        """
-        albedo_TOD = self.args.albedo_TOD
-
-        # parse time index for daily functions
-        is_day_start = forcings.hour == 0
-        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
-
-        # either run or skip daily routines depending on hour of day
-        state = jax.lax.cond(
-            is_day_start | is_albedo_step,
-            lambda s: self.get_daily_updates(s, forcings, point_attrs),
-            lambda s: s,
-            state
-        )
-        return state
+        return state._replace(**new_properties)    
     
     def get_daily_updates(self, state, forcings, point_attrs):
         """
@@ -307,35 +387,6 @@ class MassBalanceDriver:
             annual_max_snow=new_annual_max_snow,
             albedo_surr=new_albedo_surr
         )
-
-    # -------------------- VERTICAL EXCHANGES --------------------
-    def vertical_processes(self, state, forcings, point_attrs, fluxes):
-        # subsurface heating and melting
-        state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
-
-        # percolate meltwater and route LAPs
-        for var, data in mass_to_route.items():
-            fluxes[var] = jnp.sum(data, axis=1)
-        state, melt_runoff, fluxes = self.percolation(state, fluxes)
-        state = self.route_particles(state, forcings, fluxes)
-
-        # refreezing
-        state = self.refreezing(state)
-
-        # phase changes (e.g., sublimation, condensation)
-        state, condensation_runoff, mass_fluxes = self.phase_changes(
-            state, fluxes['latent_heat']
-        )
-
-        # resolve temperature profile
-        state = self.resolve_temperature_profile(state)
-
-        # calculate total runoff and store mass fluxes together
-        runoff = melt_runoff + condensation_runoff
-        mass_fluxes['runoff'] = runoff 
-        mass_fluxes['melt_2D'] = melt_array
-
-        return state, mass_fluxes
     
     def heating_melting(self, state, fluxes):
         args = self.args
@@ -448,7 +499,7 @@ class MassBalanceDriver:
         for _ in range(3):
             # looping more than once is rarely needed
             # only if multiple layers fully melted in the same point
-            fully_melted_mask = properties['lice'] <= 0.001
+            fully_melted_mask = state.lice <= 0.001
             melt_point_mask = jnp.any(fully_melted_mask, axis=1)
             melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
 
@@ -824,8 +875,6 @@ class MassBalanceDriver:
         surftemp : float
             Surface temperature [C]
         """   
-        # check layer sizes for numeric stability
-        state = layers.check_layer_sizes(state, self.args)
         args = self.args
 
         # CONSTANTS
@@ -935,29 +984,6 @@ class MassBalanceDriver:
         state = state._replace(ltemp = final_temperatures)
         
         return state
-    
-    def state_updates(self, state, forcings):
-        # densification is only run daily
-        is_day_start = forcings.hour == 0
-        state, water_squeezed_out = jax.lax.cond(
-            is_day_start,
-            lambda s: self.densification(s),
-            lambda s: (s, jnp.zeros_like(state.albedo)),
-            state
-        )
-
-        # update surface roughness
-        new_roughness = self.roughness(state)
-
-        # update grain sizes
-        new_grainsize = self.evolve_grain_size(state, forcings)
-
-        # store updated properties to state
-        state = state._replace(
-            lgrainsize = new_grainsize,
-            roughness = new_roughness
-        )
-        return state, water_squeezed_out
 
     def densification(self, state):
         """
@@ -1064,7 +1090,7 @@ class MassBalanceDriver:
             lwater
         )
 
-        # LAYERS OUT
+        # store to state
         state = state._replace(
             ldensity = new_ldensity,
             lheight = new_lheight,
@@ -1073,6 +1099,14 @@ class MassBalanceDriver:
 
         # check if new firn or ice layers were created
         state = layers.update_layer_types(state, DENSITY_ICE)
+
+        # add any water that was trapped in newly formed ice layers
+        new_ice_mask = state.ltype == 2
+        trapped_water_out = jnp.sum(jnp.where(
+            new_ice_mask, state.lwater, 0.0
+        ), axis=1)
+        state = state._replace(lwater=jnp.where(new_ice_mask, 0.0, state.lwater))
+        squeezed_out = squeezed_out + trapped_water_out
 
         # update ldepth and types
         state = layers.update_layer_props(state, DENSITY_ICE)
@@ -1101,15 +1135,15 @@ class MassBalanceDriver:
         AGING_RATE = self.args.roughness_aging_rate
 
         # determine roughness from surface type
-        layertype = state.ltype
+        surface_type = state.ltype[:, 0]
         roughness = jnp.minimum(
             ROUGHNESS_FRESH_SNOW + AGING_RATE * state.days_since_snowfall, 
             ROUGHNESS_AGED_SNOW
         )
 
         # overwrite firn and ice values
-        roughness = jnp.where(layertype[:, 0] == 1, ROUGHNESS_FIRN, roughness)
-        roughness = jnp.where(layertype[:, 0] == 2, ROUGHNESS_ICE, roughness)
+        roughness = jnp.where(surface_type == 1, ROUGHNESS_FIRN, roughness)
+        roughness = jnp.where(surface_type == 2, ROUGHNESS_ICE, roughness)
 
         # return roughness in m
         return roughness / 1000
@@ -1250,32 +1284,6 @@ class MassBalanceDriver:
         )
 
         return all_updated_grainsize
-    
-    def run_annual_routines(self, state, forcings):
-        args = self.args
-
-        # are we in the end-of-summer window?
-        is_summer_end_window = (forcings.doy >= args.start_end_summer) & \
-            (forcings.doy <= args.start_end_summer + 60)
-        is_midnight = forcings.hour == 0 
-        # does upcoming snowfall surpass the threshold to consider winter?
-        weather_trigger = forcings.upcoming_snow >= args.new_snow_threshold
-        # put temporal triggers together
-        time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
-
-        # only run end of summer if we met all temporal conditions
-        state = jax.lax.cond(
-            time_to_merge, 
-            self.end_of_summer,
-            lambda s: s, 
-            state
-        )
-
-        # if it is the start of a year, reset firn converted trackers
-        is_year_start = (forcings.doy == 0) & (forcings.hour == 0)
-        new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
-        state = state._replace(annual_firn_converted = new_firn_converted)
-        return state
 
     def end_of_summer(self, state):
         """

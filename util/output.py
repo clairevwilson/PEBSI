@@ -36,7 +36,7 @@ class Output():
             'EB':['SWin','SWout','LWin','LWout', 'rain','ground', 
                   'sensible','latent', 'meltenergy','albedo','surftemp'],
             'MB':['melt','refreeze','runoff','cumrefreeze','dh',
-                  'vaporsolid','vaporliquid','accum','rainfall'],
+                  'vaporsolid','vaporliquid','accum','rainfall','error'],
             'layers':['layertemp','layerdensity','layerwater','layerheight',
                       'layerage','layertype','layergrainsize','layerrefreeze',
                       'layerBC','layerOC','layerdust'],
@@ -105,6 +105,7 @@ class Output():
                 vaporliquid = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 vaporsolid = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 dh = (['time'],zeros[:,0],{'units':'m'}),
+                error = (['time'],zeros[:,0],{'units':'m w.e.'}),
 
                 # CLIMATE
                 airtemp = (['time'],zeros[:,0],{'units':'C'}),

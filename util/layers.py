@@ -824,6 +824,10 @@ def check_layer_sizes(state, args):
     # zero out dead layers
     threshold = args.mb_threshold / 1000.0
     dead_mask = properties['lice'] < threshold
+
+    dead_mass = jnp.sum(jnp.where(
+        dead_mask, properties['lice'] + properties['lwater'], 0.0
+    ), axis=1)
     
     properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
     properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
@@ -850,10 +854,10 @@ def check_layer_sizes(state, args):
             jnp.any(merge_mask),
             lambda s: merge_existing_layers(s, merge_mask, idx, args),
             lambda s: s,
-            operand=state
+            state
         )
 
-    return state
+    return state, dead_mass
 
 def update_layer_props(state, DENSITY_ICE):
     """
@@ -893,16 +897,20 @@ def update_layer_types(state, DENSITY_ICE):
     """
 
     # find which firn layers have crossed the ice density threshold
-    is_firn = state.ltype == 'firn'
+    is_firn = state.ltype == 1
     density_check = state.ldensity >= DENSITY_ICE
     trans_mask = is_firn & density_check
 
     # apply the ice transformation
     new_ltype = jnp.where(trans_mask, 2, state.ltype)
     new_ldensity = jnp.where(trans_mask, DENSITY_ICE, state.ldensity)
+    new_lheight = jnp.where(
+        trans_mask, state.lice / new_ldensity, state.lheight
+    )
 
     # update state
     state = state._replace(
-        ltype = new_ltype, ldensity = new_ldensity
+        ltype = new_ltype, ldensity = new_ldensity,
+        lheight = new_lheight,
     )
     return state

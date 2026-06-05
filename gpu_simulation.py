@@ -14,6 +14,8 @@ os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 os.environ['JAX_DEFAULT_DTYPE_BITS'] = "64"
 import jax
 jax.config.update("jax_enable_x64", True)
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
 
 # Built-in libraries
 import argparse
@@ -337,9 +339,13 @@ class PEBSI():
         eb = peb.EnergyBalanceDriver(None, self.args)
 
         # CHECK ENERGY BALANCE
-        state, fluxes = eb.solve_energy_balance(
-            state, forcings, point_attrs
-        )
+        mass_before = jnp.sum(state.lice, axis=1) + \
+            jnp.sum(state.lwater, axis=1) + state.basal_reservoir
+        state, squee = mb.run_state_updates(state, forcings)
+        mass_after = jnp.sum(state.lice, axis=1) + \
+            jnp.sum(state.lwater, axis=1) + state.basal_reservoir
+        print(mass_before - mass_after, squee)
+
         # print(state.surftemp, fluxes)
         # state, melt, mass = mb.heating_melting(state, fluxes)
         # print(state.lice, mass)

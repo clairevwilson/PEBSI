@@ -2,6 +2,7 @@
 import jax 
 from pebsi.state import StepOutputs
 import jax.numpy as jnp
+from jax.debug import print as jax_print
 
 # Local libraries
 from pebsi.energybalance import EnergyBalanceDriver
@@ -20,16 +21,29 @@ def main(initial_state, all_forcings, point_attrs, args):
     mb = MassBalanceDriver(None, args)
     eb = EnergyBalanceDriver(None, args)
 
+    def fetch_current_mass(state):
+        total_mass = jnp.sum(state.lice, axis=1) + \
+                        jnp.sum(state.lwater, axis=1) + \
+                        state.basal_reservoir
+        return total_mass
+    
+    def mass_conservation(initial_mass, final_mass, mass_fluxes):
+        mass_in = mass_fluxes['accumulation'] + mass_fluxes['rainfall'] + \
+            mass_fluxes['deposition'] + mass_fluxes['condensation']
+        mass_out = mass_fluxes['runoff'] + mass_fluxes['evaporation'] + \
+            mass_fluxes['sublimation'] + mass_fluxes['dead']
+        
+        return (initial_mass - final_mass) + (mass_in - mass_out)
+
     # define function for a single timestep
     def step(current_state, current_forcings):
         time_idx = current_forcings.time_idx
 
         # initialize mass balance check
-        current_mass = jnp.sum(current_state.lice, axis=1) + \
-            jnp.sum(current_state.lwater, axis=1) + current_state.basal_reservoir
+        current_mass = fetch_current_mass(current_state)
 
         # 1. get amounts of rain and snow; add dry deposition
-        rainfall, snowfall, current_state = mb.add_new_mass(
+        rainfall, snowfall, current_state = mb.run_new_mass(
             current_state, current_forcings
         )
 
@@ -50,12 +64,12 @@ def main(initial_state, all_forcings, point_attrs, args):
             'melt_energy': fluxes['melt_energy'],
             'SWnet_penetrating': fluxes['SWnet_penetrating']
         }
-        current_state, mass_fluxes = mb.vertical_processes(
-            current_state, current_forcings, point_attrs, fluxes_to_vert
+        current_state, mass_fluxes = mb.run_vertical_processes(
+            current_state, current_forcings, fluxes_to_vert
         )
 
         # 5. state property updates: density, grain size, surface roughness
-        current_state, water_squeezed_out = mb.state_updates(
+        current_state, water_squeezed_out = mb.run_state_updates(
             current_state, current_forcings
         )
         mass_fluxes['runoff'] = mass_fluxes['runoff'] + water_squeezed_out
@@ -69,13 +83,10 @@ def main(initial_state, all_forcings, point_attrs, args):
         current_state = mb.run_annual_routines(current_state, current_forcings)
 
         # 7. mass conservation check
-        mass_in = mass_fluxes['accumulation'] + mass_fluxes['rainfall'] + \
-            mass_fluxes['deposition'] + mass_fluxes['condensation']
-        mass_out = mass_fluxes['runoff'] + mass_fluxes['evaporation'] + \
-            mass_fluxes['sublimation']
-        next_mass = jnp.sum(current_state.lice, axis=1) + \
-            jnp.sum(current_state.lwater, axis=1) + current_state.basal_reservoir
-        mass_fluxes['error'] = (current_mass - next_mass) + (mass_in - mass_out)
+        next_mass = fetch_current_mass(current_state)
+        mass_fluxes['error'] = mass_conservation(
+            current_mass, next_mass, mass_fluxes
+        )
 
         # define the next state
         next_state = current_state
