@@ -18,6 +18,7 @@ import pandas as pd
 import xarray as xr
 # Local libraries
 import util.layers as layers
+import pebsi.surface as albedo
 
 class MassBalanceDriver:
     def __init__(self, params, static_args):
@@ -58,7 +59,7 @@ class MassBalanceDriver:
         # either run or skip daily routines depending on hour of day
         state = jax.lax.cond(
             is_day_start | is_albedo_step,
-            lambda s: self.get_daily_updates(s, forcings, point_attrs),
+            lambda s: self.get_daily_updates(s, forcings),
             lambda s: s,
             state
         )
@@ -144,6 +145,8 @@ class MassBalanceDriver:
         new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
         state = state._replace(annual_firn_converted = new_firn_converted)
         return state
+    
+    # -------------------- PHYSICS FUNCTIONS --------------------
 
     def get_precip_amounts(self, forcings):
         """
@@ -339,7 +342,7 @@ class MassBalanceDriver:
 
         return state._replace(**new_properties)    
     
-    def get_daily_updates(self, state, forcings, point_attrs):
+    def get_daily_updates(self, state, forcings):
         """
         Executes daily update functions (albedo, surrounding 
         albedo, days since snowfall).
@@ -349,7 +352,7 @@ class MassBalanceDriver:
         is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
 
         # === albedo ===
-        # new_albedo = surface.get_albedo(state, forcings, point_attrs)
+        new_albedo = albedo.get_albedo(state, self.args, forcings.solar_zenith)
 
         # === surrounding albedo ===
         ALBEDO_GROUND = self.args.albedo_ground
@@ -369,7 +372,7 @@ class MassBalanceDriver:
         new_days_since_snowfall = jnp.round(hours_since_snowfall / 24).astype(jnp.int32)
 
         # only update the properties requested based on hour of day
-        # updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
+        updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
         new_albedo_surr = jnp.where(
             is_day_start, new_albedo_surr, state.albedo_surr
         )
@@ -382,7 +385,7 @@ class MassBalanceDriver:
         
         # return the modified state snapshot
         return state._replace(
-            # albedo=updated_albedo,
+            albedo=updated_albedo,
             days_since_snowfall=new_days_since_snowfall,
             annual_max_snow=new_annual_max_snow,
             albedo_surr=new_albedo_surr

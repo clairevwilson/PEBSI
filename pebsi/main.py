@@ -37,7 +37,6 @@ def main(initial_state, all_forcings, point_attrs, args):
 
     # define function for a single timestep
     def step(current_state, current_forcings):
-        time_idx = current_forcings.time_idx
 
         # initialize mass balance check
         current_mass = fetch_current_mass(current_state)
@@ -46,6 +45,7 @@ def main(initial_state, all_forcings, point_attrs, args):
         rainfall, snowfall, current_state = mb.run_new_mass(
             current_state, current_forcings
         )
+        jax_print('{}', current_state.albedo)
 
         # 2. surface property updates
         current_state = mb.run_daily_routines(
