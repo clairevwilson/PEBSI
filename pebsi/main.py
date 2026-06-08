@@ -45,12 +45,13 @@ def main(initial_state, all_forcings, point_attrs, args):
         rainfall, snowfall, current_state = mb.run_new_mass(
             current_state, current_forcings
         )
-        jax_print('{}', current_state.albedo)
+        # jax_print('1. {}', jnp.any(jnp.isnan(current_state.ldepth)))
 
         # 2. surface property updates
         current_state = mb.run_daily_routines(
-            current_state, current_forcings, point_attrs
+            current_state, current_forcings
         )
+        # jax_print('2. {}', jnp.any(jnp.isnan(current_state.ldepth)))
 
         # 3. simultaneously solve energy balance and surface temperature
         current_state, fluxes = eb.solve_energy_balance(
@@ -58,6 +59,7 @@ def main(initial_state, all_forcings, point_attrs, args):
         )
 
         # 4. vertical heat and mass exchange
+        # jax_print('in {}', current_state.ldepth) # jnp.any(jnp.isnan(current_state.ldepth)))
         fluxes_to_vert = {
             'rainfall': rainfall,
             'latent_heat': fluxes['latent_heat'],
@@ -67,6 +69,7 @@ def main(initial_state, all_forcings, point_attrs, args):
         current_state, mass_fluxes = mb.run_vertical_processes(
             current_state, current_forcings, fluxes_to_vert
         )
+        # jax_print('4. {}', jnp.any(jnp.isnan(current_state.ldepth)))
 
         # 5. state property updates: density, grain size, surface roughness
         current_state, water_squeezed_out = mb.run_state_updates(
@@ -78,9 +81,14 @@ def main(initial_state, all_forcings, point_attrs, args):
         mass_fluxes['rainfall'] = rainfall
         mass_fluxes['refreeze'] = jnp.sum(current_state.ldrefreeze, axis=1)
         mass_fluxes['cumrefreeze'] = jnp.sum(current_state.lrefreeze, axis=1)
+        # jax_print('hour {} 5. grains {} dens {}', current_forcings.time_idx,
+        #           jnp.any(jnp.isnan(current_state.lgrainsize)),
+        #           jnp.any(jnp.isnan(current_state.ldensity)))
+        # jax_print('5. {}', jnp.any(jnp.isnan(current_state.ldepth)))
 
         # 6. annual checks and tracker updates 
         current_state = mb.run_annual_routines(current_state, current_forcings)
+        # jax_print('6. {}', jnp.any(jnp.isnan(current_state.ldepth)))
 
         # 7. mass conservation check
         next_mass = fetch_current_mass(current_state)

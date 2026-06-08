@@ -17,6 +17,7 @@ import pandas as pd
 import xarray as xr
 # Internal libraries
 from util.config import ConfigError
+from jax.debug import print as jax_print
 
 class Layers():
     """
@@ -233,10 +234,10 @@ class Layers():
                                            args.density_firn)
 
             # compute the density slope from top to bottom of firn
-            firn_height_no0 = np.where(firn_height > 0, firn_height, 1.0)
+            safe_firn_height = np.where(firn_height > 0, firn_height, 1.0)
             pslope = np.where(
                 firn_height > 0,
-                (args.density_ice - bottom_snow_density) / firn_height_no0,
+                (args.density_ice - bottom_snow_density) / safe_firn_height,
                 0.0,
             )[:, np.newaxis]
 
@@ -448,6 +449,11 @@ def add_bottom_layer(state, mask, args):
         mass_redistributed,
         properties['lice']
     )
+    properties['ldensity'] = jnp.where(
+        mask[:, None] & has_viable_ice[:, None] & ice_mask,
+        args.density_ice,
+        properties['ldensity']
+    )
 
     # recalculate layer heights
     properties['lheight'] = properties['lice'] / properties['ldensity']
@@ -514,7 +520,7 @@ def add_bottom_layer(state, mask, args):
     properties['lice'] = jnp.where(dead_points, 0.0, properties['lice'])
     properties['lwater'] = jnp.where(dead_points, 0.0, properties['lwater'])
     properties['lheight'] = jnp.where(dead_points, 0.0, properties['lheight'])
-    properties['ltype'] = jnp.where(dead_points, -1, properties['ltype'])
+    properties['ltype'] = jnp.where(dead_points, 2, properties['ltype'])
 
     # save these properties to state
     state = state._replace(**properties)
@@ -554,7 +560,9 @@ def remove_layer(state, mask, idx, args):
 
         # make sure new bottom layer is filled with no mass
         if var == 'ltype':
-            fully_shifted = fully_shifted.at[:, -1].set(-1)
+            fully_shifted = fully_shifted.at[:, -1].set(2)
+        elif var == 'ldensity':
+            fully_shifted = fully_shifted.at[:, -1].set(args.density_ice)
         else:
             fully_shifted = fully_shifted.at[:, -1].set(0.0)
         
@@ -667,6 +675,7 @@ def merge_existing_layers(state, mask, idx, args):
     m_removed = properties['lice'][:, idx]
     m_target = properties['lice'][:, target_idx]
     m_total = m_removed + m_target
+    m_safe = jnp.where(m_total > 0, m_total, 1.0)
 
     # combine point mask with index mask
     target_mask = mask[:, None] & (layers_idx == target_idx)[None, :]
@@ -678,7 +687,7 @@ def merge_existing_layers(state, mask, idx, args):
         target_vals = data[:, target_idx]
 
         # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_total
+        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_safe
         
         if var in ['ltype','lage']:
             weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
@@ -715,19 +724,20 @@ def merge_existing_layers(state, mask, idx, args):
 
         # make sure new bottom layer is filled with no mass
         if var == 'ltype':
-            fully_shifted = fully_shifted.at[:, -1].set(-1)
+            fully_shifted = fully_shifted.at[:, -1].set(2)
+        elif var == 'ldensity': # fill with real value to avoid div 0
+            fully_shifted = fully_shifted.at[:, -1].set(args.density_ice)
         else:
             fully_shifted = fully_shifted.at[:, -1].set(0.0)
 
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
-            shift_mask,
-            fully_shifted,
-            data
+            shift_mask, fully_shifted, data
         )
 
-    # update ice mask
+    # update ice mask and layer height
     properties['ice_mask'] = properties['ltype'].astype(jnp.int32) == 2
+    properties['lheight'] = properties['lice'] / properties['ldensity']
     
     # write these properties to state 
     state = state._replace(**properties)
@@ -764,6 +774,7 @@ def merge_new_layer(state, mask, new_layer, args):
     m_new = new_layer['lice']
     m_target = properties['lice'][:, 0]
     m_total = m_new + m_target
+    m_safe = jnp.where(m_total > 0, m_total, 1.0)
 
     # combine point mask with index mask
     target_mask = mask[:, None] & (layers_idx == 0)[None, :]
@@ -775,7 +786,7 @@ def merge_new_layer(state, mask, new_layer, args):
         target_vals = data[:, 0]
 
         # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + new_vals * m_new) / m_total
+        weighted_avg = (target_vals * m_target + new_vals * m_new) / m_safe
         
         if var in ['ltype','lage']:
             weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
@@ -834,28 +845,29 @@ def check_layer_sizes(state, args):
     properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
     state = state._replace(**properties)
 
-    # scan through layers, skipping the last layer because it cannot merge downward
-    for idx in range(n_layers - 1):
+    # define function to scan for layers to merge
+    def _scan_layers(current_state, idx):
         # always fetch the most up-to-date heights and types from evolving state
-        dz = state.lheight[:, idx]
-        curr_type = state.ltype[:, idx]
-        next_type = state.ltype[:, idx + 1]
+        dz = current_state.lheight[:, idx]
+        curr_type = current_state.ltype[:, idx]
+        next_type = current_state.ltype[:, idx + 1]
         
         # determine which spatial columns need a merge at this specific vertical index
         is_too_thin = dz < args.min_dz
         is_snow = curr_type == 0
         type_matches_below = curr_type == next_type
+        force_small_snow = (curr_type == 0) & (next_type > 0)
         
         # build the boolean merge mask (N_POINTS)
-        merge_mask = is_too_thin & (~is_snow | type_matches_below)
+        merge_mask = is_too_thin & (~is_snow | type_matches_below | force_small_snow)
 
         # merge layers, if there are layers to merge
-        state = jax.lax.cond(
-            jnp.any(merge_mask),
-            lambda s: merge_existing_layers(s, merge_mask, idx, args),
-            lambda s: s,
-            state
-        )
+        next_state = merge_existing_layers(current_state, merge_mask, idx, args)
+
+        return next_state, None 
+    
+    layers_idx = jnp.arange(n_layers - 1) # don't include bottom layer
+    state, _ = jax.lax.scan(_scan_layers, state, layers_idx)
 
     return state, dead_mass
 
@@ -869,11 +881,13 @@ def update_layer_props(state, DENSITY_ICE):
     do : list-like
         List of any combination of depth, density to be updated
     """
+    safe_lheight = jnp.where(state.lheight > 0, state.lheight, 1.0)
+    
     new_ice_mask = state.ltype == 2
     new_density = jnp.where(
         new_ice_mask,
         DENSITY_ICE,
-        state.lice / state.lheight
+        state.lice / safe_lheight
     )
 
     lh = state.lheight

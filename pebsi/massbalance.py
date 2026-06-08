@@ -14,6 +14,8 @@ from types import SimpleNamespace
 # External libraries
 import jax
 import jax.numpy as jnp
+from jax.debug import print as jax_print
+
 import pandas as pd
 import xarray as xr
 # Local libraries
@@ -45,7 +47,7 @@ class MassBalanceDriver:
         )
         return rainfall, snowfall, state
     
-    def run_daily_routines(self, state, forcings, point_attrs):
+    def run_daily_routines(self, state, forcings):
         """
         Checks if we are running sup-hourly updates and
         executes get_daily_updates or skip_daily_updates.
@@ -67,16 +69,20 @@ class MassBalanceDriver:
     
     def run_vertical_processes(self, state, forcings, fluxes):
         # subsurface heating and melting
+        # jax_print('0 {}', jnp.any(jnp.isnan(state.ldepth)))
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
+        # jax_print('1 {}', jnp.any(jnp.isnan(state.ldepth)))
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
+        # jax_print('2 {}', jnp.any(jnp.isnan(state.ldepth)))
 
         # refreezing
         state = self.refreezing(state)
+        # jax_print('3 {}', jnp.any(jnp.isnan(state.ldepth)))
 
         # phase changes (e.g., sublimation, condensation)
         state, condensation_runoff, mass_fluxes = self.phase_changes(
@@ -261,15 +267,16 @@ class MassBalanceDriver:
         # define conditions for making a new layer for accumulation
         surf_not_snow = (state.ltype[:, 0] > 0)
         density_threshold = (state.ldensity[:, 0] > (new_density * 3))
-        new_layer_cond = surf_not_snow | density_threshold
+        large_top_layer = (state.lheight[:, 0] > args.dz_toplayer * 2)
+        new_layer_cond = surf_not_snow | density_threshold | large_top_layer
 
         # check for small surface snow layer (merge new snow with it no matter what)
-        small_surf_layer = (state.lheight[:, 0] < 1e-3) & (state.ltype[:, 0] == 0)
+        small_top_layer = (state.lheight[:, 0] < 1e-3) & (state.ltype[:, 0] == 0)
 
         # define masks for possible cases
-        create_new_mask = new_layer_cond & (~small_surf_layer) & (new_height >= 1e-3)
-        delay_mask = new_layer_cond & (~small_surf_layer) & (new_height < 1e-3)
-        merge_new_mask = (~new_layer_cond) | small_surf_layer
+        create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= 1e-3)
+        delay_mask = new_layer_cond & (~small_top_layer) & (new_height < 1e-3)
+        merge_new_mask = (~new_layer_cond) | small_top_layer
 
         action_taken_mask = create_new_mask | merge_new_mask
 
@@ -278,7 +285,7 @@ class MassBalanceDriver:
         state = layers.merge_new_layer(state, merge_new_mask, new_layer, args)
 
         # handle case 2: delaying this snowfall to the next timestep
-        updated_delayed_snow = jnp.where(delay_mask, snowfall, state.delayed_snow)
+        updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
         updated_delayed_snow = jnp.where(action_taken_mask, 0.0, updated_delayed_snow)
 
         # update surface snow timestemp
@@ -403,6 +410,8 @@ class MassBalanceDriver:
         LH_RF = args.Lh_rf
         dt = args.dt
 
+        # jax_print('before {}', state.ltemp[2, :])
+
         # load the amount of heat added to each layer
         Q_abs_surface = fluxes['melt_energy'][:, None]
         Q_penetrating = fluxes['SWnet_penetrating'][:, None]
@@ -416,7 +425,11 @@ class MassBalanceDriver:
 
         # recalculate layer temperatures using effective heat capacity
         lmass = state.lice + state.lwater
-        cp_eff = (state.lice * CP_ICE + state.lwater * CP_WATER) / lmass
+        safe_lmass = jnp.where(lmass > 0, lmass, 1.0)
+        cp_eff = jnp.where(
+            lmass > 0,
+            (state.lice * CP_ICE + state.lwater * CP_WATER) / safe_lmass, 1.0
+        )
 
         # ---------- CASCADE FUNCTION ----------
         # transpose all arrays to (N_LAYERS, N_POINTS) for lax.scan
@@ -424,7 +437,7 @@ class MassBalanceDriver:
         scan_lice = jnp.transpose(state.lice)
         scan_lwater = jnp.transpose(state.lwater)
         scan_ltemp = jnp.transpose(state.ltemp)
-        scan_lmass = jnp.transpose(lmass)
+        scan_lmass = jnp.transpose(safe_lmass)
         scan_cp_eff = jnp.transpose(cp_eff)
 
         # pack all the inputs into a tuple
@@ -446,7 +459,8 @@ class MassBalanceDriver:
             warmed_past_zero = total_heat_in > energy_to_zero
             
             # calculate temperature from all heat, regardless of how much
-            partial_warm_temp = ltemp + (total_heat_in / (lmass * lcp))
+            safe_denom = jnp.where(lmass * lcp > 0, lmass * lcp, 1.0)
+            partial_warm_temp = jnp.where(lmass > 0, ltemp + (total_heat_in / safe_denom), ltemp)
             # clip ptemperature of points that were warmed past melting point
             intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
             
@@ -459,7 +473,7 @@ class MassBalanceDriver:
             
             # calculate unspent melt energy that must cascade lower [W m-2]
             carry = jnp.maximum(
-                0., (melt_energy_available - (actual_melt * args.Lh_rf)) / dt
+                0., (melt_energy_available - (actual_melt * LH_RF)) / dt
             )
 
             # update layer states based on calculations
@@ -483,6 +497,7 @@ class MassBalanceDriver:
         properties['lice'] = jnp.transpose(out_lice)
         properties['lwater'] = jnp.transpose(out_lwater)
         properties['ltemp'] = jnp.transpose(out_ltemp)
+        # jax_print('after {}', properties['ltemp'][2, :])
         
         # store updated properties
         state = state._replace(**properties)
@@ -497,6 +512,7 @@ class MassBalanceDriver:
         mass_to_route['BC'] = jnp.where(fully_melted_mask, properties['lBC'], 0)
         mass_to_route['OC'] = jnp.where(fully_melted_mask, properties['lOC'], 0)
         mass_to_route['dust'] = jnp.where(fully_melted_mask, properties['ldust'], 0)
+        jax_print('X {}', jnp.any(jnp.isnan(state.ltemp)))
 
         # collapse grid to purge melted layers
         for _ in range(3):
@@ -511,6 +527,7 @@ class MassBalanceDriver:
                 state, melt_point_mask, melt_layer_idx, args
             )
 
+        jax_print('Y {}', jnp.any(jnp.isnan(state.ltemp)))
         return state, layermelt, mass_to_route
         
     def percolation(self, state, fluxes):
@@ -547,7 +564,8 @@ class MassBalanceDriver:
         scan_ice_mask = jnp.transpose(properties['ice_mask'])
 
         # calculate porosity
-        vol_f_ice = scan_lice / (scan_lheight * DENSITY_ICE)
+        safe_lheight = jnp.where(scan_lheight > 0, scan_lheight, 1.0)
+        vol_f_ice = scan_lice / (safe_lheight * DENSITY_ICE)
         porosity = jnp.maximum(0.0, 1.0 - vol_f_ice)
 
         # calculate irreducible water content
@@ -1187,17 +1205,18 @@ class MassBalanceDriver:
         ice_mask = state.ice_mask
             
         # grab layer masses everywhere
-        m_total = state.lice
-        m_refreeze = state.ldrefreeze       # differential refreeze: added this step
-        m_snow = state.lice - m_refreeze   # "old snow" (includes old refreeze)
+        lice = jnp.where(state.lice > 0, state.lice, 1.0)
+        ldrefreeze = state.ldrefreeze       # differential refreeze: added this step
+        lsnow = state.lice - ldrefreeze   # "old snow" (includes old refreeze)
         
         # define mass fractions of old snow and refreeze
-        f_snow = m_snow / m_total
-        f_rfz = m_refreeze / m_total
+        f_snow = lsnow / lice
+        f_rfz = ldrefreeze / lice
         
         # calculate liquid water fraction everywhere
-        mw_total = state.lwater + state.lice
-        f_liq = state.lwater / mw_total    # fraction of total mass inc. liquid water
+        lmass = state.lwater + state.lice
+        safe_lmass = jnp.where(lmass > 0, lmass, 1.0)
+        f_liq = state.lwater / safe_lmass    # fraction of total mass inc. liquid water
 
         # grab arrays needed for dry grain metamorphosis lookup
         dz = state.lheight
@@ -1207,6 +1226,17 @@ class MassBalanceDriver:
         
         # calculate surface temperature in K
         surftempK = surftemp + CTOK
+
+        # sum layer heights safely to avoid div by 0
+        dz_top_sum = dz[:, 0] + dz[:, 1]
+        safe_dz_top_sum = jnp.where(dz_top_sum > 0.0, dz_top_sum, 1.0)
+        safe_dz_top = jnp.where(dz[:, 0] > 0.0, dz[:, 0], 1.0)
+
+        dz_upper_sum = dz[:, :-2] + dz[:, 1:-1]
+        dz_lower_sum = dz[:, 1:-1] + dz[:, 2:]
+        safe_upper_sum = jnp.where(dz_upper_sum > 0.0, dz_upper_sum, 1.0)
+        safe_lower_sum = jnp.where(dz_lower_sum > 0.0, dz_lower_sum, 1.0)
+        safe_dz_interior = jnp.where(dz[:, 1:-1] > 0.0, dz[:, 1:-1], 1.0)
 
         # DRY METAMORPHISM
         if args.constant_drdry:
@@ -1222,15 +1252,15 @@ class MassBalanceDriver:
 
             # top layer gradient utilizes surface temperature
             top_layer_val = (surftempK - (T[:, 0] * dz[:, 0] + T[:, 1] * dz[:, 1]) \
-                            / (dz[:, 0] + dz[:, 1])) / dz[:, 0]
+                             / safe_dz_top_sum) / safe_dz_top
             dTdz = dTdz.at[:, 0].set(top_layer_val)
 
             # interior layers using vectorized slice formulation
-            t_upper = (T[:, :-2] * dz[:, :-2] + T[:, 1:-1] * dz[:, 1:-1]) \
-                            / (dz[:, :-2] + dz[:, 1:-1])
-            t_lower = (T[:, 1:-1] * dz[:, 1:-1] + T[:, 2:] * dz[:, 2:]) \
-                            / (dz[:, 1:-1] + dz[:, 2:])
-            interior_vals = (t_upper - t_lower) / dz[:, 1:-1]
+            t_upper = (T[:, :-2] * dz[:, :-2] + T[:, 1:-1] * dz[:, 1:-1]) / safe_upper_sum
+            t_lower = (T[:, 1:-1] * dz[:, 1:-1] + T[:, 2:] * dz[:, 2:]) / safe_lower_sum
+            interior_vals = (t_upper - t_lower) / safe_dz_interior
+            # set interior values to 0.0 if there is no layer mass
+            interior_vals = jnp.where(dz[:, 1:-1] > 0.0, interior_vals, 0.0)
             dTdz = dTdz.at[:, 1:-1].set(interior_vals)
 
             # bottom layer gets assigned the same dTdz as the layer above
@@ -1258,9 +1288,10 @@ class MassBalanceDriver:
                 tau + 1e-6, # avoid 0 denominator
                 tau + grainsize - FRESH_GRAINSIZE
             )
+            safe_base = jnp.where(denominator > 0, tau / denominator, 1e-6)
             
             # determine actual dry grain growth rate from parameters
-            drdrydt = dr0 * jnp.power(tau / denominator, 1.0 / kap) / dt
+            drdrydt = dr0 * jnp.power(safe_base, 1.0 / kap) / dt
             drdry = drdrydt * dt
 
         # WET METAMORPHISM

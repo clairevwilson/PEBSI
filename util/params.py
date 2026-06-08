@@ -163,7 +163,8 @@ initial_ice_depth = 200                 # default amount of initial ice [m]
 store_vars = ['MB','EB','layers']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
 
 # METHODS
-method_distribute = 'scatter'          # 'weighted', 'constant'
+method_distribute = 'scatter'    \
+                  # 'weighted', 'constant'
 method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
 method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'

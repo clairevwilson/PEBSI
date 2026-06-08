@@ -70,7 +70,7 @@ def get_albedo(state, args, solar_zenith):
         jnp.where(state.ltype[:, 0] == 1,
                   args.albedo_firn, args.albedo_ice)
     )
-    return albedo
+    return final_albedo
 
 
 # Make SNICAR find-able
