@@ -117,7 +117,6 @@ class Config():
         # configure last items
         self.args = args
         self.configure_lookups()
-        self.args.ice_spectrum_fn = self.configure_SNICAR()
         self.args.start_year = pd.to_datetime(self.args.start_date).year
 
         # FINALLY: convert args into a JAX-compatible NamedTuple (immutable)
@@ -148,57 +147,14 @@ class Config():
         args.interp_dr0 = RegularGridInterpolator(
             grain_size_dims, ds.dr0mat.values, method='linear')
 
-        # load ML algorithm for albedo
-        # if args.method_snicar == 'emulator':
-        #     import joblib
-        #     args.SNICAR_emulator = joblib.load(args.emulator_fn)
-
         # define wind reference height [m]
         args.wind_ref_height = 10 if args.climate_source in ['ERA5-hourly'] else 2
 
         self.args = args
         return
-
-    def configure_SNICAR(self):
-        args = self.args 
-
-        # 1: INPUT FILE
-        # get filename of input file
-        if args.method_snicar == 'bioSNICAR':
-            base_fn = args.biosnicar_input_fn
-        elif args.method_snicar == 'SNICARfx':
-            base_fn = args.snicarfx_input_fn
-        else:
-            # nothing to initialize for emulator method
-            return
-
-        # open the input and copy it to memory
-        with open(base_fn, 'r') as f:
-            input = yaml.safe_load(f)
-
-        # store the SNICAR input dict to args
-        args.snicar_inputs = input
-
-        # 2: COPY BACKGROUND ICE SPECTRUM FILE
-        df_clean_ice = pd.read_csv(args.clean_ice_fn,names=[''])
-
-        # find albedo of the base spectrum from the filename
-        albedo_string = args.clean_ice_fn.split('bba')[-1].split('.')[0]
-        bba = int(albedo_string) / (10 ** len(albedo_string))
-
-        # scale the new spectrum by the ice albedo
-        ice_point_spectrum = df_clean_ice * args.albedo_ice / bba
-
-        # create new name for ice spectrum
-        clean_ice_fn = args.clean_ice_fn.split('/')[-1]
-        ice_spectrum_fn = args.clean_ice_fn.replace(clean_ice_fn,f'ice_spectrum_{args.task_id}{args.site}.csv')
-
-        # store new spectrum (will be deleted after run completion)
-        df_spectrum = pd.DataFrame(ice_point_spectrum)
-        df_spectrum.to_csv(ice_spectrum_fn, index=False, header=False)
-        return ice_spectrum_fn
     
     def convert_to_jax_safe(self, args):
+        # 1. Convert static arguments to a frozen NamedTuple
         # sort args as a dictionary
         raw_config_dict = vars(args)
 
@@ -228,11 +184,24 @@ class Config():
                 return obj
         
         # deep freeze every item inside the dictionary
-        frozen_config_dict = {k: freeze_object(v) for k, v in raw_config_dict.items()}
+        frozen_config_dict = {
+            k: freeze_object(v)
+            for k, v in raw_config_dict.items()
+            if k not in raw_config_dict['dynamic_parameters']
+        }
         
-        # create new dynamic named tuple
-        JaxSafeConfig = namedtuple('JaxSafeConfig', frozen_config_dict.keys())
+        # create new namedtuple for static arguments
+        StaticArgs = namedtuple('StaticArgs', frozen_config_dict.keys())
+        self.args = StaticArgs(**frozen_config_dict)
 
-        # instantiate it with the SimpleNamespace args
-        self.args = JaxSafeConfig(**frozen_config_dict)
+        # 2. Convert dynamic arguments into arrays
+        dynamic_args = {
+            k: np.atleast_1d(np.array(v))
+            for k, v in raw_config_dict.items()
+            if k in raw_config_dict['dynamic_parameters']
+        }
+
+        DynamicArgs = namedtuple('DynamicArgs', dynamic_args.keys())
+        self.dynamic_args = DynamicArgs(**dynamic_args)
+
         return

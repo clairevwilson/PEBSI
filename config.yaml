@@ -18,3 +18,5 @@ rgi_ids: ['01.00570'] # , '01.09162']
 # shading_fp: '/trace/group/rounce/cvwilson/shading/'
 method_snicar: 'emulator'
 method_distribute: 'none' # 'scatter' # 
+kp: [2.0588, 2.7100, 3.190]
+wind_factor: [1.5, 2, 2]

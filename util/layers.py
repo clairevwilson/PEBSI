@@ -25,7 +25,7 @@ class Layers():
 
     All mass terms are stored in kg m-2.
     """
-    def __init__(self, args, climate, terrain):
+    def __init__(self, args, prms, climate, terrain):
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
@@ -39,15 +39,20 @@ class Layers():
         # INPUTS
         self.climate = climate 
         self.args = args
+        self.prms = prms
         self.N_POINTS = N_POINTS = terrain.N_POINTS
         self.N_LAYERS = N_LAYERS = args.max_nlayers
         self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
-        self.dz_snow = np.full(N_POINTS, args.initial_snow_depth)
-        # *** rough approximation of where there should be firn
-        self.dz_firn = np.zeros(N_POINTS)
-        self.dz_firn[terrain.elev_n > terrain.median_elev_n] = args.initial_firn_depth
+        self.dz_snow = np.full(N_POINTS, prms.initial_snow_depth)
+        if prms.initial_firn_depth.shape == (1, ):
+            # if initial firn depth is a scalar, make it 0 below median glacier elevation
+            # (rough approximation of where there should be firn)
+            self.dz_firn = np.zeros(N_POINTS)
+            self.dz_firn[terrain.elev_n > terrain.median_elev_n] = prms.initial_firn_depth
+        else:
+            self.dz_firn = prms.initial_firn_depth
 
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
@@ -61,22 +66,6 @@ class Layers():
         Initializes layer depths based on an exponential
         growth function with prescribed rate of growth 
         and initial layer height. 
-
-        Parameters
-        ==========
-        snow_height : float
-        firn_height : float
-        ice_height : float
-            Initial depth of snow, firn, and ice [m]
-
-        Returns
-        -------
-        lheight : np.ndarray
-            Height of the layer [m]
-        ldepth : np.ndarray
-            Depth of the middle of the layer [m]
-        ltype : np.ndarray
-            Layers types (snow, firn, ice)
         """
         args = self.args
         N_POINTS = self.N_POINTS 

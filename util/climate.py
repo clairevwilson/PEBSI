@@ -30,7 +30,7 @@ class Climate():
     If use_aws = False, only reanalysis data will 
     be used.
     """
-    def __init__(self, args, terrain):
+    def __init__(self, static_args, dynamic_args, terrain):
         """
         Initializes glacier information and creates
         the dataset where climate data will be stored.
@@ -43,7 +43,8 @@ class Climate():
         self.start_time = time.time()
 
         # load args and simulation information
-        self.args = args
+        self.args = static_args 
+        self.prms = dynamic_args
         self.terrain = terrain
         self.get_spatial_temporal_info()
 
@@ -300,6 +301,9 @@ class Climate():
         # apply climatic perturbations
         self.apply_perturbations()
 
+        # apply parameters
+        self.apply_parameters()
+
         # check all variables are full
         failed = []
         for var in self.all_vars + self.optional_vars:
@@ -333,6 +337,15 @@ class Climate():
         self.temp += self.args.temp_perturb
         self.tp *= self.args.tp_perturb
         return
+    
+    def apply_parameters(self):
+        """
+        Applies climate parameters.
+        """
+        self.tp *= self.prms.kp[:, None]
+        self.wind *= self.prms.wind_factor[:, None]
+        self.dustdry *= self.prms.dust_factor[:, None]
+        return
 
     def adjust_to_elevation(self):
         """
@@ -358,8 +371,8 @@ class Climate():
         # LONGWAVE: correct with elevation-dependent emissivity 
         if self.args.temp_perturb > 0:
             # account for perturbed air temperature
-            LAPSE_RATE = self.args.lapse_rate / 1000
-            elev_change = LAPSE_RATE*(self.terrain.gcm_elev_n - self.temp_elev)
+            lapse_rate = self.prms.lapse_rate / 1000
+            elev_change = lapse_rate*(self.terrain.gcm_elev_n - self.temp_elev)
             temp_LW_elev = self.original_temp - self.args.temp_perturb + elev_change
             self.LWin_to_elevation(temp_LW_elev)
         else:
@@ -534,7 +547,7 @@ class Climate():
         based on a linear lapse rate
         """
         # CONSTANTS
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        lapse_rate = self.prms.lapse_rate / 1000 # in K m-1
 
         # get elevation of the original temperature data
         if 'temp' in self.args.bias_vars and 'temp' not in self.measured_vars:
@@ -548,7 +561,7 @@ class Climate():
         point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply lapse rate
-        new_temp = self.original_temp + LAPSE_RATE*(point_elev - self.temp_elev)
+        new_temp = self.original_temp + lapse_rate*(point_elev - self.temp_elev)
 
         # update temperature in the cds
         self.temp = new_temp
@@ -560,17 +573,14 @@ class Climate():
         based on a % gradient
         """
         # CONSTANTS
-        if self.args.glac_name in self.args.precgrads:
-            PREC_GRAD = self.args.precgrads[self.args.glac_name]
-        else:
-            PREC_GRAD = self.args.precgrad
+        prec_grad = self.prms.precgrad
 
         # format tp and point elev as (, n) arrays
         tp_elev = self.terrain.median_elev_n[:, np.newaxis]
         point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply precipitation gradient
-        new_tp = self.original_tp*(1+PREC_GRAD*(point_elev-tp_elev))
+        new_tp = self.original_tp*(1+prec_grad*(point_elev-tp_elev))
 
         # update precip in the cds
         self.tp = new_tp
@@ -581,7 +591,7 @@ class Climate():
         Corrects surface pressure according to barometric law
         """
         # CONSTANTS
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        lapse_rate = self.prms.lapse_rate / 1000 # in K m-1
         GRAVITY = self.args.gravity
         R_GAS = self.args.R_gas
         MM_AIR = self.args.molarmass_air
@@ -596,10 +606,10 @@ class Climate():
 
         # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.temp.copy()
-        temp_sp_elev = new_temp + LAPSE_RATE*(sp_elev - point_elev) + CTOK
+        temp_sp_elev = new_temp + lapse_rate*(sp_elev - point_elev) + CTOK
 
         # calculate new surface pressure with barometric law
-        exponent = -GRAVITY*MM_AIR/(R_GAS*LAPSE_RATE)
+        exponent = -GRAVITY*MM_AIR/(R_GAS*lapse_rate)
         ratio = ((new_temp + CTOK) / temp_sp_elev) ** (exponent)
         new_sp = self.original_sp * ratio
 
@@ -622,7 +632,7 @@ class Climate():
         """
         # CONSTANTS
         SIGMA_SB = self.args.sigma_SB
-        LAPSE_RATE = self.args.lapse_rate / 1000 # in K m-1
+        lapse_rate = self.prms.lapse_rate / 1000 # in K m-1
         SPH = self.args.seconds_per_hour
         CTOK = self.args.celsius_to_kelvin
 
@@ -633,7 +643,7 @@ class Climate():
         # get elevation of longwave data
         LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + LAPSE_RATE*(LW_elev - self.terrain.elev_n)[:, np.newaxis]
+            temp_LW_elev = temp_site + lapse_rate*(LW_elev - self.terrain.elev_n)[:, np.newaxis]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK
@@ -689,11 +699,11 @@ class Climate():
         temp = self.temp 
         tp = self.tp
 
-        T_LOW = self.args.snow_threshold_low
-        T_HIGH = self.args.snow_threshold_high
+        temp_low = self.args.snow_threshold_low
+        temp_high = self.args.snow_threshold_high
 
         rain_scale = np.linspace(1, 0, 20)
-        temp_scale = np.linspace(T_LOW, T_HIGH, 20)
+        temp_scale = np.linspace(temp_low, temp_high, 20)
         snow_fraction = np.interp(temp, temp_scale, rain_scale)
         hourly_snow = tp * snow_fraction
 

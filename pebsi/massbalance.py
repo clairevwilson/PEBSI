@@ -23,12 +23,12 @@ import util.layers as layers
 import pebsi.surface as albedo
 
 class MassBalanceDriver:
-    def __init__(self, params, static_args):
+    def __init__(self, static_args, dynamic_args):
         """
         Stores parameters and physical constants
         for accessing within mass balance functions.
         """
-        self.prms = params 
+        self.prms = dynamic_args 
         self.args = static_args
 
     # -------------------- WORKER FUNCTIONS --------------------
@@ -393,12 +393,12 @@ class MassBalanceDriver:
 
         # === albedo ===
         new_albedo, new_annual_min_albedo = albedo.get_albedo(
-            state, self.args, forcings
+            state, self.prms, self.args, forcings
         )
 
         # === surrounding albedo ===
         ALBEDO_GROUND = self.args.albedo_ground
-        ALBEDO_SNOW = self.args.albedo_fresh_snow
+        ALBEDO_SNOW = self.prms.albedo_fresh_snow
 
         # update max snow if snow mass is greater than running max
         current_snow = jnp.sum(state.lice * state.snow_mask, axis=1)
@@ -676,11 +676,6 @@ class MassBalanceDriver:
         args = self.args
         properties = state._asdict()
         layers_idx = jnp.arange(state.lice.shape[1])[None, :]
-
-        # CONSTANTS
-        PARTITION_COEF_BC = args.ksp_BC
-        PARTITION_COEF_OC = args.ksp_OC
-        PARTITION_COEF_DUST = args.ksp_dust
         dt = args.dt
 
         # transpose arrays for layer cascade
@@ -720,9 +715,9 @@ class MassBalanceDriver:
             cdust = jnp.where(mass > 0.0, mdust / mass, 0.0)
 
             # compute partition leaving the layer
-            BCout_pot = PARTITION_COEF_BC * q_out * cBC 
-            OCout_pot = PARTITION_COEF_OC * q_out * cOC 
-            dustout_pot = PARTITION_COEF_DUST * q_out * cdust 
+            BCout_pot = self.prms.ksp_BC * q_out * cBC 
+            OCout_pot = self.prms.ksp_OC * q_out * cOC 
+            dustout_pot = self.prms.ksp_dust * q_out * cdust 
 
             # cap mass at amount previously in the layer
             BCout = jnp.minimum(BCout_pot, mBC)
@@ -942,7 +937,7 @@ class MassBalanceDriver:
         DENSITY_ICE = args.density_ice
         DENSITY_WATER = args.density_water
         TEMP_TEMP = args.temp_temp
-        TEMP_DEPTH = args.temp_depth
+        temperate_depth = self.prms.temp_depth
         K_ICE = args.k_ice
         K_WATER = args.k_water
         K_AIR = args.k_air
@@ -961,7 +956,7 @@ class MassBalanceDriver:
         # determine temperate depth relative to ice surface
         snow_firn_heights = jnp.where(ice_mask, 0.0, lheight)
         ice_surf_depth = jnp.sum(snow_firn_heights, axis=1)
-        temperate_depth = TEMP_DEPTH + ice_surf_depth
+        temperate_depth = temperate_depth + ice_surf_depth
         is_temperate = ldepth >= temperate_depth[:, None]
 
         safe_lheight = jnp.where(lheight > 0, lheight, 1)
@@ -1187,23 +1182,18 @@ class MassBalanceDriver:
         layers
             Class object from pebsi.layers
         """
-        # CONSTANTS
-        ROUGHNESS_FRESH_SNOW = self.args.roughness_fresh_snow
-        ROUGHNESS_AGED_SNOW = self.args.roughness_aged_snow
-        ROUGHNESS_FIRN = self.args.roughness_firn
-        ROUGHNESS_ICE = self.args.roughness_ice
-        AGING_RATE = self.args.roughness_aging_rate
+        prms = self.prms 
 
         # determine roughness from surface type
         surface_type = state.ltype[:, 0]
         roughness = jnp.minimum(
-            ROUGHNESS_FRESH_SNOW + AGING_RATE * state.days_since_snowfall, 
-            ROUGHNESS_AGED_SNOW
+            prms.roughness_fresh_snow + prms.roughness_aging_rate * state.days_since_snowfall, 
+            prms.roughness_aged_snow
         )
 
         # overwrite firn and ice values
-        roughness = jnp.where(surface_type == 1, ROUGHNESS_FIRN, roughness)
-        roughness = jnp.where(surface_type == 2, ROUGHNESS_ICE, roughness)
+        roughness = jnp.where(surface_type == 1, prms.roughness_firn, roughness)
+        roughness = jnp.where(surface_type == 2, prms.roughness_ice, roughness)
 
         # return roughness in m
         return roughness / 1000
@@ -1245,8 +1235,10 @@ class MassBalanceDriver:
             
         # grab layer masses everywhere
         lice = jnp.where(state.lice > 0, state.lice, 1.0)
-        ldrefreeze = state.ldrefreeze       # differential refreeze: added this step
-        lsnow = state.lice - ldrefreeze   # "old snow" (includes old refreeze)
+        # differential refreeze: added this step
+        ldrefreeze = state.ldrefreeze
+        # "old snow" - non-refreeze and refreeze already accounted for
+        lsnow = state.lice - ldrefreeze
         
         # define mass fractions of old snow and refreeze
         f_snow = lsnow / lice

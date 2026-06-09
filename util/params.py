@@ -16,9 +16,13 @@ Anything with a commented $ can also be flagged from
 the command line. This will overwrite if the same
 variable is present in config.yaml.
 
+Anything with a commented * (also present in the 
+variable dynamic_variables) can either be input 
+as a scalar or as an array of length (N_POINTS)
+to make it spatially variable.
+
 @author: clairevwilson
 """
-# Built-in libraries
 import socket
 
 # ====================================================================================================================
@@ -33,7 +37,7 @@ use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
-testing = False         # FOR TESTING PURPOSES DURING DEVELOPMENT
+testing = False         #$ -testing                 Test a single function?
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
@@ -83,12 +87,7 @@ metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata f
 glac_fp = 'data/by_glacier/{g}/'                            # Generalized glacier filepath
 site_fn = 'site_constants.csv'                              # Name for site constants file
 shading_fp = 'data/shading/'                                # Generalized shading filepath
-
-# SNICAR
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
-snicarfx_input_fn = 'snicar-fx/src/snicarfx/inputs.yaml'    # SNICAR input filepath (SNICARfx)
-biosnicar_input_fn = 'biosnicar-py/biosnicar/inputs.yaml'   # SNICAR input filepath (bioSNICAR)
-clean_ice_fn = 'biosnicar-py/Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv' # Ice spectrum filepath
 
 # CLIMATE
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
@@ -98,20 +97,12 @@ ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition 
 bias_fp = 'data/bias_adjustment/'                           # Bias adjustment filepath
 bias_fn = '{m}_{g}_{v}.csv'                                 # Bias adjustment file name format
 
-# OUTPUT
-albedo_out_fn = '../Output/EB/albedo_spectrum_{s}.csv'      # Output filepath for full albedo spectrum
-cds_output_fn = 'default'                                   # 'default' or filename to save climate dataset ++
-# ++ these filenames are for repeatability. The model can produce a dataset to cds_output_fn, and then can be
-#    executed using that cds. If cds_output_fn is not stated, it will be saved to cds_input_fn.
-
 # ====================================================================================================================
 #                                            CLIMATE AND TIME INPUTS
 # ====================================================================================================================
 # TEMPORAL
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
-dates_from_data = False                     #$ -dfd, --dates_from_data  Overwrite simulation time with dates from the input AWS data?
-input_cds = False                           #$ -cds, --input_cds        Use a previously prepared cds for climate data (if True, see ++ above)
 
 # SPATIAL 
 bin_step = 100                              # Elevation between bins
@@ -123,15 +114,8 @@ station_elevation = {                       # Elevation of the stations used in 
 }
 aws_elev = None                             # Same as station_elevation but can be overwritten in config
 
-# SITE: If running a new site, the user must specify these in config.yaml or command line
-lat = None                                  #$ -lat         Site latitude
-lon = None                                  #$ -lon         Site longitude
-elevation = None                            #$ -elevation   Site elevation
-timezone = None                             #$ -timezone    Glacier timezone
-glac_name = None                            #$ -glac_name   Glacier name
-
 # CLIMATE DATA
-climate_source = 'MERRA2'                   # 'MERRA2' ('ERA5-hourly' ***** BROKEN)
+climate_source = 'MERRA2'                   # 'MERRA2'
 deposition_data = None                      # None or 'UKESM'
 ukesm_vn = (                                # Name of var in UKESM data
         'tendency_of_atmosphere_'
@@ -156,15 +140,14 @@ initialize_LAPs = 'interpolate'         # 'interpolate' or 'clean'
 initialize_water = 'dry'                # 'dry' or 'saturated'
 surftemp_guess =  -10                   # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1                  # default amount of initial snow [m]
-initial_firn_depth = 10                 # default amount of initial firn [m] * only for sites identified as accumulation area
+initial_firn_depth = 10                 # default amount of initial firn [m] (only for sites identified as accumulation area)
 initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
-store_vars = ['MB','EB','layers']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
+store_vars = ['MB','EB','layers']       # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
 
 # METHODS
-method_distribute = 'scatter'    \
-                  # 'weighted', 'constant'
+method_distribute = 'scatter'           # 'scatter', 'none'
 method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
 method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
 method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
@@ -187,17 +170,12 @@ constant_freshgrainsize = False         # False or grain size [um] (Kuipers Munn
 constant_drdry = False                  # False or dry metamorphism grain size growth rate [um s-1] (1e-4 seems reasonable)
 constant_irrwater = True                # True or False to estimate from density (Sr_light and Sr_dense)
 
-# ALBEDO SWITCHES
-switch_snow = 1             # 0 to turn off fresh snow feedback; 1 to include it
-switch_melt = 2             # 0 to turn off melt feedback; 1 for simple degradation; 2 for grain size evolution
-switch_LAPs = 1             # 0 to turn off LAPs; 1 to turn on
-
 # ====================================================================================================================
 #                                             INTERNAL CONFIGURATION
 # ====================================================================================================================
 # TIMESTEP
 dt = 3600                   # Model timestep [s]
-daily_dt = 3600*24          # Seconds in a day [s]
+daily_dt = 86400            # Seconds in a day [s]
 n_heat_steps = 5            # Number of times to run heat equation per dt [-]
 task_id = -1                #$ -task_id     Unique identifier for parallel simulations
 
@@ -214,18 +192,32 @@ all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS
 # ====================================================================================================================
+# Anything listed in dynamic_parameters can be a list of len (N_POINTS). Parameters can be added to this as needed, 
+# but added parameters will need to be updated globally to reflect existing in dynamic_args instead of static_args.
+dynamic_parameters = ['kp','wind_factor','precgrad',            
+                      'dust_factor','lapse_rate',
+                      'albedo_ice','albedo_firn','albedo_fresh_snow',
+                      'temp_depth','roughness_aging_rate',
+                      'roughness_fresh_snow', 'roughness_aged_snow',
+                      'roughness_firn','roughness_ice',
+                      'ksp_BC', 'ksp_OC', 'ksp_dust',
+                      'initial_snow_depth', 'initial_firn_depth']
+
 # <<<<<< Climate downscaling >>>>>>
-wind_factor = 1             # Wind factor [-]
-kp = 2.25                   # Precipitation factor [-]
-dust_factor = 1             # Dust factor [-]
-snow_free_doy = 100         # Julian day of year after which to apply dust_factor [-]
-precgrads = {} # 'gulkana':0.000130, 'wolverine': 0.001462, 'kahiltna': 0.000669}
-precgrad = 0                # Precipitation gradient with elevation [% m-1] 
-lapse_rate = -6.5           # Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
-albedo_ice = 0.47           # Ice albedo [-] 
-albedo_firn = 0.4           # Albedo of firn [-]
-snow_threshold_low = 0.2    # Lower threshold for linear snow-rain scaling [C]
-snow_threshold_high = 2.2   # Upper threshold for linear snow-rain scaling [C]
+wind_factor = 1             #* Wind factor [-]
+kp = 2.25                   #* Precipitation factor [-]
+dust_factor = 1             #* Dust factor [-]
+snow_free_doy = 100         #* Julian day of year after which to apply dust_factor [-]
+precgrad = 0                #* Precipitation gradient with elevation [% m-1] 
+lapse_rate = -6.5           #* Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
+albedo_fresh_snow = 0.85    #* Albedo of fresh snow [-]
+albedo_ice = 0.47           #* Albedo of ice [-] 
+albedo_firn = 0.4           #* Albedo of firn [-]
+snow_threshold_low = 0.2    #* Lower threshold for linear snow-rain scaling [C]
+snow_threshold_high = 2.2   #* Upper threshold for linear snow-rain scaling [C]
+# <<<<<< Boundary conditions >>>>>>
+temp_temp = 0               #* Temperature of temperate ice [C]
+temp_depth = 10             #* Depth of temperate ice [m]
 # <<<<<< Numerical >>>>>>
 dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
 dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
@@ -238,9 +230,6 @@ mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 max_wet_metamorph = 200     # Maximum possible wet grain metamorphosis in a timestep for a single layer [um]
-# <<<<<< Boundary conditions >>>>>>
-temp_temp = 0               # Temperature of temperate ice [C]
-temp_depth = 10             # Depth of temperate ice [m]
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>
 density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]
@@ -285,30 +274,28 @@ Boone_c2 = 0.042            # Densification c2 [K-1]
 Boone_c3 = 0.046            # Densification c3 [m3 kg-1]
 Boone_c4 = 0.081            # Densification c4 [K-1]
 Boone_c5 = 0.016            # Densification parameter [m3 kg-1]
-roughness_fresh_snow = 0.24 # Surface roughness length for fresh snow [mm] (Moelg et al. 2012, TC)
-roughness_aged_snow = 10    # Surface roughness length for aged snow [mm]
-roughness_firn = 4          # Surface roughness length for firn [mm] (Moelg et al. 2012, TC)
-roughness_ice = 20          # Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
-roughness_aging_rate = 0.5  # Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
+roughness_fresh_snow = 0.24 #* Surface roughness length for fresh snow [mm] (Moelg et al. 2012, TC)
+roughness_aged_snow = 10    #* Surface roughness length for aged snow [mm]
+roughness_firn = 4          #* Surface roughness length for firn [mm] (Moelg et al. 2012, TC)
+roughness_ice = 20          #* Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
+roughness_aging_rate = 0.5  #* Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
 wet_grain_C = 4.22e-13      # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
 Sr = 0.05                   # Fraction of irreducible water content for percolation [-]
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
 Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
-albedo_ground = 0.2         # Albedo of ground [-]
+albedo_ground = 0.2         #* Albedo of surrounding bedrock [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
 diffuse_cloud_limit = 0.6   # Threshold to consider cloudy vs clear-sky in SNICAR [-]
 include_LWC_SNICAR = False  # Include liquid water in SNICAR? (slush)
-grainshape_SNICAR = 0       # 0: sphere, 1: spheroid, 2: hexagonal plate, 3: koch snowflake, 4: hexagonal prisms
 # <<<<<< Constants for switch runs >>>>>
 albedo_deg_rate = 15        # Rate of exponential decay of albedo
 average_grainsize = 500     # Grainsize to treat as constant if switch_melt is 0 [um]
-albedo_fresh_snow = 0.85    # Albedo of fresh snow for exponential method [-]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
-ksp_BC = 1                  # Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
-ksp_OC = 1                  # Meltwater scavenging efficiency of OC [-] (0.1-0.2 from CLM5)
-ksp_dust = 0.01             # Meltwater scavenging efficiency of dust [-] (0.015 from CLM5)
+ksp_BC = 1                  #* Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
+ksp_OC = 1                  #* Meltwater scavenging efficiency of OC [-] (0.1-0.2 from CLM5)
+ksp_dust = 0.01             #* Meltwater scavenging efficiency of dust [-] (0.015 from CLM5)
 BC_freshsnow = 0            # Concentration of BC in fresh snow for initialization [kg m-3]
 OC_freshsnow = 0            # Concentration of OC in fresh snow for initialization [kg m-3]
 dust_freshsnow = 0          # Concentration of dust in fresh snow for initilization [kg m-3]

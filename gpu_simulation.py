@@ -98,6 +98,7 @@ class PEBSI():
         # parse args from config file, command line and default params
         self.config = Config(args)
         self.args = self.config.args 
+        self.prms = self.config.dynamic_args
         return
     
     def prepare_inputs(self):
@@ -107,6 +108,8 @@ class PEBSI():
         temporal (air temperature, precipitation, etc.) 
         inputs to the model.
         """
+        static_args = self.config.args 
+        dynamic_args = self.config.dynamic_args
 
         # =========== SPATIAL DATA HANDLING ===========
         terrain = Terrain(self.config.args)
@@ -118,7 +121,7 @@ class PEBSI():
         terrain.validate_terrain_data()
 
         # ====== TEMPORAL (CLIMATE) DATA HANDLING ======
-        climate = Climate(self.config.args, terrain)
+        climate = Climate(static_args, dynamic_args, terrain)
         climate.get_data()
 
         # validate the climate inputs
@@ -144,7 +147,7 @@ class PEBSI():
     
     def prepare_initial_state(self):
         # ================== LAYERS ==================
-        layers = Layers(self.args, self.climate, self.terrain)
+        layers = Layers(self.args, self.prms, self.climate, self.terrain)
 
         # initialize layer properties
         layers.initialize_layers()
@@ -205,10 +208,10 @@ class PEBSI():
         glacier_state = GlacierState(
 
             # surface properties
-            albedo=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float64),
-            albedo_surr=jnp.full((N_POINTS,), self.args.albedo_fresh_snow, dtype=jnp.float64),
+            albedo=jnp.full((N_POINTS,), self.prms.albedo_fresh_snow, dtype=jnp.float64),
+            albedo_surr=jnp.full((N_POINTS,), self.prms.albedo_fresh_snow, dtype=jnp.float64),
             surftemp=jnp.full((N_POINTS,), self.args.surftemp_guess, dtype=jnp.float64),
-            roughness=jnp.full((N_POINTS,), self.args.roughness_fresh_snow, dtype=jnp.float64),
+            roughness=jnp.full((N_POINTS,), self.prms.roughness_fresh_snow, dtype=jnp.float64),
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 
             # these may not need to be stored to state --- they will be passed to func
@@ -273,12 +276,13 @@ class PEBSI():
 
         # ======== INITIALIZE THE OUTPUTS ========
         dates = self.climate.dates
-        model_output = Output(dates, self.args, self.terrain)
+        model_output = Output(dates, self.args, self.prms, self.terrain)
 
         # ========== RUN ENERGY BALANCE ==========
         self.start_prints()
         final_state, records = main(
-            initial_state, forcings, point_attrs, self.args
+            initial_state, forcings, point_attrs, 
+            self.args, self.prms
         )
 
         # ============== END TIMER ===============

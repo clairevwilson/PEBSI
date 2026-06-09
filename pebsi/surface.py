@@ -37,7 +37,7 @@ model = eqx.tree_deserialise_leaves(
 norm  = np.load('snicar_norm.npz')
 mu, sigma = jnp.array(norm['mu']), jnp.array(norm['sigma'])
 
-def get_albedo(state, args, forcings):
+def get_albedo(state, prms, args, forcings):
     lheight = state.lheight[:, :4]
     ldensity = state.ldensity[:, :4]
     lgrainsize = state.lgrainsize[:, :4]
@@ -77,13 +77,13 @@ def get_albedo(state, args, forcings):
     albedo_firn = new_annual_min_albedo[jnp.arange(state.lage.shape[0]), exposed_idx]
     # make sure we aren't filling with an initialized 1
     albedo_firn = jnp.where(
-        albedo_firn < 1, albedo_firn, args.albedo_firn
+        albedo_firn < 1, albedo_firn, prms.albedo_firn
     )
 
     final_albedo = jnp.where(
         state.ltype[:, 0] == 0,
         albedo,
         jnp.where(state.ltype[:, 0] == 1,
-                  albedo_firn, args.albedo_ice)
+                  albedo_firn, prms.albedo_ice)
     )
     return final_albedo, new_annual_min_albedo

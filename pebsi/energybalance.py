@@ -12,12 +12,12 @@ import jax
 import jax.numpy as jnp
 
 class EnergyBalanceDriver():
-    def __init__(self, params, static_args):
+    def __init__(self, static_args, dynamic_args):
         """
         Stores parameters and physical constants
         for accessing within mass balance functions.
         """
-        self.prms = params 
+        self.prms = dynamic_args 
         self.args = static_args
 
     def solve_energy_balance(self, state, forcings, point_attrs):
@@ -246,10 +246,10 @@ class EnergyBalanceDriver():
         # CONSTANTS
         K_ICE = self.args.k_ice
         TEMP_TEMP = self.args.temp_temp 
-        TEMP_DEPTH = self.args.temp_depth
+        temp_depth = self.prms.temp_depth
         
         # calculate ground flux from surface temperature
-        Qg = -1 * K_ICE * (state.surftemp - TEMP_TEMP) / TEMP_DEPTH
+        Qg = -1 * K_ICE * (state.surftemp - TEMP_TEMP) / temp_depth
         return Qg
     
     def get_turbulent(self, state, forcings, point_attrs):

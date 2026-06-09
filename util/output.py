@@ -17,7 +17,7 @@ class Output():
     simulation and saves it to a netcdf file upon
     run completion.
     """
-    def __init__(self, time, args, terrain):
+    def __init__(self, time, args, prms, terrain):
         """
         Creates netcdf file where the model output 
         will be saved.
@@ -29,6 +29,7 @@ class Output():
         args : command-line args
         """
         self.args = args
+        self.prms = prms
         self.terrain = terrain
 
         # define all the variables to be saved
@@ -71,8 +72,8 @@ class Output():
         N_POINTS = self.n_points = terrain.N_POINTS
         
         # Keep tracking variables
-        initial_height = args.initial_ice_depth + args.initial_firn_depth + args.initial_snow_depth
-        self.last_height = xp.full(N_POINTS, initial_height)
+        initial_height = args.initial_ice_depth + prms.initial_firn_depth + prms.initial_snow_depth
+        self.last_height = initial_height
         
         # create file to store outputs
         zeros = np.zeros([N_TIME, N_LAYERS])
@@ -227,7 +228,7 @@ class Output():
         if 'dh' in self.store:
             total_heights = np.sum(records.layerheight[:, i, :], axis=1)
             initial_height = self.args.initial_ice_depth + \
-                self.args.initial_firn_depth + self.args.initial_snow_depth
+                self.prms.initial_firn_depth[i] + self.prms.initial_snow_depth[i]
 
             # prepend initial height to compute differences accurately
             padded_heights = np.insert(total_heights, 0, initial_height)

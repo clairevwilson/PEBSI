@@ -10,16 +10,21 @@ from pebsi.massbalance import MassBalanceDriver
 import pebsi.surface as surface
 from util.layers import *
 
-@jax.jit(static_argnames=['args'])
-def main(initial_state, all_forcings, point_attrs, args):
+@jax.jit(static_argnames=['static_args'])
+def main(
+    initial_state, 
+    all_forcings, 
+    point_attrs, 
+    static_args, 
+    dynamic_args):
     """
     Core function which executes the time loop
     for all mass balance and energy balance 
     calculations.
     """
     # initiate drivers
-    mb = MassBalanceDriver(None, args)
-    eb = EnergyBalanceDriver(None, args)
+    mb = MassBalanceDriver(static_args, dynamic_args)
+    eb = EnergyBalanceDriver(static_args, dynamic_args)
 
     def fetch_current_mass(state):
         total_mass = jnp.sum(state.lice, axis=1) + \
@@ -150,7 +155,7 @@ def main(initial_state, all_forcings, point_attrs, args):
         for field in mass_fluxes:
             if field in StepOutputs._fields:
                 # store them in m w.e.
-                out[field] = mass_fluxes[field] / args.density_ice
+                out[field] = mass_fluxes[field] / static_args.density_ice
 
         # get all the layer fields
         for field in StepOutputs._fields:
