@@ -22,7 +22,7 @@ class GlacierState(NamedTuple):
 
     # ------------------------------- Trackers -------------------------------
     annual_firn_converted: jnp.ndarray  # True when snow is converted to firn
-    annual_min_albedo: jnp.ndarray      # Minimum albedo reset annually
+    annual_min_albedo: jnp.ndarray      # Minimum albedo of each year for firn
     annual_max_snow: jnp.ndarray        # Maximum mass of snow reset annually
     days_since_snowfall: jnp.ndarray    # Days since last snowfall event
     delayed_snow: jnp.ndarray           # Snow that fell but wasn't yet added

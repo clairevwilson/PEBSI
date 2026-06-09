@@ -162,6 +162,7 @@ class PEBSI():
 
         # get timestamps in Pandas format
         dates = pd.to_datetime(self.climate.dates)
+        N_YEARS = len(np.unique(dates.year))
 
         # ================== CLIMATE ==================
         forcings = ClimateState(
@@ -218,7 +219,7 @@ class PEBSI():
             # trackers
             delayed_snow=jnp.zeros((N_POINTS,), dtype=jnp.float64),
             annual_firn_converted=jnp.zeros((N_POINTS,), dtype=bool),
-            annual_min_albedo=jnp.ones((N_POINTS,), dtype=jnp.float64),
+            annual_min_albedo=jnp.ones((N_POINTS, N_YEARS), dtype=jnp.float64),
             annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float64),
             days_since_snowfall=jnp.zeros((N_POINTS,), dtype=jnp.int32),
             cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float64),

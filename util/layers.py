@@ -369,7 +369,9 @@ def add_top_layer(state, mask, new_layer,):
         Dictionary with new layer properties
     """
     # first need to make room. push the bottom layer mass into the basal reservoir
-    mass_leaving = state.lice[:, state.lice.shape[1] - 1]
+    ice_leaving = state.lice[:, state.lice.shape[1] - 1]
+    water_leaving = state.lwater[:, state.lice.shape[1] - 1]
+    mass_leaving = ice_leaving + water_leaving
     new_reservoir = jnp.where(
         mask, state.basal_reservoir + mass_leaving, state.basal_reservoir
     )
@@ -419,7 +421,13 @@ def add_bottom_layer(state, mask, args):
     # calculate amount of ice at each point
     ice_masses = jnp.where(ice_mask, properties['lice'], 0.0)
     point_ice_mass = jnp.sum(ice_masses, axis=1, keepdims=True)
+
+    # only redistribute mass if there is enough and reservoir is empty
     has_viable_ice = (point_ice_mass > args.min_glacier_depth).squeeze()
+    empty_reservoir = state.basal_reservoir < 1e-3
+    redistribute = mask & has_viable_ice & empty_reservoir
+    use_reservoir = mask & ~empty_reservoir
+    truly_dead = mask & ~has_viable_ice & empty_reservoir
 
     # case 1: redistribute mass across existing ice layers
     DZ_ICE = args.dz_icelayer
@@ -445,12 +453,12 @@ def add_bottom_layer(state, mask, args):
     
     # distribute the lost mass according to those exponential weights
     properties['lice'] = jnp.where(
-        mask[:, None] & has_viable_ice[:, None] & ice_mask,
+        redistribute[:, None] & ice_mask,
         mass_redistributed,
         properties['lice']
     )
     properties['ldensity'] = jnp.where(
-        mask[:, None] & has_viable_ice[:, None] & ice_mask,
+        redistribute[:, None] & ice_mask,
         args.density_ice,
         properties['ldensity']
     )
@@ -459,7 +467,6 @@ def add_bottom_layer(state, mask, args):
     properties['lheight'] = properties['lice'] / properties['ldensity']
     
     # case 2: pull new ice layer from reservoir into bottom
-    pull_from_reservoir_pt = mask & ~has_viable_ice
 
     DENSITY_ICE = args.density_ice 
     TEMP_TEMP = args.temp_temp
@@ -501,26 +508,23 @@ def add_bottom_layer(state, mask, args):
 
         # replace it only at points in mask
         properties[var] = jnp.where(
-            pull_from_reservoir_pt[:, None],
+            use_reservoir[:, None],
             updated_column,
             data
         )
 
     # remove added mass from reservoir
     properties['basal_reservoir'] = jnp.where(
-        pull_from_reservoir_pt,
+        use_reservoir,
         properties['basal_reservoir'] - new_bottom_layer['lice'],
         properties['basal_reservoir']
     )
 
-    # check if any points are dead and fill them up with zeros if so
-    reservoir_has_mass = properties['basal_reservoir'] > 0.0
-    dead_points = (pull_from_reservoir_pt & ~reservoir_has_mass)[:, None]
-    
-    properties['lice'] = jnp.where(dead_points, 0.0, properties['lice'])
-    properties['lwater'] = jnp.where(dead_points, 0.0, properties['lwater'])
-    properties['lheight'] = jnp.where(dead_points, 0.0, properties['lheight'])
-    properties['ltype'] = jnp.where(dead_points, 2, properties['ltype'])
+    # check if any points are dead and fill them up with zeros if so    
+    properties['lice'] = jnp.where(truly_dead[:, None], 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(truly_dead[:, None], 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(truly_dead[:, None], 0.0, properties['lheight'])
+    properties['ltype'] = jnp.where(truly_dead[:, None], 2, properties['ltype'])
 
     # save these properties to state
     state = state._replace(**properties)

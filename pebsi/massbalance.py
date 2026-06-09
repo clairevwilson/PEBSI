@@ -67,33 +67,71 @@ class MassBalanceDriver:
         )
         return state
     
+    def check_explosion(self, state, forcings, location_code, prev_max):
+        current_max = jnp.sum(state.lice, axis=1)[1]
+        jax.lax.cond(
+            (current_max > 1e6) & (prev_max <= 1e6),
+            lambda: jax_print('EXPLOSION at location {} doy {} hr {} lice {}',
+                            location_code, forcings.doy, forcings.hour, state.lice[1]),
+            lambda: None
+        )
+        return current_max
+    
     def run_vertical_processes(self, state, forcings, fluxes):
+        prev = jnp.sum(state.lice, axis=1)[1]
+
         # subsurface heating and melting
-        # jax_print('0 {}', jnp.any(jnp.isnan(state.ldepth)))
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
-        # jax_print('1 {}', jnp.any(jnp.isnan(state.ldepth)))
+        # jax_print('after heating_melting: lice {} lwater {} reservoir {}',
+        #     jnp.sum(state.lice, axis=1),
+        #     jnp.sum(state.lwater, axis=1),
+        #     state.basal_reservoir)
+        prev = self.check_explosion(state, forcings, 1, prev)
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
-        # jax_print('2 {}', jnp.any(jnp.isnan(state.ldepth)))
-
+        prev = self.check_explosion(state, forcings, 2, prev)
+        # jax_print('after percolation : lice {} lwater {} reservoir {} melt runoff {}',
+        #     jnp.sum(state.lice, axis=1),
+        #     jnp.sum(state.lwater, axis=1),
+        #     state.basal_reservoir, melt_runoff)
+        
         # refreezing
         state = self.refreezing(state)
-        # jax_print('3 {}', jnp.any(jnp.isnan(state.ldepth)))
+        prev = self.check_explosion(state, forcings, 3, prev)
+        # jax_print('after refreezing : lice {} lwater {} reservoir {}',
+        #     jnp.sum(state.lice, axis=1),
+        #     jnp.sum(state.lwater, axis=1),
+        #     state.basal_reservoir)
 
         # phase changes (e.g., sublimation, condensation)
         state, condensation_runoff, mass_fluxes = self.phase_changes(
             state, fluxes['latent_heat']
         )
+        prev = self.check_explosion(state, forcings, 4, prev)
+        # jax_print('after phase changes : lice {} lwater {} reservoir {} condensation runoff {}',
+        #     jnp.sum(state.lice, axis=1),
+        #     jnp.sum(state.lwater, axis=1),
+        #     state.basal_reservoir, condensation_runoff)
 
         # check layer sizes for numeric stability before running temp profile
         state, dead_mass = layers.check_layer_sizes(state, self.args)
+        prev = self.check_explosion(state, forcings, 5, prev)
+        # jax_print('after check_sizes: ice {} water {} reservoir {} dead mass {}',
+        #           jnp.sum(state.lice, axis=1),
+        #           jnp.sum(state.lwater,axis=1),
+        #           state.basal_reservoir, dead_mass)
 
         # resolve temperature profile
         state = self.resolve_temperature_profile(state)
+        prev = self.check_explosion(state, forcings, 6, prev)
+        # jax_print('after temperature profile : lice {} lwater {} reservoir {}',
+        #     jnp.sum(state.lice, axis=1),
+        #     jnp.sum(state.lwater, axis=1),
+        #     state.basal_reservoir)
 
         # calculate total runoff and store mass fluxes together
         runoff = melt_runoff + condensation_runoff
@@ -250,9 +288,9 @@ class MassBalanceDriver:
         # pack properties of new layer into a namespace
         new_layer = {
             'ltemp': tempC,
-            'lheight': snowfall / new_density,
+            'lheight': total_snowfall / new_density,
             'ltype': jnp.full_like(tempC, 0),
-            'lice': snowfall,
+            'lice': total_snowfall,
             'ldensity': new_density,
             'lgrainsize': new_grainsize,
             'lBC': new_BC,
@@ -287,6 +325,7 @@ class MassBalanceDriver:
         # handle case 2: delaying this snowfall to the next timestep
         updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
         updated_delayed_snow = jnp.where(action_taken_mask, 0.0, updated_delayed_snow)
+        actual_snowfall = jnp.where(delay_mask, 0.0, total_snowfall)
 
         # update surface snow timestemp
         updated_last_snow = jnp.where(action_taken_mask, time_idx, state.last_snow)
@@ -297,16 +336,10 @@ class MassBalanceDriver:
         )
         
         # update layer depth from new layer heights
-        state = layers.update_layer_props(state, args.density_ice)
-
-        # accumulate mass error
-        change = jnp.sum(state.lice + state.lwater, axis=1) - initial_mass
-        mass_error = change - jnp.sum(snowfall)
-        new_error_total = (state.cum_mass_error + mass_error)
-        state = state._replace(cum_mass_error = new_error_total)        
+        state = layers.update_layer_props(state, args.density_ice)     
 
         # return actual snowfall that was added, including any delayed_snow
-        return snowfall, state
+        return actual_snowfall, state
 
     def add_dry_deposition(self, state, forcings):
         """
@@ -359,7 +392,9 @@ class MassBalanceDriver:
         is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
 
         # === albedo ===
-        new_albedo = albedo.get_albedo(state, self.args, forcings.solar_zenith)
+        new_albedo, new_annual_min_albedo = albedo.get_albedo(
+            state, self.args, forcings
+        )
 
         # === surrounding albedo ===
         ALBEDO_GROUND = self.args.albedo_ground
@@ -380,6 +415,9 @@ class MassBalanceDriver:
 
         # only update the properties requested based on hour of day
         updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
+        updated_min_albedo = jnp.where(
+            is_albedo_step, new_annual_min_albedo, state.annual_min_albedo
+        )
         new_albedo_surr = jnp.where(
             is_day_start, new_albedo_surr, state.albedo_surr
         )
@@ -393,6 +431,7 @@ class MassBalanceDriver:
         # return the modified state snapshot
         return state._replace(
             albedo=updated_albedo,
+            annual_min_albedo=updated_min_albedo,
             days_since_snowfall=new_days_since_snowfall,
             annual_max_snow=new_annual_max_snow,
             albedo_surr=new_albedo_surr
@@ -409,8 +448,6 @@ class MassBalanceDriver:
         CP_WATER = args.Cp_water
         LH_RF = args.Lh_rf
         dt = args.dt
-
-        # jax_print('before {}', state.ltemp[2, :])
 
         # load the amount of heat added to each layer
         Q_abs_surface = fluxes['melt_energy'][:, None]
@@ -497,13 +534,6 @@ class MassBalanceDriver:
         properties['lice'] = jnp.transpose(out_lice)
         properties['lwater'] = jnp.transpose(out_lwater)
         properties['ltemp'] = jnp.transpose(out_ltemp)
-        # jax_print('after {}', properties['ltemp'][2, :])
-        
-        # store updated properties
-        state = state._replace(**properties)
-        
-        # layermelt is now actual melt amounts in (N_POINTS, N_LAYERS) shape
-        layermelt = jnp.transpose(layermelt)
 
         # store the mass in the layers that are about to be deleted
         fully_melted_mask = properties['lice'] <= 0.001
@@ -512,7 +542,15 @@ class MassBalanceDriver:
         mass_to_route['BC'] = jnp.where(fully_melted_mask, properties['lBC'], 0)
         mass_to_route['OC'] = jnp.where(fully_melted_mask, properties['lOC'], 0)
         mass_to_route['dust'] = jnp.where(fully_melted_mask, properties['ldust'], 0)
-        jax_print('X {}', jnp.any(jnp.isnan(state.ltemp)))
+
+        # remove the fully melted water from lwater so it isn't double-counted
+        properties['lwater'] = jnp.where(fully_melted_mask, 0.0, properties['lwater'])
+        
+        # store updated properties
+        state = state._replace(**properties)
+        
+        # layermelt is now actual melt amounts in (N_POINTS, N_LAYERS) shape
+        layermelt = jnp.transpose(layermelt)
 
         # collapse grid to purge melted layers
         for _ in range(3):
@@ -527,7 +565,6 @@ class MassBalanceDriver:
                 state, melt_point_mask, melt_layer_idx, args
             )
 
-        jax_print('Y {}', jnp.any(jnp.isnan(state.ltemp)))
         return state, layermelt, mass_to_route
         
     def percolation(self, state, fluxes):
@@ -585,8 +622,8 @@ class MassBalanceDriver:
             lwater, capacity, is_barrier = inputs
 
             # if this is an ice layer, everything here and below runs off
-            q_in = jnp.where(is_barrier, 0.0, q_in)
             q_in_blocked = jnp.where(is_barrier, q_in, 0.0)
+            q_in = jnp.where(is_barrier, 0.0, q_in)
 
             # remaining room for water before hitting irreducible water content
             available_room = jnp.maximum(0.0, capacity - lwater)
@@ -748,14 +785,16 @@ class MassBalanceDriver:
             bulk_heat_capacity > 0, bulk_heat_capacity, 1.
         )
 
-        # define potential for refreeze [J m-2]
-        E_cold = jnp.abs(ltemp) * bulk_heat_capacity # cold content available
-        E_water = lwater * LH_RF # liquid water present to refreeze
-        E_pore = (DENSITY_ICE * lheight - lice) * LH_RF # pore space available
+        # potential based on available cold content [J m-2]
+        E_cold = jnp.abs(ltemp) * bulk_heat_capacity 
+        # potential based on available water to refreeze [J m-2]
+        E_water = lwater * LH_RF
+        # potential based on pore space available [J m-2]
+        E_pore = jnp.maximum(0.0, DENSITY_ICE * lheight - lice) * LH_RF
 
         # calculate mass of refreeze [kg m-2]
         dm_rfz = jnp.minimum(
-            jnp.abs(E_cold), jnp.minimum(jnp.abs(E_water), jnp.abs(E_pore))
+            E_cold, jnp.minimum(E_water, E_pore)
         ) / LH_RF
 
         # mask amount of refreeze to layers that were below 0.
@@ -1360,7 +1399,6 @@ class MassBalanceDriver:
         
             # reset cumulative refreeze and annual albedo
             new_lrefreeze = jnp.zeros_like(state.lrefreeze)
-            new_annual_min_albedo = jnp.ones_like(state.albedo)
             new_firn_converted = jnp.where(
                 convert_firn_pt, True, annual_firn_converted
             )
@@ -1369,7 +1407,6 @@ class MassBalanceDriver:
             state = state._replace(
                 ltype = new_ltype,
                 lrefreeze = new_lrefreeze,
-                annual_min_albedo = new_annual_min_albedo,
                 annual_firn_converted = new_firn_converted
             )
 

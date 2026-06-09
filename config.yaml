@@ -11,8 +11,8 @@
 store_data: false
 debug: true
 output_fp: '../Output/test_simulation/'
-start_date: '2000-04-20 00:00'
-end_date: '2000-08-20 03:00'
+start_date: '1980-04-20 00:00'
+end_date: '2025-08-31 00:00'
 
 rgi_ids: ['01.00570'] # , '01.09162']
 # shading_fp: '/trace/group/rounce/cvwilson/shading/'

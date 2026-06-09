@@ -67,7 +67,7 @@ def train(data_dir, epochs, lr, batch_size, seed):
     X_val   = (X_val   - mu) / sigma
 
     # init model and optimizer
-    model    = SNICAREmulator(X_train.shape[1], jax.random.PRNGKey(seed))
+    model = SNICAREmulator(X_train.shape[1], jax.random.PRNGKey(seed))
     optimizer = optax.adam(lr)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 

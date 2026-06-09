@@ -314,7 +314,7 @@ class Output():
             with xr.open_dataset(out_fn) as dataset:
                 ds = dataset.load()
 
-            elev = f'{self.terrain.elev_n[i]} m a.s.l.'
+            elev = f'{self.terrain.elev_n[i]:.1f} m a.s.l.'
             rgiid = str(self.terrain.rgiid_n[i])
             lat = str(self.terrain.lat_n[i])
             lon = str(self.terrain.lon_n[i])

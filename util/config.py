@@ -118,6 +118,7 @@ class Config():
         self.args = args
         self.configure_lookups()
         self.args.ice_spectrum_fn = self.configure_SNICAR()
+        self.args.start_year = pd.to_datetime(self.args.start_date).year
 
         # FINALLY: convert args into a JAX-compatible NamedTuple (immutable)
         self.convert_to_jax_safe(self.args)

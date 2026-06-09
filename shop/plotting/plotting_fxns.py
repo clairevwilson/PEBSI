@@ -54,6 +54,8 @@ varprops = {'surftemp':{'label':'Temperature','type':'Temperature','units':'C'},
            'layergrainsize':{'label':'Grain size','type':'Layers','units':'um'},
            'layerheight':{'label':'Layer height','type':'Layers','units':'m'},
            'layerrefreeze':{'label':'Layer refreeze','type':'Layers','units':'kg m-2'},
+           'layerage':{'label':'Layer age', 'type':'Layers', 'units':'days'},
+           'layertype':{'label':'Layer type', 'type':'Layers', 'units':'-'},
            'snowdepth':{'label':'Snow depth','type':'MB','units':'m'},
            'dh':{'label':'Surface height change','type':'MB','units':'m$'},
            'albedo':{'label':'Albedo','type':'Albedo','units':'-'},}
@@ -1154,7 +1156,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         elif var in ['layerOC']:
             bounds = [-5,100]
         elif var in ['layerdust']:
-            bounds = [0,2]
+            bounds = [0,50]
         elif var in ['layerdensity']:
             bounds = [50,800] if plot_firn else [0,500]
         elif var in ['layerwater']:
@@ -1167,6 +1169,10 @@ def visualize_layers(ds,dates,vars,force_layers=False,
             bounds = [-1,20]
         elif var in ['layerheight']:
             bounds = [0, 2]
+        elif var in ['layertype']:
+            bounds = [0, 2] 
+        elif var in ['layerage']:
+            bounds = [0, 120]
         dens_lim = 890 if plot_firn else 600
         dens_lim = 1000 if plot_ice else dens_lim
         assert 'layer' in var, 'choose layer variable'
@@ -1199,13 +1205,16 @@ def visualize_layers(ds,dates,vars,force_layers=False,
                 # vardata = vardata / (height * dens_flip)* 100
             if var in ['layerrefreeze']:
                 vardata = vardata / (dens_flip * height) * 100
+            if var in ['layerage']:
+                vardata = (step - pd.to_datetime(vardata)).days
             # if plot_ice:
             #     height = np.log(height)
 
             bottom = 0
             ctypes = {'layerBC':'Greys','layerOC':'Oranges','layerdust':'Reds',
                       'layertemp':'plasma','layerdensity':'Greens','layerwater':'Blues',
-                      'layergrainsize':'PuRd','layerrefreeze':'Purples','layerheight':'magma'}
+                      'layergrainsize':'PuRd','layerrefreeze':'Purples','layerheight':'magma', 
+                      'layertype':'viridis', 'layerage':'OrRd'}
             ctype = ctypes[var]
             if diverging:
                 ctype = 'coolwarm'
@@ -1232,7 +1241,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         # Add colorbar
         units = {'layerBC':'ppb','layerdust':'ppm','layerOC':'ppb','layertemp':'$^{\circ}$C',
                 'layerdensity':'kg m$^{-3}$','layerwater':'%','layergrainsize':'um',
-                'layerrefreeze':'kg m-2','layerheight':'m'}
+                'layerrefreeze':'kg m-2','layerheight':'m', 'layerage':'days', 'layertype':'-'}
         if colorbar:
             sm = mpl.cm.ScalarMappable(cmap=ctype,norm=plt.Normalize(bounds[0],bounds[1]))
             leg = plt.colorbar(sm,ax=ax,aspect=7)
