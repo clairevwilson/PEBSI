@@ -7,20 +7,13 @@ in an hourly time loop.
 
 @author: clairevwilson
 """
-# Built-in libraries
-from tqdm import tqdm
-import time as pytime
-from types import SimpleNamespace
 # External libraries
 import jax
 import jax.numpy as jnp
 from jax.debug import print as jax_print
-
-import pandas as pd
-import xarray as xr
 # Local libraries
 import util.layers as layers
-import pebsi.surface as albedo
+import pebsi.albedo as albedo
 
 class MassBalanceDriver:
     def __init__(self, static_args, dynamic_args):
@@ -1413,62 +1406,3 @@ class MassBalanceDriver:
         )
 
         return state
-
-    # def store_simulation(self):
-    #     """
-    #     Stores data model output and
-    #     deletes temporary files used in 
-    #     the simulation.
-    #     """
-    #     # store main simulation
-    #     if self.args.store_data:
-    #         if self.args.debug:
-    #             print('~ Success! Storing data . . . ~')
-    #         self.output.store_data()
-
-    #     # optionally store spectral albedo
-    #     if self.args.store_bands:
-    #         self.surface.albedo_df.to_csv(self.args.albedo_out_fn.format(s=self.args.site))
-    #     return
-
-    # def iterable(self, iterable, **kwargs):
-    #     return tqdm(iterable, **kwargs) if self.args.progress_bar else iterable
-
-    # class ProgressTimer:
-    # """
-    # Keeps track of time elapsed and 
-    # estimates time remaining based on
-    # the number of timesteps.
-    # """
-    # def __init__(self, total_steps):
-    #     self.total_steps = total_steps
-    #     self.start = pytime.perf_counter()
-    #     self.elapsed = 0
-    #     self.remaining = float("inf")
-    #     self.step = -1
-
-    # def update(self):
-    #     """
-    #     Steps counter and estimates remaining time.
-    #     """
-    #     now = pytime.perf_counter()
-    #     elapsed = now - self.start
-    #     self.step += 1
-
-    #     frac = self.step / self.total_steps
-    #     est_total = elapsed / frac if frac > 0 else float("inf")
-    #     remaining = est_total - elapsed
-
-    #     self.remaining = remaining 
-    #     self.elapsed = elapsed
-
-    # def printout(self):
-    #     percent_done = self.step / self.total_steps * 100
-    #     blocks_total = 48
-    #     n_blocks_filled = int(percent_done / 100 * blocks_total)
-    #     n_blocks_empty = blocks_total - n_blocks_filled
-    #     print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
-    #     print(
-    #         f"{percent_done:.0f}%  "
-    #         f"[ Elapsed: {self.elapsed/60:.2f} min | Remaining: {self.remaining/60:.2f} min ]"
-    #     )

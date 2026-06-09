@@ -3,11 +3,9 @@ import jax
 from pebsi.state import StepOutputs
 import jax.numpy as jnp
 from jax.debug import print as jax_print
-
 # Local libraries
 from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver
-import pebsi.surface as surface
 from util.layers import *
 
 @jax.jit(static_argnames=['static_args'])

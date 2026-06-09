@@ -249,62 +249,54 @@ class Terrain:
         rgi_gdf = self.rgi_gdf
         region = str(self.args.rgi_region).zfill(2)
         vrt_path = self.args.vrt_path.format(r=region)
+        assert os.path.exists(vrt_path), f'Missing DEM data expected at {vrt_path}'
         
         # load the master DEM using the VRT file produced in preprocessing
-        if False: # os.path.exists(vrt_path):
-            master_dem = (rxr.open_rasterio(vrt_path)
-                        .squeeze().drop_vars("band"))
-            self.dem_crs = dem_crs = master_dem.rio.crs
-            
-            # reproject RGI dataset to match the DEM
-            if rgi_gdf.crs != dem_crs:
-                rgi_gdf = rgi_gdf.to_crs(dem_crs)
-
-            if dem_crs.is_geographic:
-                buffer = buffer_meters / 111000.0
-            else:
-                buffer = buffer_meters
-
-            # generate a coarse bounding box grid over the region
-            minx, miny, maxx, maxy = rgi_gdf.total_bounds
-            x_edges = np.arange(minx, maxx + block_size_deg, block_size_deg)
-            y_edges = np.arange(miny, maxy + block_size_deg, block_size_deg)
-
-            for i in range(len(x_edges) - 1):
-                for j in range(len(y_edges) - 1):
-                    # Filter for glaciers whose centroid falls within this block
-                    glaciers_in_block = rgi_gdf[
-                        rgi_gdf['CenLon'].between(x_edges[i], x_edges[i+1]) &
-                        rgi_gdf['CenLat'].between(y_edges[j], y_edges[j+1]) &
-                        rgi_gdf['RGIId'].isin(['RGI60-' + id for id in self.args.rgi_ids])
-                    ]
-                    
-                    if glaciers_in_block.empty:
-                        continue
-
-                    # buffer the area surrounding the glacier for shading model
-                    total_bounds = glaciers_in_block.total_bounds
-                    buffered_bounds = (
-                        total_bounds[0] - buffer,
-                        total_bounds[1] - buffer,
-                        total_bounds[2] + buffer,
-                        total_bounds[3] + buffer
-                    )
-
-                    # slice and push to local RAM/GPU context
-                    sub_dem = master_dem.rio.clip_box(*buffered_bounds)
-                    sub_dem_ds = sub_dem.compute().to_dataset(name="elevation")
-                    
-                    # Pass the chunk data up to the execution loop
-                    yield sub_dem_ds, glaciers_in_block
+        master_dem = (rxr.open_rasterio(vrt_path)
+                    .squeeze().drop_vars("band"))
+        self.dem_crs = dem_crs = master_dem.rio.crs
         
+        # reproject RGI dataset to match the DEM
+        if rgi_gdf.crs != dem_crs:
+            rgi_gdf = rgi_gdf.to_crs(dem_crs)
+
+        if dem_crs.is_geographic:
+            buffer = buffer_meters / 111000.0
         else:
-            dem_fn = self.args.dem_fn.format(g='gulkana')
-            glaciers_in_block = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-01.00570']
-            dem = (rxr.open_rasterio(dem_fn)
-                   .squeeze().drop_vars("band")
-                   .to_dataset(name='elevation'))
-            yield dem, glaciers_in_block
+            buffer = buffer_meters
+
+        # generate a coarse bounding box grid over the region
+        minx, miny, maxx, maxy = rgi_gdf.total_bounds
+        x_edges = np.arange(minx, maxx + block_size_deg, block_size_deg)
+        y_edges = np.arange(miny, maxy + block_size_deg, block_size_deg)
+
+        for i in range(len(x_edges) - 1):
+            for j in range(len(y_edges) - 1):
+                # Filter for glaciers whose centroid falls within this block
+                glaciers_in_block = rgi_gdf[
+                    rgi_gdf['CenLon'].between(x_edges[i], x_edges[i+1]) &
+                    rgi_gdf['CenLat'].between(y_edges[j], y_edges[j+1]) &
+                    rgi_gdf['RGIId'].isin(['RGI60-' + id for id in self.args.rgi_ids])
+                ]
+                
+                if glaciers_in_block.empty:
+                    continue
+
+                # buffer the area surrounding the glacier for shading model
+                total_bounds = glaciers_in_block.total_bounds
+                buffered_bounds = (
+                    total_bounds[0] - buffer,
+                    total_bounds[1] - buffer,
+                    total_bounds[2] + buffer,
+                    total_bounds[3] + buffer
+                )
+
+                # slice and push to local RAM/GPU context
+                sub_dem = master_dem.rio.clip_box(*buffered_bounds)
+                sub_dem_ds = sub_dem.compute().to_dataset(name="elevation")
+                
+                # Pass the chunk data up to the execution loop
+                yield sub_dem_ds, glaciers_in_block
 
     def run_dem_functions(self, block_size_deg=0.5, buffer_meters=5000):
         """
@@ -365,7 +357,7 @@ class Terrain:
                     missing_glaciers.append(glacier)
 
             # if there are no missing glaciers, skip shading
-            if True: # not missing_glaciers:
+            if len(missing_glaciers) < 1:
                 continue
 
             print(f'Computing GPU shadows for {len(missing_glaciers)} missing glaciers in current chunk...')
@@ -389,7 +381,7 @@ class Terrain:
             shading_model.longitude = centroid_geo.x
             
             datetimes_utc = pd.date_range('2000-01-01', '2000-12-31', freq='h', tz='UTC')
-            masks_gpu, sun_az, sun_elev, svf = shading_model.compute_shadow_masks(datetimes_utc)
+            masks_gpu, sun_az, sun_zen, svf = shading_model.compute_shadow_masks(datetimes_utc)
             
             mask_3d_cpu = masks_gpu.get() if hasattr(masks_gpu, 'get') else masks_gpu
 
@@ -448,39 +440,37 @@ class Terrain:
         zenith = np.zeros((N_POINTS, N_TIME))
         sky_view_factor = np.ones(N_POINTS)
 
-        # # find unique RGI IDs in the list of all points
-        # unique_ids = np.unique(self.rgiid_n)
-        # for id in unique_ids:
-        #     idx = np.where(self.rgiid_n == unique_ids)[0]
+        # find unique RGI IDs in the list of all points
+        unique_ids = np.unique(self.rgiid_n)
+        for id in unique_ids:
+            idx = np.where(self.rgiid_n == unique_ids)[0]
 
-        #     # get xr DataArrays for the slicing variables
-        #     target_lat = xr.DataArray(self.lat_n[idx] , dims='points')
-        #     target_lon = xr.DataArray(self.lon_n[idx] , dims='points')
+            # get xr DataArrays for the slicing variables
+            target_lat = xr.DataArray(self.lat_n[idx] , dims='points')
+            target_lon = xr.DataArray(self.lon_n[idx] , dims='points')
 
-        #     # load shading file
-        #     fn = self.shade_fn.format(id=id)
-        #     ds = xr.open_dataset(fn)
-        #     ds_doy = ds.time.dt.dayofyear.values
-        #     ds_hour = ds.time.dt.hour.values
+            # load shading file
+            fn = self.shade_fn.format(id=id)
+            ds = xr.open_dataset(fn)
+            ds_doy = ds.time.dt.dayofyear.values
+            ds_hour = ds.time.dt.hour.values
 
-        #     # map times in dates to the index of that doy/hour in ds
-        #     lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
-        #     target_indices = [lookup[(d, h)] for d, h in zip(dates.dayofyear, dates.hour)]
-        #     target_time_idx = xr.DataArray(target_indices, dims='time')
+            # map times in dates to the index of that doy/hour in ds
+            lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
+            target_indices = [lookup[(d, h)] for d, h in zip(dates.dayofyear, dates.hour)]
+            target_time_idx = xr.DataArray(target_indices, dims='time')
             
-        #     # select data for the lats, lons, and times
-        #     selected = (ds
-        #         .sel(y=target_lat, x=target_lon, method='nearest')
-        #         .isel(time=target_time_idx)
-        #         .transpose('points','time'))
+            # select data for the lats, lons, and times
+            selected = (ds
+                .sel(y=target_lat, x=target_lon, method='nearest')
+                .isel(time=target_time_idx)
+                .transpose('points','time'))
 
-        #     masks[idx, :] = selected['shadow_mask'].values
-        #     azimuth[idx, :] = selected['solar_azimuth'].values
-        #     zenith[idx, :] = selected['solar_zenith'].values
-        #     sky_view_factor[idx, :] = selected['sky_view_factor'].values
+            masks[idx, :] = selected['shadow_mask'].values
+            azimuth[idx, :] = selected['solar_azimuth'].values
+            zenith[idx, :] = selected['solar_zenith'].values
+            sky_view_factor[idx, :] = selected['sky_view_factor'].values
 
-        # assert ~np.any(masks == 2), 'Missed points in load_shading'
-        masks *= 0
         self.sky_view_factor = sky_view_factor
         self.solar_zenith = zenith 
         self.solar_azimuth = azimuth

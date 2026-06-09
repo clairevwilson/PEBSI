@@ -118,7 +118,9 @@ class StepOutputs(NamedTuple):
     """
     Energy balance and mass fluxes for a single timestep at every point.
 
-    Array dimensions: (N_POINTS,)
+    Array dimensions:
+        - 1D properties: (N_POINTS,)
+        - 2D properties: (N_POINTS, N_LAYERS)
     """
 
     # =========================== Energy balance ==========================

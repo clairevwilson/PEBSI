@@ -34,10 +34,12 @@ class Output():
 
         # define all the variables to be saved
         all_variables = {
-            'EB':['SWin','SWout','LWin','LWout', 'rain','ground', 
-                  'sensible','latent', 'meltenergy','albedo','surftemp'],
+            'EB':['shortwave_in','shortwave_ref','longwave_in','longwave_out',
+                  'rain_heat','ground_heat', 'sensible_heat','latent_heat',
+                   'melt_energy','albedo','surftemp'],
             'MB':['melt','refreeze','runoff','cumrefreeze','dh',
-                  'vaporsolid','vaporliquid','accum','rainfall','error'],
+                  'sublimation','deposition','evaporation','condensation',
+                  'accumulation','rainfall','error'],
             'layers':['layertemp','layerdensity','layerwater','layerheight',
                       'layerage','layertype','layergrainsize','layerrefreeze',
                       'layerBC','layerOC','layerdust'],
@@ -80,31 +82,33 @@ class Output():
         ds_template = xr.Dataset(data_vars = dict(
                 # ENERGY BALANCE
                 surftemp = (['time'],zeros[:,0],{'units':'C'}),
-                SWin = (['time'],zeros[:,0],{'units':'W m-2'}),
-                SWout = (['time'],zeros[:,0],{'units':'W m-2'}),
-                LWin = (['time'],zeros[:,0],{'units':'W m-2'}),
-                LWout = (['time'],zeros[:,0],{'units':'W m-2'}),
-                rain = (['time'],zeros[:,0],{'units':'W m-2'}),
-                ground = (['time'],zeros[:,0],{'units':'W m-2'}),
-                sensible = (['time'],zeros[:,0],{'units':'W m-2'}),
-                latent = (['time'],zeros[:,0],{'units':'W m-2'}),
-                meltenergy = (['time'],zeros[:,0],{'units':'W m-2'}),
+                shortwave_in = (['time'],zeros[:,0],{'units':'W m-2'}),
+                shortwave_ref = (['time'],zeros[:,0],{'units':'W m-2'}),
+                longwave_in = (['time'],zeros[:,0],{'units':'W m-2'}),
+                longwave_out = (['time'],zeros[:,0],{'units':'W m-2'}),
+                rain_heat = (['time'],zeros[:,0],{'units':'W m-2'}),
+                ground_heat = (['time'],zeros[:,0],{'units':'W m-2'}),
+                sensible_heat = (['time'],zeros[:,0],{'units':'W m-2'}),
+                latent_heat = (['time'],zeros[:,0],{'units':'W m-2'}),
+                melt_energy = (['time'],zeros[:,0],{'units':'W m-2'}),
                 albedo = (['time'],zeros[:,0],{'units':'0-1'}),
 
-                # SHORTWAVE DETAILED
-                vis_albedo = (['time'],zeros[:,0],{'units':'0-1'}),
-                SWin_sky = (['time'],zeros[:,0],{'units':'W m-2'}),
-                SWin_terr = (['time'],zeros[:,0],{'units':'W m-2'}),
+                # # SHORTWAVE DETAILED
+                # vis_albedo = (['time'],zeros[:,0],{'units':'0-1'}),
+                # SWin_sky = (['time'],zeros[:,0],{'units':'W m-2'}),
+                # SWin_terr = (['time'],zeros[:,0],{'units':'W m-2'}),
 
                 # MASS BALANCE
                 melt = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 refreeze = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 cumrefreeze = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 runoff = (['time'],zeros[:,0],{'units':'m w.e.'}),
-                accum = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                accumulation = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 rainfall = (['time'],zeros[:,0],{'units':'m w.e.'}),
-                vaporliquid = (['time'],zeros[:,0],{'units':'m w.e.'}),
-                vaporsolid = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                sublimation = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                deposition = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                evaporation = (['time'],zeros[:,0],{'units':'m w.e.'}),
+                condensation = (['time'],zeros[:,0],{'units':'m w.e.'}),
                 dh = (['time'],zeros[:,0],{'units':'m'}),
                 error = (['time'],zeros[:,0],{'units':'m w.e.'}),
 
@@ -227,8 +231,7 @@ class Output():
         # add surface height change 
         if 'dh' in self.store:
             total_heights = np.sum(records.layerheight[:, i, :], axis=1)
-            initial_height = self.args.initial_ice_depth + \
-                self.prms.initial_firn_depth[i] + self.prms.initial_snow_depth[i]
+            initial_height = np.sum(records.layerheight[0, i, :])
 
             # prepend initial height to compute differences accurately
             padded_heights = np.insert(total_heights, 0, initial_height)
@@ -358,7 +361,10 @@ class Output():
                 for key, value in config_inputs.items():
                     if key not in skip_in_config:
                         if type(value) == list:
-                            store = ', '.join(value)
+                            if len(value) == self.n_points:
+                                store = value[i]
+                            else:
+                                store = ', '.join(str(v) for v in value)
                         elif type(value) == bool:
                             store = str(value)
                         else:
@@ -372,7 +378,10 @@ class Output():
                 if key not in skip:
                     value = getattr(args, key)
                     if type(value) == list:
-                        store = ', '.join(value)
+                        if len(value) == self.n_points:
+                            store = value[i]
+                        else:
+                            store = ', '.join(str(v) for v in value)
                     elif type(value) == bool:
                         store = str(value)
                     else:

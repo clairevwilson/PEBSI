@@ -97,7 +97,7 @@ class MassBalance():
         mod = []
         for start, end in zip(self.period_starts, self.period_ends):
             if 'MB' not in ds.variables:
-                MB = ds['accum'] + ds['refreeze'] - ds['melt']
+                MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
                 ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
             mb_mod = ds.sel(time=slice(start, end)).MB.sum()
             mod.append(mb_mod)
