@@ -5,6 +5,7 @@ import geopandas as gpd
 import numpy as np
 import os, sys
 import time
+from pyproj import CRS
 from pysolar.solar import get_altitude, get_azimuth
 import shapely.geometry as geom
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ class Terrain:
         else:
             lats, lons, glaciers = [], [], []
             df = pd.read_csv('data/by_glacier/gulkana/site_constants.csv', index_col=0)
-            for site in ['AU','B','Z']:
+            for site in ['AU','B','D']:
                 lats.append(df.loc[site, 'lat'])
                 lons.append(df.loc[site, 'lon'])
                 glaciers.append('01.00570')
@@ -177,6 +178,11 @@ class Terrain:
         """
         dem = dem['elevation']
 
+        # mask nodata
+        nodata = dem.rio.nodata 
+        if nodata is not None:
+            dem = dem.where((dem != nodata) & np.isfinite(dem))
+
         # get the resolution of the dataset in m
         x_res, y_res = dem.rio.resolution()
         x_res, y_res = abs(x_res), abs(y_res)
@@ -239,11 +245,10 @@ class Terrain:
         self.median_elev_n = np.array(stretched_elevations)
         return
     
-    def yield_dem_chunks(self, block_size_deg=4.0, buffer_meters=20000):
+    def yield_dem_chunks(self, block_size_deg=0.5, buffer_meters=10_000):
         """
-        Generator that yields sliced, buffered 
-        sub-DEM datasets and their corresponding 
-        glacier sub-DataFrames for gathering 
+        Generator that yields sliced, buffered sub-DEM datasets 
+        and their corresponding glacier sub-DataFrames for gathering 
         DEM information and running shading.
         """
         rgi_gdf = self.rgi_gdf
@@ -253,7 +258,7 @@ class Terrain:
         
         # load the master DEM using the VRT file produced in preprocessing
         master_dem = (rxr.open_rasterio(vrt_path)
-                    .squeeze().drop_vars("band"))
+                    .squeeze().drop_vars('band'))
         self.dem_crs = dem_crs = master_dem.rio.crs
         
         # reproject RGI dataset to match the DEM
@@ -276,7 +281,7 @@ class Terrain:
                 glaciers_in_block = rgi_gdf[
                     rgi_gdf['CenLon'].between(x_edges[i], x_edges[i+1]) &
                     rgi_gdf['CenLat'].between(y_edges[j], y_edges[j+1]) &
-                    rgi_gdf['RGIId'].isin(['RGI60-' + id for id in self.args.rgi_ids])
+                    rgi_gdf['RGIId'].isin(['RGI60-' + i for i in self.args.rgi_ids])
                 ]
                 
                 if glaciers_in_block.empty:
@@ -291,14 +296,72 @@ class Terrain:
                     total_bounds[3] + buffer
                 )
 
-                # slice and push to local RAM/GPU context
+                # get metric projection
+                self.dem_crs = metric_crs = self._get_metric_crs(glaciers_in_block)
+
+                # slice and creproject the cropped chunk
                 sub_dem = master_dem.rio.clip_box(*buffered_bounds)
+                sub_dem = sub_dem.rio.reproject(metric_crs)
+                glaciers_in_block = glaciers_in_block.to_crs(metric_crs)
+
+                # push to local RAM/GPU context
                 sub_dem_ds = sub_dem.compute().to_dataset(name="elevation")
                 
                 # Pass the chunk data up to the execution loop
                 yield sub_dem_ds, glaciers_in_block
 
-    def run_dem_functions(self, block_size_deg=0.5, buffer_meters=5000):
+    def yield_single_dem(self):
+        """
+        Single-glacier mode: load a single DEM directly and yields it
+        as a single chunk with all glaciers.
+        """
+        glacier_id = self.args.rgi_ids[0]
+        dem_fn = self.args.dem_fn.format(g=glacier_id)
+        assert os.path.exists(dem_fn), f'Missing DEM at {dem_fn}'
+
+        # load the DEM
+        master_dem = (rxr.open_rasterio(dem_fn)
+                      .squeeze().drop_vars('band'))
+        
+        # crop the RGI geodataframe to the actual glaciers here
+        rgi_gdf = self.rgi_gdf
+        rgi_gdf = rgi_gdf[
+            rgi_gdf['RGIId'].isin(['RGI60-' + i for i in self.args.rgi_ids])
+        ]
+        
+        # convert the DEM to a good equal-area projection
+        metric_crs = self._get_metric_crs(rgi_gdf)
+        master_dem = master_dem.rio.reproject(metric_crs)
+
+        # make sure coordinate systems are consistent
+        self.dem_crs = metric_crs 
+        if rgi_gdf.crs != metric_crs:
+            rgi_gdf = rgi_gdf.to_crs(metric_crs) 
+
+        sub_dem_ds = master_dem.compute().to_dataset(name = 'elevation')
+        yield sub_dem_ds, rgi_gdf
+
+    def _get_dem_chunks(self, block_size_deg, buffer_meters):
+        """
+        Routes to the correct yield function whether there is
+        a single DEM to grab or a region to parse.
+        """
+        if self.args.dem_fn is not None:
+            return self.yield_single_dem()
+        else:
+            return self.yield_dem_chunks(block_size_deg, buffer_meters)
+        
+    def _get_metric_crs(self, gdf):
+        """
+        Derives a region-appropriate equal-area projection 
+        using the glacier centroid."""
+        centroid = gdf.to_crs(epsg=4326).union_all().centroid
+        return CRS(
+            f"+proj=laea +lat_0={centroid.y:.2f} +lon_0={centroid.x:.2f} "
+            f"+datum=WGS84 +units=m +no_defs"
+        )
+
+    def run_dem_functions(self, block_size_deg=0.5, buffer_meters=10_000):
         """
         Processes DEM-dependent variables by chunking
         a large COP30 DEM into pieces.
@@ -327,7 +390,7 @@ class Terrain:
         }
 
         # loop through DEM chunks and corresponding glacier subsets
-        for sub_dem_ds, glaciers_in_block in self.yield_dem_chunks(block_size_deg, buffer_meters):
+        for sub_dem_ds, glaciers_in_block in self._get_dem_chunks(block_size_deg, buffer_meters):
             
             # gather all the DEM info for the points in this block
             block_ids = [g.split('-')[-1] for g in glaciers_in_block['RGIId']]
@@ -357,7 +420,7 @@ class Terrain:
                     missing_glaciers.append(glacier)
 
             # if there are no missing glaciers, skip shading
-            if len(missing_glaciers) < 1:
+            if True: # len(missing_glaciers) < 1:
                 continue
 
             print(f'Computing GPU shadows for {len(missing_glaciers)} missing glaciers in current chunk...')
@@ -367,12 +430,10 @@ class Terrain:
             minx, miny, maxx, maxy = glaciers_in_block.total_bounds
 
             # crop the DEM to the actual glaciers needed, plus a buffer for surrounding peaks
-            if self.dem_crs.is_geographic:
-                pad = buffer_meters / 111000.0
-            else:
-                pad = buffer_meters
-            y_slice = slice(maxy + pad, miny - pad) if sub_dem_ds['y'][0] > sub_dem_ds['y'][-1] else slice(miny - pad, maxy + pad)
-            x_slice = slice(minx - pad, maxx + pad)
+            y_slice = (slice(maxy + buffer_meters, miny - buffer_meters) 
+                       if sub_dem_ds['y'][0] > sub_dem_ds['y'][-1] 
+                       else slice(miny - buffer_meters, maxy + buffer_meters))
+            x_slice = slice(minx - buffer_meters, maxx + buffer_meters)
             cropped_dem_ds = sub_dem_ds.sel(y=y_slice, x=x_slice)
             
             # Fire up the shading compute engine
@@ -440,36 +501,36 @@ class Terrain:
         zenith = np.zeros((N_POINTS, N_TIME))
         sky_view_factor = np.ones(N_POINTS)
 
-        # find unique RGI IDs in the list of all points
-        unique_ids = np.unique(self.rgiid_n)
-        for id in unique_ids:
-            idx = np.where(self.rgiid_n == unique_ids)[0]
+        # # find unique RGI IDs in the list of all points
+        # unique_ids = np.unique(self.rgiid_n)
+        # for id in unique_ids:
+        #     idx = np.where(self.rgiid_n == unique_ids)[0]
 
-            # get xr DataArrays for the slicing variables
-            target_lat = xr.DataArray(self.lat_n[idx] , dims='points')
-            target_lon = xr.DataArray(self.lon_n[idx] , dims='points')
+        #     # get xr DataArrays for the slicing variables
+        #     target_lat = xr.DataArray(self.lat_n[idx] , dims='points')
+        #     target_lon = xr.DataArray(self.lon_n[idx] , dims='points')
 
-            # load shading file
-            fn = self.shade_fn.format(id=id)
-            ds = xr.open_dataset(fn)
-            ds_doy = ds.time.dt.dayofyear.values
-            ds_hour = ds.time.dt.hour.values
+        #     # load shading file
+        #     fn = self.shade_fn.format(id=id)
+        #     ds = xr.open_dataset(fn)
+        #     ds_doy = ds.time.dt.dayofyear.values
+        #     ds_hour = ds.time.dt.hour.values
 
-            # map times in dates to the index of that doy/hour in ds
-            lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
-            target_indices = [lookup[(d, h)] for d, h in zip(dates.dayofyear, dates.hour)]
-            target_time_idx = xr.DataArray(target_indices, dims='time')
+        #     # map times in dates to the index of that doy/hour in ds
+        #     lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
+        #     target_indices = [lookup[(d, h)] for d, h in zip(dates.dayofyear, dates.hour)]
+        #     target_time_idx = xr.DataArray(target_indices, dims='time')
             
-            # select data for the lats, lons, and times
-            selected = (ds
-                .sel(y=target_lat, x=target_lon, method='nearest')
-                .isel(time=target_time_idx)
-                .transpose('points','time'))
+        #     # select data for the lats, lons, and times
+        #     selected = (ds
+        #         .sel(y=target_lat, x=target_lon, method='nearest')
+        #         .isel(time=target_time_idx)
+        #         .transpose('points','time'))
 
-            masks[idx, :] = selected['shadow_mask'].values
-            azimuth[idx, :] = selected['solar_azimuth'].values
-            zenith[idx, :] = selected['solar_zenith'].values
-            sky_view_factor[idx, :] = selected['sky_view_factor'].values
+        #     masks[idx, :] = selected['shadow_mask'].values
+        #     azimuth[idx, :] = selected['solar_azimuth'].values
+        #     zenith[idx, :] = selected['solar_zenith'].values
+        #     sky_view_factor[idx, :] = selected['sky_view_factor'].values
 
         self.sky_view_factor = sky_view_factor
         self.solar_zenith = zenith 

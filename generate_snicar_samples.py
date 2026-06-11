@@ -33,6 +33,7 @@ from biosnicar.get_albedo import get
 # CONFIGURATION
 # ============================================================
 
+# Define input file paths
 YAML_PATH = '/Users/cvw/local/PEBSI/biosnicar-py/biosnicar/inputs.yaml'
 SFC_PATH  = 'Data/OP_data/480band/r_sfc/gulkana_cleanice_avg_bba3732.csv'
 
@@ -47,18 +48,18 @@ BIN5 = 0.034        # 5–50 µm
 ICE_CONSTANTS = ['LAYER_TYPE', 'HEX_SIDE', 'HEX_LENGTH', 'SHP_FCTR', 'WATER_COATING', 'CDOM']
 
 # Valid grain shape codes and their corresponding aspect ratios.
-#   0 -> spherical grains  (aspect ratio unused, set to 0)
-#   2 -> hexagonal plates  (aspect ratio = 0.01)
+# 0 = spherical grains  (aspect ratio unused, set to 0)
+# 2 = hexagonal plates  (aspect ratio = 0.01)
 GRAIN_SHAPE_AR = {0: 0.0, 2: 0.01}
 
 # Continuous sampling bounds for each physical parameter (min, max).
 # Discrete params (grain_shape, direct) are sampled in [0, 1] then snapped
 # to their valid values by snap_discrete_params().
 PARAM_RANGES = {
-    'grain_size_um':    (55.0,    1500.0),
+    'grain_size_um':    (55.0,    1500.0),   # capped at the limits PEBSI uses
     'density_kgm3':     (50.0,    700.0),
     'height_m':         (0.01,    0.5),      # per-layer; total column capped at 1.0 m
-    'bc_ppb':           (0.0,     5000.0),
+    'bc_ppb':           (0.0,     5000.0),   # set max at an extremely high value
     'oc_ppb':           (0.0,     5000.0),
     'dust_ppb':         (0.0,     500000.0),
     'grain_shape':      (0.0,     1.0),      # snapped: 0 (spherical) or 2 (hex plates)
@@ -66,10 +67,10 @@ PARAM_RANGES = {
     'direct':           (0.0,     1.0),      # snapped: 0 (diffuse) or 1 (direct beam)
 }
 
-# Per-layer parameters (one value per snow/ice layer per sample)
+# Layer-level parameters (one value per layer per sample)
 LAYER_PARAMS  = ['grain_size_um', 'density_kgm3', 'height_m',
                  'bc_ppb', 'oc_ppb', 'dust_ppb', 'grain_shape']
-# Column-level parameters (one value per sample, shared across all layers)
+# Column-level parameters (one value per sample)
 COLUMN_PARAMS = ['solar_zenith_deg', 'direct']
 
 # ============================================================
@@ -118,8 +119,9 @@ def lhs_samples(n_samples, n_layers, seed):
         lo.append(PARAM_RANGES[key][0])
         hi.append(PARAM_RANGES[key][1])
 
+    # sample parameter space scaled to the valid ranges
     sampler = qmc.LatinHypercube(d=len(cols), seed=seed)
-    scaled  = qmc.scale(sampler.random(n=n_samples), lo, hi)
+    scaled = qmc.scale(sampler.random(n=n_samples), lo, hi)
     df = pd.DataFrame(scaled, columns=cols)
     return snap_discrete_params(df)
 
@@ -146,17 +148,19 @@ def oversample_extremes(n_samples, n_layers, seed):
         scenario = rng.integers(0, 5)
 
         for i in range(n_layers):
+            # randomly sample density so it increases with depth, capped to density max
             row[f'layer{i}_density_kgm3'] = float(min(rng.uniform(50, 700) * (1 + i * 0.1), 700))
+            # randomly assign height in 1 - 50 cm
             row[f'layer{i}_height_m']     = float(rng.uniform(0.01, 0.50))
             # randomly assign spherical (0) or hexagonal plate (2) grain shape
             row[f'layer{i}_grain_shape']  = int(rng.choice([0, 2]))
 
-            if scenario == 0:   # very clean, fine-grained ice
+            if scenario == 0:   # very clean, fine-grained
                 row[f'layer{i}_grain_size_um'] = float(rng.uniform(50, 200))
                 row[f'layer{i}_bc_ppb']        = float(rng.uniform(0, 10))
                 row[f'layer{i}_oc_ppb']        = float(rng.uniform(0, 10))
                 row[f'layer{i}_dust_ppb']      = float(rng.uniform(0, 50))
-            elif scenario == 1: # very dirty, coarse-grained ice
+            elif scenario == 1: # very dirty, coarse-grained
                 row[f'layer{i}_grain_size_um'] = float(rng.uniform(500, 2000))
                 row[f'layer{i}_bc_ppb']        = float(rng.uniform(2000, 5000))
                 row[f'layer{i}_oc_ppb']        = float(rng.uniform(1000, 5000))
@@ -178,6 +182,7 @@ def oversample_extremes(n_samples, n_layers, seed):
                 row[f'layer{i}_oc_ppb']        = float(rng.uniform(0, 200))
                 row[f'layer{i}_dust_ppb']      = float(rng.uniform(0, 500))
 
+        # assign high solar zenith angle unless using scenario 4
         row['solar_zenith_deg'] = float(rng.uniform(70, 85) if scenario == 4 else rng.uniform(0, 85))
         # randomly assign direct (1) or diffuse (0) illumination
         row['direct'] = int(rng.choice([0, 1]))
@@ -189,15 +194,13 @@ def oversample_extremes(n_samples, n_layers, seed):
 def enforce_physical_constraints(df, n_layers):
     """
     Applies physical consistency rules before running SNICAR:
-      - Density and grain size increase monotonically with depth (each layer is
-        at least 85% / 90% of the value in the layer above, respectively).
+      - Density increases monotonically with depth.
       - Total column depth is capped at 1.0 m by proportionally rescaling all
         layer thicknesses.
     """
     for i in range(1, n_layers):
         # deeper layers must not be substantially lighter or finer than the layer above
         df[f'layer{i}_density_kgm3']  = np.maximum(df[f'layer{i}_density_kgm3'],  df[f'layer{i-1}_density_kgm3']  * 0.85)
-        df[f'layer{i}_grain_size_um'] = np.maximum(df[f'layer{i}_grain_size_um'], df[f'layer{i-1}_grain_size_um'] * 0.90)
 
     # rescale layer thicknesses so total column depth does not exceed 1.0 m
     height_cols = [f'layer{i}_height_m' for i in range(n_layers)]
@@ -235,13 +238,13 @@ def run_snicar(row, n_layers, base_inputs):
     inputs = copy.deepcopy(base_inputs)
 
     # --- per-layer physical properties ---
-    lheight    = [float(row[f'layer{i}_height_m'])    for i in range(n_layers)]
-    ldensity   = [int(row[f'layer{i}_density_kgm3'])  for i in range(n_layers)]
+    lheight = [float(row[f'layer{i}_height_m']) for i in range(n_layers)]
+    ldensity = [int(row[f'layer{i}_density_kgm3']) for i in range(n_layers)]
     lgrainsize = [int(row[f'layer{i}_grain_size_um']) for i in range(n_layers)]
-    lBC        = [float(row[f'layer{i}_bc_ppb'])      for i in range(n_layers)]
-    lOC        = [float(row[f'layer{i}_oc_ppb'])      for i in range(n_layers)]
-    ldust      = np.array([float(row[f'layer{i}_dust_ppb']) for i in range(n_layers)])
-    lshape     = [int(row[f'layer{i}_grain_shape'])   for i in range(n_layers)]
+    lBC = [float(row[f'layer{i}_bc_ppb']) for i in range(n_layers)]
+    lOC = [float(row[f'layer{i}_oc_ppb']) for i in range(n_layers)]
+    ldust = np.array([float(row[f'layer{i}_dust_ppb']) for i in range(n_layers)])
+    lshape = [int(row[f'layer{i}_grain_shape']) for i in range(n_layers)]
 
     # snap grain sizes to the SNICAR lookup grid (1 µm steps up to 1500, then 500 µm steps)
     lgrainsize = [
@@ -252,6 +255,7 @@ def run_snicar(row, n_layers, base_inputs):
     # aspect ratio: 0 for spherical, 0.01 for hexagonal plates
     lar = [GRAIN_SHAPE_AR[s] for s in lshape]
 
+    # pack variables into inputs dict
     inputs['ICE']['DZ']  = lheight
     inputs['ICE']['RHO'] = ldensity
     inputs['ICE']['RDS'] = lgrainsize
@@ -259,25 +263,26 @@ def run_snicar(row, n_layers, base_inputs):
     inputs['ICE']['SHP'] = lshape
     inputs['ICE']['AR']  = lar
 
-    # surface layer is always snow/ice (not an underlying substrate)
+    # layer type is always 0 (granular snow)
     inputs['ICE']['LAYER_TYPE'][0] = 0
 
     # propagate scalar ICE constants uniformly across all layers
     for var in ICE_CONSTANTS:
         inputs['ICE'][var] = [inputs['ICE'][var][0]] * n_layers
 
-    inputs['IMPURITIES']['BC']['CONC']    = lBC
-    inputs['IMPURITIES']['OC']['CONC']    = lOC
+    inputs['IMPURITIES']['BC']['CONC'] = lBC
+    inputs['IMPURITIES']['OC']['CONC'] = lOC
     inputs['IMPURITIES']['DUST1']['CONC'] = (ldust * BIN1).tolist()
     inputs['IMPURITIES']['DUST2']['CONC'] = (ldust * BIN2).tolist()
     inputs['IMPURITIES']['DUST3']['CONC'] = (ldust * BIN3).tolist()
     inputs['IMPURITIES']['DUST4']['CONC'] = (ldust * BIN4).tolist()
     inputs['IMPURITIES']['DUST5']['CONC'] = (ldust * BIN5).tolist()
 
-    inputs['PATHS']['SFC']  = SFC_PATH
+    inputs['PATHS']['SFC'] = SFC_PATH
     inputs['RTM']['SOLZEN'] = int(row['solar_zenith_deg'])
-    inputs['RTM']['DIRECT'] = int(row['direct'])   # 0 = diffuse, 1 = direct beam
+    inputs['RTM']['DIRECT'] = int(row['direct']) # 0 = diffuse, 1 = direct beam
 
+    # run SNICAR using inputs and calculate broadband albedo from spectral weights
     try:
         albedo, spectral_weights = get(inputs)
         bba = float(np.sum(albedo * spectral_weights) / np.sum(spectral_weights))
@@ -372,30 +377,30 @@ def main(n_train, n_val, n_test, n_layers, seed, output_dir, n_jobs):
     # --- save ---
     print('\nSaving...')
     save_split(df_train, bba_train, output_dir / 'snicar_train.npz')
-    save_split(df_val,   bba_val,   output_dir / 'snicar_val.npz')
-    save_split(df_test,  bba_test,  output_dir / 'snicar_test.npz')
+    save_split(df_val, bba_val, output_dir / 'snicar_val.npz')
+    save_split(df_test, bba_test, output_dir / 'snicar_test.npz')
 
     print('\nDone.')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate SNICAR training samples via LHS.')
-    parser.add_argument('--n_train',    type=int, default=100000)
-    parser.add_argument('--n_val',      type=int, default=10000)
-    parser.add_argument('--n_test',     type=int, default=10000)
-    parser.add_argument('--n_layers',   type=int, default=4)
-    parser.add_argument('--seed',       type=int, default=0)
+    parser.add_argument('--n_train', type=int, default=100000)
+    parser.add_argument('--n_val', type=int, default=10000)
+    parser.add_argument('--n_test', type=int, default=10000)
+    parser.add_argument('--n_layers', type=int, default=4)
+    parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--output_dir', type=str, default='snicar_data')
-    parser.add_argument('--n_jobs',     type=int, default=1,
+    parser.add_argument('--n_jobs', type=int, default=1,
                         help='Parallel workers for SNICAR runs (default: 1)')
     args = parser.parse_args()
 
     main(
-        n_train    = args.n_train,
-        n_val      = args.n_val,
-        n_test     = args.n_test,
-        n_layers   = args.n_layers,
-        seed       = args.seed,
+        n_train = args.n_train,
+        n_val = args.n_val,
+        n_test = args.n_test,
+        n_layers = args.n_layers,
+        seed = args.seed,
         output_dir = args.output_dir,
-        n_jobs     = args.n_jobs,
+        n_jobs = args.n_jobs,
     )

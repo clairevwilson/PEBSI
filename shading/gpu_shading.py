@@ -1,7 +1,5 @@
-import calendar
-import datetime
-import logging
 from pathlib import Path
+from pyproj import Transformer
 
 import numpy as np
 import pytz
@@ -42,6 +40,11 @@ class Shading:
             kernel at shading/cuda/azimuth_trace.cu.
         """
         self.gpu = use_gpu
+
+        # get center latitude and longitude of the DEM passed
+        centroid = dem.rio.transform() * (dem.rio.width / 2, dem.rio.height / 2)
+        transformer = Transformer.from_crs(dem.rio.crs, "EPSG:4326", always_xy=True)
+        self.center_longitude, self.center_latitude = transformer.transform(*centroid)
         
         self.step_size = step_size
         self.z = xp.array(dem.elevation.values, dtype=xp.float32)
@@ -53,9 +56,6 @@ class Shading:
         dZdy, dZdx = xp.gradient(self.z, dy, dx)
         self.dZdx = dZdx
         self.dZdy = -dZdy
-
-        self.center_latitude = float(dem.latitude.mean().values)
-        self.center_longitude = float(dem.longitude.mean().values)
 
         # CUDA kernel setup (GPU only)
         self.kernel = None
@@ -113,6 +113,8 @@ class Shading:
             dj = float(np.sin(az_rad))   # column step
             di = -float(np.cos(az_rad))  # row step (north = row 0)
 
+            grid_res = self.grid_resolution
+
             z_np = np.asarray(self.z)
             max_zenith = np.zeros((self.ny, self.nx), dtype=np.float32)
 
@@ -124,7 +126,8 @@ class Shading:
                     r, c = row + di * dist, col + dj * dist
                     while 0 <= int(r) < self.ny and 0 <= int(c) < self.nx:
                         elev = z_np[int(r), int(c)]
-                        rise_run = (elev - elev0) / (dist * self.grid_resolution)
+                        res = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1]**2))
+                        rise_run = (elev - elev0) / (dist * res)
                         if rise_run > best:
                             best = rise_run
                         dist += self.step_size
@@ -213,13 +216,14 @@ class Shading:
     
     def skyviewfactor(self, num_azimuths = 16):
         """
-        Calculates sky-view factor (integration of horizon angles)
-        for each pixel.
+        Calculates sky-view factor for each pixel.
+        svf = cos^2(horizon angle / 
 
         Parameters
         ==========
         num_azimuths : int
-            Number of azimuth directions to sample (more = more accurate).
+            Number of azimuth directions to sample 
+            (more azimuths = more accurate).
 
         Returns
         -------
@@ -229,10 +233,13 @@ class Shading:
         svf = xp.zeros(self.z.shape, dtype=xp.float32)
         azimuths = np.linspace(0, 360, num_azimuths, endpoint=False)
 
-        for az in tqdm(azimuths, desc="sky view factor", unit="az"):
-            horizon_rad = xp.deg2rad(self.horizon_zenith_deg(az))
-            svf += xp.cos(horizon_rad) ** 2
+        for az in azimuths:
+            horizon_zenith_deg = self.horizon_zenith_deg(az)
+            horizon_elev_deg = 90 - horizon_zenith_deg
+            horizon_elev_rad = xp.deg2rad(horizon_elev_deg)
+            svf += xp.sin(horizon_elev_rad)**2
 
+        # final expression: normalize by n_azimuths
         return svf / num_azimuths
 
     def apply_merra2_radiation(self, shadow_masks, shortwave_data):
@@ -254,7 +261,5 @@ class Shading:
         adjusted_shortwave: xp.ndarray
             Per-pixel radiation timeseries.
         """
-        raise NotImplementedError(
-            "apply_merra2_radiation() is a placeholder. "
-            "Implement your slope/aspect correction and MERRA-2 scaling here."
-        )
+
+        return

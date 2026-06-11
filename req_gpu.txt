@@ -1,9 +1,11 @@
+jax
 numpy
 pandas
 xarray 
 rioxarray
 geopandas 
-pysolar 
+pysolar
+pytz
 shapely
 rasterio
 netCDF4

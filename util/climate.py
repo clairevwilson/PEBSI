@@ -61,7 +61,7 @@ class Climate():
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
         else:
-            assert ~self.args.use_aws, 'NOT SET UP FOR AWS DATA YET'
+            assert ~self.args.use_aws, 'PEBSI is currently not set up to support AWS data'
             pass
         return
     
@@ -279,16 +279,15 @@ class Climate():
         self.wind = wind
         self.winddir = winddir
 
-        # ****** FIGURE OUT QM
-        # if args.climate_source == 'MERRA2':
-        #     # correct MERRA-2 variables in bias_vars list
-        #     self.bias_vars = [v for v in self.args.bias_vars if v not in self.measured_vars]
-        #     if self.args.debug and len(self.bias_vars) > 0:
-        #         print('~ Applying quantile mapping for:',self.bias_vars)
-        #     for var in self.bias_vars:
-        #         from_MERRA = True if not self.args.use_aws else var in self.need_vars
-        #         if from_MERRA:
-        #             self.bias_adjust_qm(var)
+        if args.climate_source == 'MERRA2':
+            # correct MERRA-2 variables in bias_vars list
+            self.bias_vars = [v for v in self.args.bias_vars if v not in self.measured_vars]
+            if self.args.debug and len(self.bias_vars) > 0:
+                print('~ Applying quantile mapping for:',self.bias_vars)
+            for var in self.bias_vars:
+                from_MERRA = True if not self.args.use_aws else var in self.need_vars
+                if from_MERRA:
+                    self.bias_adjust_qm(var)
         
         # apply coefficients to adjust deposition
         if not args.deposition_data:
@@ -301,7 +300,7 @@ class Climate():
         # apply climatic perturbations
         self.apply_perturbations()
 
-        # apply parameters
+        # apply parameters (precipitation / wind / dust factors)
         self.apply_parameters()
 
         # check all variables are full
@@ -551,7 +550,7 @@ class Climate():
 
         # get elevation of the original temperature data
         if 'temp' in self.args.bias_vars and 'temp' not in self.measured_vars:
-            # if temperature was a bias-corrected variable, use pre-set temp_elev
+            # if temperature was a bias-corrected variable, temp_elev was already set
             temp_elev = self.temp_elev
         else:
             temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.terrain.gcm_elev_n
@@ -675,24 +674,46 @@ class Climate():
         var : str
             Variable to bias correct
         """
-        # get quantile mapping .csv filename
-        method = 'quantile_mapping'
-        map_glac = self.mapping_glacier
-        bias_fn = self.args.bias_fn.format(m=method, v=var, g=map_glac)
+        # open the dataset for this group
+        ds = xr.open_dataset('shop/preprocessing/quantile_cdfs.nc', group=var)
 
-        # need to use file generated without a lapse rate for temperature
+        # load lats/lons from quantile mapping data and simulation points
+        data_lat = ds.lat.values[None, :]
+        glacier_lat = self.terrain.lat_n[:, None]
+        data_lon = ds.lon.values[None, :]
+        glacier_lon = self.terrain.lon_n[:, None]
+
+        # find nearest station to each grid cell
+        coslat = np.cos(np.deg2rad(glacier_lat))
+        dist = ((data_lat - glacier_lat))**2 + ((data_lon - glacier_lon) * coslat)**2
+        station_idx = dist.argmin(axis=1)          # (N_POINTS,) which station each cell uses
+
+        # load data
+        to_correct = getattr(self, var)
+        corrected = np.empty_like(to_correct, dtype=float)
+
+        # storage for elevation (needed for temp)
+        temp_elev = np.empty(self.terrain.N_POINTS)
+
+        # load CDF from the pre-processed quantile mapping data
+        merra_cdf = ds.merra_cdf.values   # (N_STATIONS, N_QUANTILES)
+        aws_cdf = ds.aws_cdf.values       # (N_STATIONS, N_QUANTILES)
+
+        # loop through unique stations
+        for s in np.unique(station_idx):
+            m = station_idx == s
+            corrected[m] = np.interp(to_correct[m], merra_cdf[s], aws_cdf[s])
+
+            nearest = ds.isel(station=station_idx)
+            temp_elev[m] = nearest.elevation.values
+
         if var == 'temp':
-            bias_fn = bias_fn.replace('.csv','_0.csv')
-
-        assert os.path.exists(bias_fn), f'Quantile mapping file does not exist for {var}'
-        bias_df = pd.read_csv(bias_fn)
-        
-        # interpolate values according to quantile mapping
-        values = getattr(self, var)
-        adjusted = np.interp(values, bias_df['sorted'], bias_df['mapping'])
+            self.temp_elev = temp_elev
 
         # update values
-        setattr(self, var, adjusted)
+        setattr(self, var, corrected)
+
+        ds.close()
         return
     
     def precompute_upcoming_snow(self):

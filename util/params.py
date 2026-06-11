@@ -52,13 +52,13 @@ machine = socket.gethostname()
 # ====================================================================================================================
 
 # GENERAL
-config_fn = 'config.yaml'          # $ -cf, --config_fn     # Configuration .yaml file    
+config_fn = 'config.yaml'           #$ -cf, --config_fn     # Configuration .yaml file    
 output_fp = '../Output/'                                    # General output filepath
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
-dem_fp = '../data/dems/COP30'                               # DEM filepath for many glaciers (COP 30)
-vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'            # Path to VRT file for COP30 DEMs, inside dem_fp
+cop30_fp = '../data/dems/COP30'                             # DEM filepath for many glaciers (COP 30)
+cop30_vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'      # Path to VRT file for COP30 DEMs, inside cop30_fp
 dem_fn = '../data/dems/{g}_dem.tif'                         # DEM filename for a single glacier
 shading_data_fp = '../data/shading/'                        # Shading data filepath for output of shading model  
 
@@ -144,7 +144,7 @@ initial_firn_depth = 10                 # default amount of initial firn [m] (on
 initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
-store_vars = ['MB','EB','layers']       # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
+store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
 
 # METHODS
 method_distribute = 'scatter'           # 'scatter', 'none'

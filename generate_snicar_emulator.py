@@ -1,9 +1,8 @@
 """
 SNICAR Emulator - Training
 ===========================
-Usage:
-    python train_snicar_emulator.py
-    python train_snicar_emulator.py --data_dir snicar_data --epochs 100 --lr 1e-3
+Takes the training data prepared from a Latin HyperCube sampler
+and trains a 
 """
 
 import argparse
@@ -21,6 +20,9 @@ jax.config.update('jax_enable_x64', True)
 # ============================================================
 
 class SNICAREmulator(eqx.Module):
+    """
+    Define the model architecture with 3 hidden layers.
+    """
     layers: list
 
     def __init__(self, in_dim, key):
@@ -44,6 +46,7 @@ class SNICAREmulator(eqx.Module):
 
 @eqx.filter_jit
 def step(model, opt_state, X, y, optimizer):
+    # define the loss function (MSE)
     def loss_fn(model):
         pred = jax.vmap(model)(X)
         return jnp.mean((pred - y) ** 2)
