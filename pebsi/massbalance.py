@@ -497,6 +497,7 @@ class massBalance():
                 # apply a factor to increase grain growth at high density (f_liq is low)
                 F = np.exp(0.01*(layers.ldensity.copy()[idx]))
                 drwet = drwet * F
+            # drwet[drwet > 50] = 50
 
             # get change in grain size due to aging
             aged_grainsize = grainsize + drdry + drwet

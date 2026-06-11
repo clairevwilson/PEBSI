@@ -30,6 +30,7 @@ site_dict = {
 params = {
     # 'wind_factor':[0.5, 1, 1.5, 2, 2.5, 3, 3.5],
     # 'lapse_rate':[-3, -6.5, -9],
+    'kp': [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5],
     'lapse_rate':[-3.5, -4, -4.5, -5, -5.5, -6, -6.5, -7, -7.5, -8, -8.5, -9],
 }
 
@@ -50,7 +51,7 @@ def initialize_simulation(input):
     rgi_fp = base_fp + '../shared/RGI/rgi60/00_rgi60_attribs/'
     out_fp = base_fp + 'Output/paper2/recalibrate_' + site +'/'
     params_str = '_'.join([p.replace('_','') + str(v) for p, v in zip(param_keys, param_values)])
-    out_fn = f'grid_{glacier}_{site}_{params_str}_fixed_'
+    out_fn = f'grid_{glacier}_{site}_{params_str}_FINAL_'
     if os.path.exists(out_fp + out_fn+'0.nc'):
         os.remove(out_fp + out_fn+'0.nc')
 
@@ -86,7 +87,8 @@ def initialize_simulation(input):
         'site':site,
         'qm_glac_name':qm_glac_name,
         'constant_freshgrainsize': 54.5,
-        'option_accel_grains':True,
+        'option_accel_grains':False,
+        'method_turbulent': 'BulkRichardson',
 
         # Filepaths
         'climate_fp':climate_fp,

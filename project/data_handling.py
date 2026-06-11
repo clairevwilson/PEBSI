@@ -284,13 +284,31 @@ class MassBalance():
             self.elevation = df['elevation'].mean()
         return
     
+    def split_winter_summer(self):
+        ends = self.period_ends
+        mod = self.mod
+        meas = self.meas
+
+        if self.dataset == 'seasonal':
+            idx_summer = self.idx_summer 
+            idx_winter = self.idx_winter
+
+            time = {'summer': ends[idx_summer], 'winter': ends[idx_winter]}
+            model = {'summer': mod[idx_summer], 'winter': mod[idx_winter]}
+            meas = {'summer': meas[idx_summer], 'winter': meas[idx_winter]}
+            output = {'time': time, 'mod': model, 'meas': meas, 
+                      'idx': {'summer': idx_summer, 'winter': idx_winter}}
+        else:
+            output = {'time': ends, 'mod': mod, 'meas': meas, 
+                      'idx': {'summer': idx_summer, 'winter': idx_winter}}
+        return output
+    
     def plot_mb(self, mod_label='Modeled', savefig=False):
         self.colors = colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
               '#F77808','#298282','#999999','#FF89B0','#427801']
         
         fig, ax = plt.subplots()
         colors = self.colors
-        starts = self.period_starts
         ends = self.period_ends
         mod = self.mod
         meas = self.meas
