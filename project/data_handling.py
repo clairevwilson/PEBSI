@@ -10,13 +10,15 @@ import matplotlib as mpl
 import seaborn as sns
 from pyproj import Transformer
 import socket
-print(socket.gethostname())
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
     home_fp = '/trace/home/cvwilson/research/'
 elif 'lantern' in socket.gethostname():
     base_fp = '/Users/cvw/local/Output/'
     home_fp = '/Users/cvw/local/'
+elif 'campfire' in socket.gethostname():
+    base_fp = '/home/claire/Local/Output/'
+    home_fp = '/home/claire/Local/'
 else:
     base_fp = 'C:/Users/cvw30/Research/Output/ddf/'
     home_fp = 'C:/Users/cvw30/Research/'

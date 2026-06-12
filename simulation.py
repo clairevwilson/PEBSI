@@ -10,9 +10,8 @@ single point.
 @author: clairevwilson
 """
 import os 
-os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-os.environ['JAX_DEFAULT_DTYPE_BITS'] = "64"
 import jax
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"
 jax.config.update("jax_enable_x64", True)
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
@@ -27,7 +26,7 @@ import xarray as xr
 import pandas as pd
 import jax.numpy as jnp
 # Internal libraries
-import util.params as prms
+import util.defaults as defaults
 from util.config import Config
 from util.terrain import Terrain
 from util.output import Output
@@ -36,12 +35,9 @@ from util.layers import Layers
 from pebsi.state import *
 from pebsi.main import main
 
-# START TIMER
-start_time = time.time()
-
 def get_args(parse=True):
     """
-    Defines config class
+    Loads command-line arguments
 
     Parameters
     ==========
@@ -52,16 +48,18 @@ def get_args(parse=True):
     parser = argparse.ArgumentParser(description='energy balance model runs')
 
     # CONFIG FILE (any command-line args will overwrite the config file)
-    parser.add_argument('-c', '--use_config', action='store_true', default=prms.use_config,
+    parser.add_argument('-c', '--use_config', action='store_true', 
+                        default=defaults.use_config,
                         help='load settings from config file?')
     parser.add_argument('-cf', '--config_fn', type=str, default=None,
                         help='filename of config yaml file')
     
     # GLACIERS
     parser.add_argument('-rgi_ids', type=str, nargs='+', default=None,
-                        help='List of RGI IDs to run')
-    parser.add_argument('-rgi_region', type=int, default=prms.rgi_region,
-                        help='RGI O1 region to run')
+                        help='List of RGI IDs to run (overrides rgi_region)')
+    parser.add_argument('-rgi_region', type=int, 
+                        default=defaults.rgi_region,
+                        help='RGI O1 region to run (all glaciers in this region if rgi_ids not specified)')
     
     # MODEL TIME
     parser.add_argument('-start','--start_date', type=str, default=None,
@@ -94,25 +92,28 @@ def get_args(parse=True):
 
 class PEBSI():
     def __init__(self, args):
-        
-        # parse args from config file, command line and default params
+        """
+        Initializes the configuration for a simulation.
+        """
+        self.start_time = time.time() 
+
+        # parse args in order of defaults < config yaml < command line
         self.config = Config(args)
-        self.args = self.config.args 
-        self.prms = self.config.dynamic_args
+
+        # params contains both static and dynamic parameters
+        self.params = self.config.params 
         return
     
     def prepare_inputs(self):
         """
-        Initializes the spatial (elevation, shading, etc.;
-        vertical layer temperature, density, etc.) and
+        Initializes the spatial (elevation, shading, etc.) and
         temporal (air temperature, precipitation, etc.) 
         inputs to the model.
         """
-        static_args = self.config.args 
-        dynamic_args = self.config.dynamic_args
+        params = self.params
 
         # =========== SPATIAL DATA HANDLING ===========
-        terrain = Terrain(self.config.args)
+        terrain = Terrain(params)
 
         # run DEM functions for shading, elevation, etc.
         terrain.run_dem_functions()
@@ -121,18 +122,14 @@ class PEBSI():
         terrain.validate_terrain_data()
 
         # ====== TEMPORAL (CLIMATE) DATA HANDLING ======
-        climate = Climate(static_args, dynamic_args, terrain)
+        climate = Climate(params, terrain)
         climate.get_data()
 
-        # validate the climate inputs
-        climate.check_ds()
+        # process the dataset for elevation, bias, etc.
+        climate.process_climate()
 
         # adjust elevation-dependent variables
         climate.adjust_to_elevation()
-
-        # load data for emulator
-        if self.config.args.method_snicar == 'emulator':
-            climate.precompute_emulator_inputs()
 
         # precompute the upcoming snowfall amounts
         climate.precompute_upcoming_snow()
@@ -146,8 +143,14 @@ class PEBSI():
         return
     
     def prepare_initial_state(self):
+        """
+        Initializes the vertical structure (layer 
+        temperature, density, etc.) across points.
+        """
         # ================== LAYERS ==================
-        layers = Layers(self.args, self.prms, self.climate, self.terrain)
+        layers = Layers(
+            self.params, self.climate, self.terrain
+        )
 
         # initialize layer properties
         layers.initialize_layers()
@@ -157,11 +160,17 @@ class PEBSI():
         return
     
     def pack_states(self):
+        """
+        Packs the terrain, layer, and climate inputs into 
+        JAX-compatible states.
+        """
+        params = self.params 
+
         # CONSTANTS
         self.N_POINTS = N_POINTS = self.terrain.N_POINTS
         self.N_LAYERS = self.layers.N_LAYERS
-        CTOK = self.args.celsius_to_kelvin
-        SPH = self.args.seconds_per_hour
+        CTOK = self.params.celsius_to_kelvin
+        SPH = self.params.seconds_per_hour
 
         # get timestamps in Pandas format
         dates = pd.to_datetime(self.climate.dates)
@@ -205,19 +214,15 @@ class PEBSI():
         )
 
         # ================== GLACIERS ==================
+
+        # time-varying spatial and layer attributes
         glacier_state = GlacierState(
-
             # surface properties
-            albedo=jnp.full((N_POINTS,), self.prms.albedo_fresh_snow, dtype=jnp.float64),
-            albedo_surr=jnp.full((N_POINTS,), self.prms.albedo_fresh_snow, dtype=jnp.float64),
-            surftemp=jnp.full((N_POINTS,), self.args.surftemp_guess, dtype=jnp.float64),
-            roughness=jnp.full((N_POINTS,), self.prms.roughness_fresh_snow, dtype=jnp.float64),
+            albedo=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
+            albedo_surr=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
+            surftemp=jnp.full((N_POINTS,), params.surftemp_guess, dtype=jnp.float64),
+            roughness=jnp.full((N_POINTS,), params.roughness_fresh_snow, dtype=jnp.float64),
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
-
-            # these may not need to be stored to state --- they will be passed to func
-            # previous_mass=jnp.array(self.layers.mass, dtype=jnp.float64),
-            # previous_ice=jnp.array(self.layers.mass_ice, dtype=jnp.float64),
-            # previous_water=jnp.array(self.layers.mass_water, dtype=jnp.float64),
 
             # trackers
             delayed_snow=jnp.zeros((N_POINTS,), dtype=jnp.float64),
@@ -249,6 +254,7 @@ class PEBSI():
         
         )
 
+        # time-invariant spatial attributes
         point_attrs = PointAttributes(
             elevation=jnp.array(self.terrain.elev_n, dtype=jnp.float64),
             slope=jnp.array(self.terrain.slope_n, dtype=jnp.float64),
@@ -257,62 +263,78 @@ class PEBSI():
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
         )
         return glacier_state, forcings, point_attrs
-
+    
     def run(self):
         """
-        Executes model functions and stores 
-        output data.
-
-        Parameters
-        ==========
-        store_attrs : dict
-            Dictionary of additional metadata to store 
-            in the model output .nc
+        Executes model functions and stores the
+        output data. The main() function is run in
+        chunks so JAX only has to recompile at most
+        two times (once for the main temporal_chunks
+        size, and once for the remainder.)
         """
+        static_args = self.config.static_args
+        dynamic_args = self.config.dynamic_args 
+        params = self.config.params
+
         # ======== INITIALIZE THE INPUTS ========
         self.prepare_inputs()
         self.prepare_initial_state()
-        initial_state, forcings, point_attrs = self.pack_states()
+        initial_state, all_forcings, point_attrs = self.pack_states()
 
         # ======== INITIALIZE THE OUTPUTS ========
         dates = self.climate.dates
-        model_output = Output(dates, self.args, self.prms, self.terrain)
+        model_output = Output(dates, params, self.terrain)
+
+        self.start_prints()
 
         # ========== RUN ENERGY BALANCE ==========
-        self.start_prints()
-        final_state, records = main(
-            initial_state, forcings, point_attrs, 
-            self.args, self.prms
-        )
+        total_steps = len(dates)
+        state = initial_state
+        all_records = []
+
+        for start in range(0, total_steps, params.temporal_chunks):
+            end = min(start + params.temporal_chunks, total_steps)
+            chunk_forcings = jax.tree.map(lambda x, s=start, e=end: x[s:e], all_forcings)
+           
+            state, chunk_records = main(
+                state, chunk_forcings, point_attrs, static_args, dynamic_args
+            )
+            all_records.append(chunk_records)
+
+        # concatenate records across years
+        records = jax.tree.map(
+            lambda *xs: jnp.concatenate(xs, axis=0), 
+            all_records[0], *all_records[1:])
+        final_state = state
 
         # ============== END TIMER ===============
         records.airtemp.block_until_ready() 
-        time_elapsed = time.time() - start_time
+        time_elapsed = time.time() - self.start_time
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
         print(f'~ Simulation completed in {time_elapsed:.2f} seconds ~')
 
         # ============ STORE OUTPUT ==============
-        if self.args.store_data:
+        if self.params.store_data:
             model_output.store_data(records)
-            model_output.add_basic_attrs(self.args,time_elapsed,self.climate)
+            model_output.add_basic_attrs(self.params,time_elapsed,self.climate)
         else:
             print('~ Success: data was not saved ~')
         return final_state
     
     def start_prints(self):
         # get info about the simulation time
-        start = pd.to_datetime(self.args.start_date)
-        end = pd.to_datetime(self.args.end_date)
+        start = pd.to_datetime(self.params.start_date)
+        end = pd.to_datetime(self.params.end_date)
         n_months = np.round((end-start) / pd.Timedelta(days=30))
         start_fmtd = start.month_name()+', '+str(start.year)
 
         # print starting statement
         if self.terrain.N_POINTS == 1:
-            id = self.args.rgi_id[0]
+            id = self.params.rgi_id[0]
             elev = self.terrain.elev_n[0]
             print(f'~ Running {id} at {elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
         else:
-            print(f'~ Running {self.terrain.N_POINTS} points in region {self.args.rgi_region} for {n_months} months starting in {start_fmtd} ~')
+            print(f'~ Running {self.terrain.N_POINTS} points in region {self.params.rgi_region} for {n_months} months starting in {start_fmtd} ~')
         return
     
     ############################ TESTING FUNCTIONALITY ############################
@@ -340,7 +362,7 @@ class PEBSI():
         # TEST ONE FUNCTION
         import pebsi.massbalance as pmb
         import pebsi.energybalance as peb
-        mb = pmb.MassBalanceDriver(None, self.args)
+        mb = pmb.MassBalanceDriver(None, self.params)
         eb = peb.EnergyBalanceDriver(None, self.args)
 
         # CHECK ENERGY BALANCE
@@ -398,10 +420,10 @@ if __name__ == '__main__':
     # get command-line args
     args = get_args()
 
-    # initialize and run the model
+    # initialize the model
     model = PEBSI(args)
 
-    if model.args.testing:
+    if model.params.testing:
         # tests a single function in a single timestep so you can inspect output
         model.test()
     else:

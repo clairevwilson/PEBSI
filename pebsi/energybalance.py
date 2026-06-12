@@ -12,13 +12,12 @@ import jax
 import jax.numpy as jnp
 
 class EnergyBalanceDriver():
-    def __init__(self, static_args, dynamic_args):
+    def __init__(self, params):
         """
         Stores parameters and physical constants
         for accessing within mass balance functions.
         """
-        self.prms = dynamic_args 
-        self.args = static_args
+        self.params = params
 
     def solve_energy_balance(self, state, forcings, point_attrs):
         """
@@ -83,11 +82,11 @@ class EnergyBalanceDriver():
         SWnet = SWin + SWref
 
         # handle penetrating shortwave
-        if self.args.option_SWpen:
+        if self.params.option_SWpen:
             frac_abs_surf = jnp.where(
                 guessed_state.ltype[:, 0] == 0,
-                self.args.frac_absrad_snow,
-                self.args.frac_absrad_ice
+                self.params.frac_absrad_snow,
+                self.params.frac_absrad_ice
             )
         else:
             frac_absrad = 1
@@ -131,7 +130,7 @@ class EnergyBalanceDriver():
         sky_view = point_attrs.sky_view_factor
         slope = point_attrs.slope * jnp.pi/180
         aspect = point_attrs.aspect * jnp.pi/180
-        dt = self.args.dt
+        dt = self.params.dt
 
         # albedo input
         albedo = state.albedo
@@ -181,12 +180,12 @@ class EnergyBalanceDriver():
         surftemp : float
             Surface temperature [C]
         """
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        SIGMA_SB = args.sigma_SB
-        CTOK = args.celsius_to_kelvin
-        EPS = args.surf_emissivity
+        SIGMA_SB = params.sigma_SB
+        CTOK = params.celsius_to_kelvin
+        EPS = params.surf_emissivity
 
         # unpack surface temperature 
         surftemp = state.surftemp
@@ -196,7 +195,7 @@ class EnergyBalanceDriver():
         LWout = -1 * EPS * SIGMA_SB * surftempK**4
         
         # pull LWin straight from data
-        LWin = forcings.longwave_in / args.dt
+        LWin = forcings.longwave_in / params.dt
             
         return LWin, LWout
     
@@ -212,10 +211,10 @@ class EnergyBalanceDriver():
         """
       
         # CONSTANTS
-        SNOW_THRESHOLD_LOW = self.args.snow_threshold_low
-        SNOW_THRESHOLD_HIGH = self.args.snow_threshold_high
-        DENSITY_WATER = self.args.density_water
-        CP_WATER = self.args.Cp_water
+        SNOW_THRESHOLD_LOW = self.params.snow_threshold_low
+        SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
+        DENSITY_WATER = self.params.density_water
+        CP_WATER = self.params.Cp_water
 
         # unpack climate variables
         airtemp = forcings.tempC
@@ -244,9 +243,9 @@ class EnergyBalanceDriver():
         """
 
         # CONSTANTS
-        K_ICE = self.args.k_ice
-        TEMP_TEMP = self.args.temp_temp 
-        temp_depth = self.prms.temp_depth
+        K_ICE = self.params.k_ice
+        TEMP_TEMP = self.params.temp_temp 
+        temp_depth = self.params.temp_depth
         
         # calculate ground flux from surface temperature
         Qg = -1 * K_ICE * (state.surftemp - TEMP_TEMP) / temp_depth
@@ -265,15 +264,15 @@ class EnergyBalanceDriver():
         roughness : float
             Surface roughness [m]
         """
-        args = self.args 
+        params = self.params 
 
         # CONSTANTS
-        KARMAN = args.karman
-        GRAVITY = args.gravity
-        R_GAS = args.R_gas
-        MM_AIR = args.molarmass_air
-        CP_AIR = args.Cp_air
-        WIND_REF_Z = args.wind_ref_height
+        KARMAN = params.karman
+        GRAVITY = params.gravity
+        R_GAS = params.R_gas
+        MM_AIR = params.molarmass_air
+        CP_AIR = params.Cp_air
+        WIND_REF_Z = params.wind_ref_height
 
         # spatial attributes
         slope = point_attrs.slope
@@ -284,10 +283,9 @@ class EnergyBalanceDriver():
 
         # adjust wind speed to reference height
         z = 2 # reference height in m
-        if WIND_REF_Z != 2:
-            wind_2m = forcings.wind * jnp.log(2/z0) / jnp.log(WIND_REF_Z/z0)
-        else:
-            wind_2m = forcings.wind
+        wind_2m = forcings.wind * jnp.log(2/z0) / jnp.where(
+            WIND_REF_Z == 2, 1.0, jnp.log(WIND_REF_Z/z0)
+        )
 
         # transform humidity into mixing ratio (q) 
         Ewz = self.sat_vapor_pressure(forcings.tempC)  # saturation vapor pressure at 2m
@@ -301,7 +299,7 @@ class EnergyBalanceDriver():
 
         # latent heat term depends on direction of heat exchange
         is_sublimating = (surftemp == 0.0) & ((qz - q0) > 0.0)
-        Lv = jnp.where(is_sublimating, args.Lv_evap, args.Lv_sub)
+        Lv = jnp.where(is_sublimating, params.Lv_evap, params.Lv_sub)
 
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
@@ -338,7 +336,7 @@ class EnergyBalanceDriver():
             Air temperature [C]
         """
         # CONSTANTS
-        CTOK = self.args.celsius_to_kelvin
+        CTOK = self.params.celsius_to_kelvin
 
         # calculate saturation vapor pressure in kPa
         if method in ['ARM']:
@@ -374,7 +372,7 @@ class EnergyBalanceDriver():
             Solar zenith angle [rad]
         """
         # CONSTANTS
-        SOLAR_CONSTANT = self.args.solar_constant
+        SOLAR_CONSTANT = self.params.solar_constant
         P1 = 0.1001
         P2 = 4.7930
         P3 = 9.4758

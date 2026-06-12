@@ -17,7 +17,7 @@ class Output():
     simulation and saves it to a netcdf file upon
     run completion.
     """
-    def __init__(self, time, args, prms, terrain):
+    def __init__(self, time, params, terrain):
         """
         Creates netcdf file where the model output 
         will be saved.
@@ -26,10 +26,9 @@ class Output():
         ==========
         time : list-like
             List of times used in the simulation
-        args : command-line args
+        params : command-line params
         """
-        self.args = args
-        self.prms = prms
+        self.params = params
         self.terrain = terrain
 
         # define all the variables to be saved
@@ -63,18 +62,18 @@ class Output():
             j += 1
 
         # make sure the requested storage variables are valid
-        for v in args.store_vars: assert v in all_variables, f'Invalid output group: {v}'
+        for v in params.store_vars: assert v in all_variables, f'Invalid output group: {v}'
 
         # extract the actual variables to store
-        self.store = [v for g in args.store_vars for v in all_variables[g]]
+        self.store = [v for g in params.store_vars for v in all_variables[g]]
 
         # generate dummy variables of the correct shape
         N_TIME = self.n_timesteps = len(time)
-        N_LAYERS = self.max_nlayers = args.max_nlayers
+        N_LAYERS = self.max_nlayers = params.max_nlayers
         N_POINTS = self.n_points = terrain.N_POINTS
         
         # Keep tracking variables
-        initial_height = args.initial_ice_depth + prms.initial_firn_depth + prms.initial_snow_depth
+        initial_height = params.initial_ice_depth + params.initial_firn_depth + params.initial_snow_depth
         self.last_height = initial_height
         
         # create file to store outputs
@@ -141,7 +140,7 @@ class Output():
         self.get_output_names()
 
         # create the empty file to store output
-        if args.store_data:
+        if params.store_data:
             os.makedirs(self.output_fp, exist_ok=True)
             self.out_files = []
             for i, g in enumerate(terrain.rgiid_n):
@@ -156,18 +155,18 @@ class Output():
 
         Parameters
         ==========
-        args : command-line arguments
+        params : command-line arguments
         """
-        args = self.args
+        params = self.params
 
         # specify individual file output name format
         self.output_fn = '{g}_{i}.nc'
 
         # crop the trailing /
-        if str(args.output_fp).endswith('/'):
-            output_fp_compare = args.output_fp[:-1]
+        if str(params.output_fp).endswith('/'):
+            output_fp_compare = params.output_fp[:-1]
         else:
-            output_fp_compare = args.output_fp
+            output_fp_compare = params.output_fp
 
         # make it end with a _ for clean naming
         if not str(output_fp_compare).endswith('_'):
@@ -177,7 +176,7 @@ class Output():
         # get output name and store the climate data
         if output_fp_compare is None:
             model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
-            self.output_fp = f'RGI{args.rgi_region}_{model_run_date}_'
+            self.output_fp = f'RGI{params.rgi_region}_{model_run_date}_'
         
         # make file name unique by adding an indexer
         i = 0
@@ -263,7 +262,7 @@ class Output():
             ds['icedepth'] = (['time'],icedepth.values,{'units':'m'})
         return ds
     
-    def add_basic_attrs(self,args,time_elapsed,climate):
+    def add_basic_attrs(self,params,time_elapsed,climate):
         """
         Adds informational attributes to the output dataset.
         - glacier name, site, and elevation
@@ -276,7 +275,7 @@ class Output():
         
         Parameters
         ==========
-        args : command line arguments
+        params : command line arguments
         time_elapsed : float
             Run time for the whole simulation
         climate
@@ -286,11 +285,11 @@ class Output():
         time_elapsed = f'{time_elapsed:.1f} s'
 
         # get inforation about climate data sources
-        which_re = args.climate_source
+        which_re = params.climate_source
         re_str = ''
-        if args.use_aws:
+        if params.use_aws:
             measured = climate.measured_vars
-            AWS_name = args.glac_name
+            AWS_name = params.glac_name
             AWS_elev = climate.aws_elev
             which_AWS = f'{AWS_name} {AWS_elev}'
             AWS_str = ', '.join(measured)
@@ -306,7 +305,7 @@ class Output():
             which_AWS = 'none'
         
         # get information about bias correction
-        if args.use_aws:
+        if params.use_aws:
             corr_vars = [v for v in climate.bias_vars if v not in measured]
         else:
             corr_vars = climate.bias_vars
@@ -334,27 +333,27 @@ class Output():
                 from_reanalysis=re_str,
                 which_reanalysis=which_re,
                 bias_corrected=corr_str,
-                sim_start=str(args.start_date),
-                sim_end=str(args.end_date),
+                sim_start=str(params.start_date),
+                sim_end=str(params.end_date),
                 model_run_date=str(pd.Timestamp.today()),
                 time_elapsed=time_elapsed,
-                run_by=args.machine
+                run_by=params.machine
             )
 
-            if args.task_id > -1:
-                ds = ds.assign_attrs(task_id=str(args.task_id))
+            if params.task_id > -1:
+                ds = ds.assign_attrs(task_id=str(params.task_id))
 
             # list variables from config that can be skipped
             skip = ['store_data','progress_bar','debug', 'fff',
                         'dates_from_data','climate_source',
                         'bias_vars', 'aws_elev', 'output_fn',
                         'rgiids','start_date','end_date','machine']
-            skip_in_config = skip + list(args.cmd_args)
+            skip_in_config = skip + list(params.cmd_params)
 
-            # add args that were specified in config file
-            if args.use_config:
+            # add params that were specified in config file
+            if params.use_config:
                 import yaml
-                with open(args.config_fn) as f:
+                with open(params.config_fn) as f:
                     config_inputs = yaml.safe_load(f)
         
                 new_attrs = {}
@@ -372,11 +371,11 @@ class Output():
                         new_attrs[key] = store
                 ds = ds.assign_attrs(**new_attrs)
 
-            # add args that were specified in command line
+            # add params that were specified in command line
             cmd_attrs = {}
-            for key in args.cmd_args:
+            for key in params.cmd_params:
                 if key not in skip:
-                    value = getattr(args, key)
+                    value = getattr(params, key)
                     if type(value) == list:
                         if len(value) == self.n_points:
                             store = value[i]
@@ -428,6 +427,6 @@ class Output():
         for parallel runs.
         """
         # delete ice spectrum file
-        if os.path.exists(self.args.ice_spectrum_fn):
-            os.remove(self.args.ice_spectrum_fn)
+        if os.path.exists(self.params.ice_spectrum_fn):
+            os.remove(self.params.ice_spectrum_fn)
         return

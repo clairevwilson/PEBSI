@@ -53,7 +53,7 @@ model = eqx.tree_deserialise_leaves(
 norm  = np.load('snicar_norm.npz')
 mu, sigma = jnp.array(norm['mu']), jnp.array(norm['sigma'])
 
-def get_albedo(state, prms, args, forcings):
+def get_albedo(state, params, forcings):
     # grab the top four layers
     lheight = state.lheight[:, :4]
     ldensity = state.ldensity[:, :4]
@@ -64,7 +64,7 @@ def get_albedo(state, prms, args, forcings):
 
     # grab 1D inputs
     solar_zenith = forcings.solar_zenith 
-    direct = (forcings.tcc <= args.diffuse_cloud_limit).astype(jnp.float32)
+    direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
 
     # spherical grains if there is refreeze or liquid water; else flat hexagons
     round_grains = (state.lrefreeze > 0) | (state.lwater > 1e-3)
@@ -93,25 +93,25 @@ def get_albedo(state, prms, args, forcings):
     albedo = jax.vmap(model)(X_weighted)
 
     # check if this is lower than the current year albedo
-    year_idx = (forcings.year - args.start_year)
+    year_idx = (forcings.year - params.start_year)
     new_annual_min_albedo = state.annual_min_albedo.at[:, year_idx].set(
         jnp.minimum(state.annual_min_albedo[:, year_idx], albedo)
     )
 
     # for exposed firn, get the minimum albedo from the year exposed
     exposed_year = (state.lage[:, 0] / 365.25).astype(int)
-    exposed_idx = exposed_year - args.start_year
+    exposed_idx = exposed_year - params.start_year
     albedo_firn = new_annual_min_albedo[jnp.arange(state.lage.shape[0]), exposed_idx]
 
     # fill initialized 1 values with our constant albedo_firn
     albedo_firn = jnp.where(
-        albedo_firn < 1, albedo_firn, prms.albedo_firn
+        albedo_firn < 1, albedo_firn, params.albedo_firn
     )
 
     final_albedo = jnp.where(
         state.ltype[:, 0] == 0,
         albedo,
         jnp.where(state.ltype[:, 0] == 1,
-                  albedo_firn, prms.albedo_ice)
+                  albedo_firn, params.albedo_ice)
     )
     return final_albedo, new_annual_min_albedo

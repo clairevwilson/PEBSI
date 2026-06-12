@@ -16,13 +16,13 @@ import util.layers as layers
 import pebsi.albedo as albedo
 
 class MassBalanceDriver:
-    def __init__(self, static_args, dynamic_args):
+    def __init__(self, params):
         """
         Stores parameters and physical constants
         for accessing within mass balance functions.
         """
-        self.prms = dynamic_args 
-        self.args = static_args
+        self.params = params
+        return
 
     # -------------------- WORKER FUNCTIONS --------------------
     def run_new_mass(self, state, forcings):
@@ -45,7 +45,7 @@ class MassBalanceDriver:
         Checks if we are running sup-hourly updates and
         executes get_daily_updates or skip_daily_updates.
         """
-        albedo_TOD = self.args.albedo_TOD
+        albedo_TOD = self.params.albedo_TOD
 
         # parse time index for daily functions
         is_day_start = forcings.hour == 0
@@ -111,7 +111,7 @@ class MassBalanceDriver:
         #     state.basal_reservoir, condensation_runoff)
 
         # check layer sizes for numeric stability before running temp profile
-        state, dead_mass = layers.check_layer_sizes(state, self.args)
+        state, dead_mass = layers.check_layer_sizes(state, self.params)
         prev = self.check_explosion(state, forcings, 5, prev)
         # jax_print('after check_sizes: ice {} water {} reservoir {} dead mass {}',
         #           jnp.sum(state.lice, axis=1),
@@ -158,14 +158,14 @@ class MassBalanceDriver:
         return state, water_squeezed_out
 
     def run_annual_routines(self, state, forcings):
-        args = self.args
+        params = self.params
 
         # are we in the end-of-summer window?
-        is_summer_end_window = (forcings.doy >= args.start_end_summer) & \
-            (forcings.doy <= args.start_end_summer + 60)
+        is_summer_end_window = (forcings.doy >= params.start_end_summer) & \
+            (forcings.doy <= params.start_end_summer + 60)
         is_midnight = forcings.hour == 0 
         # does upcoming snowfall surpass the threshold to consider winter?
-        weather_trigger = forcings.upcoming_snow >= args.new_snow_threshold
+        weather_trigger = forcings.upcoming_snow >= params.new_snow_threshold
         # put temporal triggers together
         time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
 
@@ -197,9 +197,9 @@ class MassBalanceDriver:
             precipitation [kg m-2]
         """
         # CONSTANTS
-        SNOW_THRESHOLD_LOW = self.args.snow_threshold_low
-        SNOW_THRESHOLD_HIGH = self.args.snow_threshold_high
-        DENSITY_WATER = self.args.density_water
+        SNOW_THRESHOLD_LOW = self.params.snow_threshold_low
+        SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
+        DENSITY_WATER = self.params.density_water
 
         # define rain vs snow scaling 
         rain_scale = jnp.linspace(0,1,20)
@@ -233,8 +233,7 @@ class MassBalanceDriver:
         snowfall : float
             Actual snow mass that was added [kg m-2]
         """
-        # get args
-        args = self.args
+        params = self.params
 
         # grab forcings objects we need
         time_idx = forcings.time_idx
@@ -246,20 +245,17 @@ class MassBalanceDriver:
 
         # add delayed snow to snowfall
         total_snowfall = snowfall + state.delayed_snow
-        
-        # define initial mass for conservation check
-        initial_mass = jnp.sum(state.lice + state.lwater, axis=1)
 
         # check if using constant density for new snow
-        if args.constant_snowfall_density:
-            new_density = args.constant_snowfall_density
+        if params.constant_snowfall_density:
+            new_density = params.constant_snowfall_density
         else:
             # CROCUS formulation of density (Vionnet et al. 2012)
             new_density = jnp.maximum(109+6*(tempC-0.)+26*wind**0.5,50)
         
         # check if using constant grain size for new snow
-        if args.constant_freshgrainsize:
-            new_grainsize = args.constant_freshgrainsize
+        if params.constant_freshgrainsize:
+            new_grainsize = params.constant_freshgrainsize
         else:
             # CLM formulation of grain size (CLM5.0 Documentation)
             airtemp = tempC
@@ -274,9 +270,9 @@ class MassBalanceDriver:
         new_age = jnp.zeros_like(total_snowfall)
 
         # wet deposition occurs in snowfall
-        new_BC = bcwet * args.dt
-        new_OC = ocwet * args.dt
-        new_dust = dustwet * args.dt
+        new_BC = bcwet * params.dt
+        new_OC = ocwet * params.dt
+        new_dust = dustwet * params.dt
 
         # pack properties of new layer into a namespace
         new_layer = {
@@ -298,7 +294,7 @@ class MassBalanceDriver:
         # define conditions for making a new layer for accumulation
         surf_not_snow = (state.ltype[:, 0] > 0)
         density_threshold = (state.ldensity[:, 0] > (new_density * 3))
-        large_top_layer = (state.lheight[:, 0] > args.dz_toplayer * 2)
+        large_top_layer = (state.lheight[:, 0] > params.dz_toplayer * 2)
         new_layer_cond = surf_not_snow | density_threshold | large_top_layer
 
         # check for small surface snow layer (merge new snow with it no matter what)
@@ -313,7 +309,7 @@ class MassBalanceDriver:
 
         # handle cases 1 & 3: create a new layer and merge snowfall with existing layer
         state = layers.add_top_layer(state, create_new_mask, new_layer)
-        state = layers.merge_new_layer(state, merge_new_mask, new_layer, args)
+        state = layers.merge_new_layer(state, merge_new_mask, new_layer, params)
 
         # handle case 2: delaying this snowfall to the next timestep
         updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
@@ -329,7 +325,7 @@ class MassBalanceDriver:
         )
         
         # update layer depth from new layer heights
-        state = layers.update_layer_props(state, args.density_ice)     
+        state = layers.update_layer_props(state, params.density_ice)     
 
         # return actual snowfall that was added, including any delayed_snow
         return actual_snowfall, state
@@ -344,8 +340,7 @@ class MassBalanceDriver:
         layers
             Class object from pebsi.layers
         """
-        # CONSTANTS
-        dt = self.args.dt
+        dt = self.params.dt
 
         # define mask for snow/firn and top layer
         snow_firn_mask = state.ltype < 2
@@ -380,18 +375,18 @@ class MassBalanceDriver:
         Executes daily update functions (albedo, surrounding 
         albedo, days since snowfall).
         """
-        albedo_TOD = self.args.albedo_TOD
+        albedo_TOD = self.params.albedo_TOD
         is_day_start = forcings.hour == 0
         is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
 
         # === albedo ===
         new_albedo, new_annual_min_albedo = albedo.get_albedo(
-            state, self.prms, self.args, forcings
+            state, self.params, forcings
         )
 
         # === surrounding albedo ===
-        ALBEDO_GROUND = self.args.albedo_ground
-        ALBEDO_SNOW = self.prms.albedo_fresh_snow
+        ALBEDO_GROUND = self.params.albedo_ground
+        ALBEDO_SNOW = self.params.albedo_fresh_snow
 
         # update max snow if snow mass is greater than running max
         current_snow = jnp.sum(state.lice * state.snow_mask, axis=1)
@@ -431,16 +426,16 @@ class MassBalanceDriver:
         )
     
     def heating_melting(self, state, fluxes):
-        args = self.args
+        params = self.params
         layers_idx = jnp.arange(state.lice.shape[1])[None, :]
 
         # CONSTANTS
-        EXTINCT_SNOW = args.extinct_coef_snow 
-        EXTINCT_ICE = args.extinct_coef_ice 
-        CP_ICE = args.Cp_ice
-        CP_WATER = args.Cp_water
-        LH_RF = args.Lh_rf
-        dt = args.dt
+        EXTINCT_SNOW = params.extinct_coef_snow 
+        EXTINCT_ICE = params.extinct_coef_ice 
+        CP_ICE = params.Cp_ice
+        CP_WATER = params.Cp_water
+        LH_RF = params.Lh_rf
+        dt = params.dt
 
         # load the amount of heat added to each layer
         Q_abs_surface = fluxes['melt_energy'][:, None]
@@ -555,7 +550,7 @@ class MassBalanceDriver:
 
             # collapse one layer per point where mask if True
             state = layers.remove_layer(
-                state, melt_point_mask, melt_layer_idx, args
+                state, melt_point_mask, melt_layer_idx, params
             )
 
         return state, layermelt, mass_to_route
@@ -580,11 +575,11 @@ class MassBalanceDriver:
             Runoff of liquid water lost to system [kg m-2]
         """
         properties = state._asdict()
-        args = self.args
+        params = self.params 
 
         # CONSTANTS
-        DENSITY_WATER = args.density_water
-        DENSITY_ICE = args.density_ice
+        DENSITY_WATER = params.density_water
+        DENSITY_ICE = params.density_ice
 
         # transpose arrays for layer cascade
         scan_lice = jnp.transpose(properties['lice'])
@@ -599,10 +594,10 @@ class MassBalanceDriver:
         porosity = jnp.maximum(0.0, 1.0 - vol_f_ice)
 
         # calculate irreducible water content
-        if args.constant_irrwater:
-            frac_irreduc = jnp.full_like(porosity, args.Sr)
+        if params.constant_irrwater:
+            frac_irreduc = jnp.full_like(porosity, params.Sr)
         else:
-            frac_irreduc = jnp.where(scan_ldensity > 500.0, args.Sr_dense, args.Sr_light)
+            frac_irreduc = jnp.where(scan_ldensity > 500.0, params.Sr_dense, params.Sr_light)
         water_irreduc_capacity = porosity * scan_lheight * DENSITY_WATER * frac_irreduc
 
         # pack all the inputs
@@ -666,10 +661,10 @@ class MassBalanceDriver:
         snow_firn_idx : np.ndarray
             Indices of snow and firn layers
         """
-        args = self.args
+        params = self.params
         properties = state._asdict()
         layers_idx = jnp.arange(state.lice.shape[1])[None, :]
-        dt = args.dt
+        dt = params.dt
 
         # transpose arrays for layer cascade
         scan_lwater = jnp.transpose(properties['lwater'])
@@ -708,9 +703,9 @@ class MassBalanceDriver:
             cdust = jnp.where(mass > 0.0, mdust / mass, 0.0)
 
             # compute partition leaving the layer
-            BCout_pot = self.prms.ksp_BC * q_out * cBC 
-            OCout_pot = self.prms.ksp_OC * q_out * cOC 
-            dustout_pot = self.prms.ksp_dust * q_out * cdust 
+            BCout_pot = self.params.ksp_BC * q_out * cBC 
+            OCout_pot = self.params.ksp_OC * q_out * cOC 
+            dustout_pot = self.params.ksp_dust * q_out * cdust 
 
             # cap mass at amount previously in the layer
             BCout = jnp.minimum(BCout_pot, mBC)
@@ -753,19 +748,18 @@ class MassBalanceDriver:
             Total amount of refreeze [kg m-2]
         """
         properties = state._asdict()
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        CP_ICE = args.Cp_ice
-        CP_WATER = args.Cp_water
-        DENSITY_ICE = args.density_ice
-        LH_RF = args.Lh_rf
+        CP_ICE = params.Cp_ice
+        CP_WATER = params.Cp_water
+        DENSITY_ICE = params.density_ice
+        LH_RF = params.Lh_rf
 
         ltemp = properties['ltemp']
         lwater = properties['lwater']
         lice = properties['lice']
         lheight = properties['lheight']
-        lmass = lice + lwater
 
         # calculate actual heat capacity including water
         bulk_heat_capacity = (lice * CP_ICE) + (lwater * CP_WATER)
@@ -814,12 +808,12 @@ class MassBalanceDriver:
         or condensation).
         """
         properties = state._asdict()
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        LV_SUB = args.Lv_sub
-        LV_VAP = args.Lv_evap
-        dt = args.dt
+        LV_SUB = params.Lv_sub
+        LV_VAP = params.Lv_evap
+        dt = params.dt
 
         # load inputs
         ice_mask = properties['ice_mask']
@@ -923,18 +917,18 @@ class MassBalanceDriver:
         surftemp : float
             Surface temperature [C]
         """   
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        CP_ICE = args.Cp_ice
-        DENSITY_ICE = args.density_ice
-        DENSITY_WATER = args.density_water
-        TEMP_TEMP = args.temp_temp
-        temperate_depth = self.prms.temp_depth
-        K_ICE = args.k_ice
-        K_WATER = args.k_water
-        K_AIR = args.k_air
-        MAX_DT = args.max_temp_change
+        CP_ICE = params.Cp_ice
+        DENSITY_ICE = params.density_ice
+        DENSITY_WATER = params.density_water
+        TEMP_TEMP = params.temp_temp
+        TEMP_DEPTH = params.temp_depth
+        K_ICE = params.k_ice
+        K_WATER = params.k_water
+        K_AIR = params.k_air
+        MAX_DT = params.max_temp_change
 
         # load inputs
         surftemp = state.surftemp
@@ -949,13 +943,13 @@ class MassBalanceDriver:
         # determine temperate depth relative to ice surface
         snow_firn_heights = jnp.where(ice_mask, 0.0, lheight)
         ice_surf_depth = jnp.sum(snow_firn_heights, axis=1)
-        temperate_depth = temperate_depth + ice_surf_depth
+        temperate_depth = TEMP_DEPTH + ice_surf_depth
         is_temperate = ldepth >= temperate_depth[:, None]
 
         safe_lheight = jnp.where(lheight > 0, lheight, 1)
 
         # get thermal conductivity for every layer
-        if args.method_conductivity in ['Sauter']:
+        if params.method_conductivity in ['Sauter']:
             # handles snow or ice
             f_ice = (lice / DENSITY_ICE) / safe_lheight
             f_liq = (lwater / DENSITY_WATER) / safe_lheight
@@ -963,21 +957,21 @@ class MassBalanceDriver:
             lcond = f_ice * K_ICE + f_liq * K_WATER + f_air * K_AIR
         else:
             # get snow and firn conductivity
-            if args.method_conductivity in ['VanDusen']:
+            if params.method_conductivity in ['VanDusen']:
                 lcond = 0.21e-01 + 0.42e-03 * ldensity + 0.22e-08 * ldensity**3
-            elif args.method_conductivity in ['Douville']:
+            elif params.method_conductivity in ['Douville']:
                 lcond = 2.2 * jnp.power(ldensity / DENSITY_ICE, 1.88)
-            elif args.method_conductivity in ['Jansson']:
+            elif params.method_conductivity in ['Jansson']:
                 lcond = 0.02093 + 0.7953e-3 * ldensity + 1.512e-12 * ldensity **4
-            elif args.method_conductivity in ['OstinAndersson']:
+            elif params.method_conductivity in ['OstinAndersson']:
                 lcond = -8.71e-3 + 0.439e-3 * ldensity + 1.05e-6 * ldensity**2
             
             # mask ice layers with constant conductivity
             lcond = jnp.where(ice_mask, K_ICE, lcond)
 
         # get timestep for heat equation
-        dt_heat = args.dt / args.n_heat_steps
-        dT_limit = MAX_DT / args.n_heat_steps
+        dt_heat = params.dt / params.n_heat_steps
+        dT_limit = MAX_DT / params.n_heat_steps
 
         # inter-layer spacing
         # dz is the distance between center of layer i and layer i+1
@@ -1025,7 +1019,7 @@ class MassBalanceDriver:
 
         # execute time-stepping loop
         final_temperatures = jax.lax.fori_loop(
-            0, args.n_heat_steps, _conduction_step, ltemp
+            0, params.n_heat_steps, _conduction_step, ltemp
         )
 
         # save back to state
@@ -1038,18 +1032,18 @@ class MassBalanceDriver:
         Calculates densification of layers due to 
         compression from overlying mass.
         """
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        GRAVITY = args.gravity
-        R = args.R_gas
-        VISCOSITY_SNOW = args.viscosity_snow
-        rho = args.constant_snowfall_density
+        GRAVITY = params.gravity
+        R = params.R_gas
+        VISCOSITY_SNOW = params.viscosity_snow
+        rho = params.constant_snowfall_density
         DENSITY_FRESH_SNOW = rho if rho else 50
-        DENSITY_ICE = args.density_ice
-        DENSITY_WATER = args.density_water
-        CTOK = args.celsius_to_kelvin
-        dt = args.daily_dt
+        DENSITY_ICE = params.density_ice
+        DENSITY_WATER = params.density_water
+        CTOK = params.celsius_to_kelvin
+        dt = params.daily_dt
 
         # load inputs
         ldensity = state.ldensity
@@ -1060,13 +1054,13 @@ class MassBalanceDriver:
         N_POINTS = lice.shape[0]
 
         # Boone / Anderson (1976) method (COSIPY)
-        if args.method_densification in ['Boone']:
+        if params.method_densification in ['Boone']:
             # EMPIRICAL PARAMETERS
-            c1 = args.Boone_c1
-            c2 = args.Boone_c2
-            c3 = args.Boone_c3
-            c4 = args.Boone_c4
-            c5 = args.Boone_c5
+            c1 = params.Boone_c1
+            c2 = params.Boone_c2
+            c3 = params.Boone_c3
+            c4 = params.Boone_c4
+            c5 = params.Boone_c5
 
             # shift cumulative mass down by one (top layer has no weight above)
             cumulative_mass = jnp.cumsum(lmass, axis=1)[:, :-1]
@@ -1084,7 +1078,7 @@ class MassBalanceDriver:
             dRho = (mass_term + c1 * jnp.exp(temp_term + dens_term)) * ldensity * dt
 
         # Herron Langway (1980) method
-        elif args.method_densification in ['HerronLangway']:
+        elif params.method_densification in ['HerronLangway']:
             # yearly accumulation is the maximum layer snow mass in mm w.e. yr-1
             a = layers.max_snow / (dt*365) # kg m-2 = mm w.e.
             k = jnp.zeros_like(ldensity)
@@ -1100,7 +1094,7 @@ class MassBalanceDriver:
             dRho = k * a**b * (DENSITY_ICE - ldensity) / DENSITY_ICE * dt
 
         # Kojima (1967) method (JULES)
-        elif args.method_densification in ['Kojima']:
+        elif params.method_densification in ['Kojima']:
             NU_0 = 1e7      # Pa s
             RHO_0 = 50      # kg m-3
             k_S = 4000      # K
@@ -1120,10 +1114,10 @@ class MassBalanceDriver:
         new_lheight = lice / new_ldensity 
 
         # check if any water was squeezed out by densification
-        if args.constant_irrwater:
-            frac_irreduc = jnp.full_like(new_ldensity, args.Sr)
+        if params.constant_irrwater:
+            frac_irreduc = jnp.full_like(new_ldensity, params.Sr)
         else:
-            frac_irreduc = jnp.where(new_ldensity > 500.0, args.Sr_dense, args.Sr_light)
+            frac_irreduc = jnp.where(new_ldensity > 500.0, params.Sr_dense, params.Sr_light)
         porosity = 1 - new_ldensity / DENSITY_ICE 
         water_irreduc = porosity * new_lheight * DENSITY_WATER * frac_irreduc
     
@@ -1175,18 +1169,18 @@ class MassBalanceDriver:
         layers
             Class object from pebsi.layers
         """
-        prms = self.prms 
+        params = self.params 
 
         # determine roughness from surface type
         surface_type = state.ltype[:, 0]
         roughness = jnp.minimum(
-            prms.roughness_fresh_snow + prms.roughness_aging_rate * state.days_since_snowfall, 
-            prms.roughness_aged_snow
+            params.roughness_fresh_snow + params.roughness_aging_rate * state.days_since_snowfall, 
+            params.roughness_aged_snow
         )
 
         # overwrite firn and ice values
-        roughness = jnp.where(surface_type == 1, prms.roughness_firn, roughness)
-        roughness = jnp.where(surface_type == 2, prms.roughness_ice, roughness)
+        roughness = jnp.where(surface_type == 1, params.roughness_firn, roughness)
+        roughness = jnp.where(surface_type == 2, params.roughness_ice, roughness)
 
         # return roughness in m
         return roughness / 1000
@@ -1197,24 +1191,24 @@ class MassBalanceDriver:
         metamorphism, refreeze, and addition of fresh
         snow.
         """
-        args = self.args
+        params = self.params
 
         # CONSTANTS
-        WET_C = args.wet_grain_C
+        WET_C = params.wet_grain_C
         PI = jnp.pi
-        RFZ_GRAINSIZE = args.grainsize_rfz
-        FIRN_GRAINSIZE = args.grainsize_firn
-        ICE_GRAINSIZE = args.grainsize_ice
-        CTOK = args.celsius_to_kelvin
-        dt = args.dt
+        RFZ_GRAINSIZE = params.grainsize_rfz
+        FIRN_GRAINSIZE = params.grainsize_firn
+        ICE_GRAINSIZE = params.grainsize_ice
+        CTOK = params.celsius_to_kelvin
+        dt = params.dt
 
         # get temperatures
         airtemp = forcings.tempC
         surftemp = state.surftemp
 
         # find fresh snow grainsize
-        if args.constant_freshgrainsize:
-            FRESH_GRAINSIZE = args.constant_freshgrainsize
+        if params.constant_freshgrainsize:
+            FRESH_GRAINSIZE = params.constant_freshgrainsize
         else:
             FRESH_GRAINSIZE = jnp.select(
                 [airtemp <= -30, airtemp < 0],
@@ -1263,11 +1257,11 @@ class MassBalanceDriver:
         safe_dz_interior = jnp.where(dz[:, 1:-1] > 0.0, dz[:, 1:-1], 1.0)
 
         # DRY METAMORPHISM
-        if args.constant_drdry:
+        if params.constant_drdry:
             # apply constant drdry growth rate except where grainsize is too large
             drdry = jnp.where(
                 grainsize < RFZ_GRAINSIZE,
-                jnp.full_like(grainsize, args.constant_drdry * dt),
+                jnp.full_like(grainsize, params.constant_drdry * dt),
                 jnp.zeros_like(grainsize)
             )
         else:
@@ -1301,9 +1295,9 @@ class MassBalanceDriver:
             # flatten matrices to feed grid interpolators in one parallel operation
             input_matrix = jnp.column_stack((T.ravel(), dTdz.ravel(), p.ravel()))
 
-            tau = args.interp_tau(input_matrix).reshape(state.lice.shape)
-            kap = args.interp_kap(input_matrix).reshape(state.lice.shape)
-            dr0 = args.interp_dr0(input_matrix).reshape(state.lice.shape)
+            tau = params.interp_tau(input_matrix).reshape(state.lice.shape)
+            kap = params.interp_kap(input_matrix).reshape(state.lice.shape)
+            dr0 = params.interp_dr0(input_matrix).reshape(state.lice.shape)
 
             # calculate denominator in drdry equation
             avoid_div_zero_mask = (tau + grainsize) <= FRESH_GRAINSIZE
@@ -1324,7 +1318,7 @@ class MassBalanceDriver:
         drwet = drwetdt * dt * 1e6
         
         # accelerate grain growth?
-        if args.option_accel_grains:
+        if params.option_accel_grains:
             F = jnp.exp(0.01 * layers.ldensity)
             drwet = drwet * F
 
@@ -1351,7 +1345,7 @@ class MassBalanceDriver:
         are transformed to firn and cumulative refreeze
         is reset to 0.
         """
-        args = self.args
+        params = self.params
         N_LAYERS = state.lice.shape[1]
 
         # load state (spatial) inputs
@@ -1364,19 +1358,19 @@ class MassBalanceDriver:
         def run_merger_loop(state):
             def _merge_snow_step(i, state):
                 # evaluate on the fly if layer i and the next layer down are old snow
-                is_layer_old_snow = (state.ltype[:, i] == 0) & (state.lage[:, i] >= args.firn_age)
-                is_next_old_snow = (state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= args.firn_age)
+                is_layer_old_snow = (state.ltype[:, i] == 0) & (state.lage[:, i] >= params.firn_age)
+                is_next_old_snow = (state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= params.firn_age)
                 
                 # only merge down if the column trigger is True and both layers are old snow
                 active_merge_mask = convert_firn_pt & is_layer_old_snow & is_next_old_snow
                 
                 # call utility function to merge layers
-                return layers.merge_existing_layers(state, active_merge_mask, i, args)
+                return layers.merge_existing_layers(state, active_merge_mask, i, params)
             
             state = jax.lax.fori_loop(0, N_LAYERS - 1, _merge_snow_step, state)
 
             # code the old snow as firn
-            is_remaining_old_snow = (state.ltype == 0) & (state.lage >= args.firn_age)
+            is_remaining_old_snow = (state.ltype == 0) & (state.lage >= params.firn_age)
             new_ltype = jnp.where(
                 convert_firn_pt[:, None] & is_remaining_old_snow,
                 1, state.ltype
@@ -1396,7 +1390,7 @@ class MassBalanceDriver:
             )
 
             # update layer masks
-            state = layers.update_layer_props(state, args.density_ice)
+            state = layers.update_layer_props(state, params.density_ice)
             return state
 
         # execute scanning function, if needed 

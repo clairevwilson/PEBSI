@@ -136,7 +136,7 @@ class Shading:
 
             return xp.array(max_zenith, dtype=xp.float32)
 
-    def horizon_zenith_angle(self, azimuth_deg):
+    def horizon_zenith_deg(self, azimuth_deg):
         """Terrain horizon zenith angle in degrees. Shape (ny, nx)."""
         max_zenith = self.run_shadow_kernel(azimuth_deg)
         return xp.rad2deg(xp.arctan(max_zenith))
@@ -163,7 +163,7 @@ class Shading:
         xp.ndarray, shape (ny, nx), values in [0, 1]
             0 = fully shadowed, 1 = fully sunlit.
         """
-        zenith_deg = self.horizon_zenith_angle(azimuth_deg)
+        zenith_deg = self.horizon_zenith_deg(azimuth_deg)
         z_i = altitude_deg - zenith_deg
         return 1.0 / (1.0 + xp.exp(-z_i / 0.1))
 

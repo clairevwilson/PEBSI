@@ -1,12 +1,18 @@
+# Internal libraries
+from types import SimpleNamespace
 # External libraries
 import jax 
-from pebsi.state import StepOutputs
 import jax.numpy as jnp
 from jax.debug import print as jax_print
 # Local libraries
 from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver
 from util.layers import *
+from pebsi.state import StepOutputs
+
+# tell JAX to store the cache
+jax.config.update("jax_compilation_cache_dir", "/.jax_cache")
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 1)
 
 @jax.jit(static_argnames=['static_args'])
 def main(
@@ -20,9 +26,11 @@ def main(
     for all mass balance and energy balance 
     calculations.
     """
+    params = SimpleNamespace(**{**dynamic_args._asdict(), **static_args._asdict()})
+
     # initiate drivers
-    mb = MassBalanceDriver(static_args, dynamic_args)
-    eb = EnergyBalanceDriver(static_args, dynamic_args)
+    mb = MassBalanceDriver(params)
+    eb = EnergyBalanceDriver(params)
 
     def fetch_current_mass(state):
         total_mass = jnp.sum(state.lice, axis=1) + \
@@ -153,7 +161,7 @@ def main(
         for field in mass_fluxes:
             if field in StepOutputs._fields:
                 # store them in m w.e.
-                out[field] = mass_fluxes[field] / static_args.density_ice
+                out[field] = mass_fluxes[field] / params.density_ice
 
         # get all the layer fields
         for field in StepOutputs._fields:
@@ -181,7 +189,7 @@ def main(
     
     # execute model with jax.lax.scan
     final_state, records = jax.lax.scan(
-        step, initial_state, all_forcings
+        step, initial_state, all_forcings, unroll=1
     )
 
     # ===== COMPLETED SIMULATION: STORE DATA =====

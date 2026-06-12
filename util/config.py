@@ -9,7 +9,7 @@ by the model.
 """
 import yaml, os
 import types
-import util.params as prms
+import util.defaults as defaults
 
 import xarray as xr
 import rioxarray as rxr
@@ -19,8 +19,46 @@ import xarray as xr
 from jax.scipy.interpolate import RegularGridInterpolator
 from collections import namedtuple 
 from types import SimpleNamespace
-from types import MappingProxyType
 import jax
+
+# list fields that must be static
+static_fields = [
+    'max_nlayers', 'albedo_TOD', 'bias_vars',
+    
+    'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
+
+    'method_turbulent', 'method_stability', 'method_diffuse',
+    'method_heateq', 'method_densification', 'method_cooling',
+    'method_ground', 'method_conductivity', 'method_snicar',
+
+    'option_SWpen', 'option_accel_grains', 
+    'option_uniform_ice', 'option_uniform_snow',
+
+    'constant_snowfall_density','constant_freshgrainsize',
+    'constant_drdry','constant_irrwater'
+]
+
+# list fields that must be dynamic (i.e., can be arrays of len N_POINTS)
+dynamic_fields = ['kp','wind_factor','precgrad',            
+                'dust_factor','lapse_rate',
+                'albedo_ice','albedo_firn','albedo_fresh_snow',
+                'temp_depth','roughness_aging_rate',
+                'roughness_fresh_snow', 'roughness_aged_snow',
+                'roughness_firn','roughness_ice',
+                'ksp_BC', 'ksp_OC', 'ksp_dust',
+                'initial_snow_depth', 'initial_firn_depth']
+
+# list fields that don't need to be in static OR dynamic args
+external_fields = [
+    'start_date', 'end_date', 'rgi_ids', 
+    'store_vars', 'bias_vars', 'station_elevation',
+    'use_config', 'rgi_region', 'use_aws', 'store_data',
+    'debug', 'testing', 'progress_bar'
+]
+
+# anything else is treated as:
+#   strings get tossed into static args
+#   non-strings get tossed into dynamic args
 
 class ConfigError(Exception):
     """Raised when an expected crash
@@ -31,20 +69,20 @@ class Config():
     def __init__(self, cmd_args):
         """
         Loads the model configuration in the following order.
-        1. Fills in all variables present in util.params (prms).
+        1. Fills in all variables present in util.defaults.
         2. Overwrites the variables present in config.yaml.
         3. Overwrites the variables present in the command line (cmd_args).
         """
         args = SimpleNamespace()
-        valid = 'Please check pebsi/params.py for valid variable names.'
+        valid = 'Please check pebsi/defaults.py for valid variable names.'
 
         # if config filename was specified, make sure use_config is True
         if cmd_args.config_fn is not None:
             cmd_args.use_config = True
             args.config_fn = cmd_args.config_fn
 
-        # 1: add all prms default attributes to args
-        for key in dir(prms):
+        # 1: add all default attributes to args
+        for key in dir(defaults):
             # ignore internal python stuff
             key_start = not key.startswith('__')
             # check if we're on config_fn
@@ -55,7 +93,7 @@ class Config():
             if config_var and not no_config:
                 continue
             elif key_start:
-                val = getattr(prms, key)
+                val = getattr(defaults, key)
                 if isinstance(val, types.ModuleType):
                     continue
                 else:
@@ -94,7 +132,7 @@ class Config():
                 else:
                     # strings, numbers, etc. 
                     setattr(args, key, value) 
-                    args.cmd_args.append(key)       
+                    args.cmd_args.append(key)     
 
         # make sure rgi_region agrees with rgi_ids 
         if args.rgi_ids is not None:
@@ -123,8 +161,8 @@ class Config():
         self.convert_to_jax_safe(self.args)
 
         # print debug statement
-        if self.args.debug and self.args.use_config:
-            print(f'~ Loaded configs from {args.config_fn}')
+        if self.params.debug and self.params.use_config:
+            print(f'~ Loaded configs from {self.params.config_fn}')
         return
     
     def configure_lookups(self):
@@ -146,9 +184,6 @@ class Config():
             grain_size_dims, ds.kapmat.values, method='linear')
         args.interp_dr0 = RegularGridInterpolator(
             grain_size_dims, ds.dr0mat.values, method='linear')
-
-        # define wind reference height [m]
-        args.wind_ref_height = 10 if args.climate_source in ['ERA5-hourly'] else 2
 
         self.args = args
         return
@@ -182,26 +217,44 @@ class Config():
                 return FrozenDict(frozen_inner)
             else:
                 return obj
+            
+        def to_array_if_numeric(v, k):
+            if k in dynamic_fields:
+                if isinstance(v, (int, float)):
+                    return np.atleast_1d(np.array(v))
+                elif isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
+                   return np.atleast_1d(np.array(v))
+            return v  # leave anything not in dynamic_fields list as-is
         
         # deep freeze every item inside the dictionary
-        frozen_config_dict = {
+        static_dict = {
             k: freeze_object(v)
             for k, v in raw_config_dict.items()
-            if k not in raw_config_dict['dynamic_parameters']
+            if (k in static_fields or isinstance(v, str)) and \
+                (k not in external_fields)
         }
         
         # create new namedtuple for static arguments
-        StaticArgs = namedtuple('StaticArgs', frozen_config_dict.keys())
-        self.args = StaticArgs(**frozen_config_dict)
+        StaticArgs = namedtuple('StaticArgs', static_dict.keys())
+        self.static_args = StaticArgs(**static_dict)
 
         # 2. Convert dynamic arguments into arrays
-        dynamic_args = {
-            k: np.atleast_1d(np.array(v))
+        dynamic_dict = {
+            k: to_array_if_numeric(v, k)
             for k, v in raw_config_dict.items()
-            if k in raw_config_dict['dynamic_parameters']
+            if (k not in static_fields and not isinstance(v, str)) and \
+                (k not in external_fields)
         }
 
-        DynamicArgs = namedtuple('DynamicArgs', dynamic_args.keys())
-        self.dynamic_args = DynamicArgs(**dynamic_args)
+        DynamicArgs = namedtuple('DynamicArgs', dynamic_dict.keys())
+        self.dynamic_args = DynamicArgs(**dynamic_dict)
+
+        all_params = {
+            k: to_array_if_numeric(v, k)
+            for k, v in raw_config_dict.items()
+        }
+        self.params = SimpleNamespace(**all_params)
+        self.params.static_args = self.static_args
+        self.params.dynamic_args = self.dynamic_args
 
         return

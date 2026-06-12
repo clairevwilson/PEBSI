@@ -2,8 +2,8 @@
 #
 # This configuration file is for the user to 
 # specify information about the simulation.
-# Any variables from params.py can be input here.
-# See params.py for variable descriptions.
+# Any variables from defaults.py can be input here.
+# See defaults.py for variable descriptions.
 # 
 # ================================================
 #               SIMULATION METADATA
@@ -11,13 +11,14 @@
 store_data: false
 debug: true
 output_fp: '../Output/test_simulation/'
-start_date: '1980-04-20 00:00'
-end_date: '2025-08-31 00:00'
+climate_fp: '/run/media/claire/TOSHIBA EXT/'
+start_date: '2000-04-20 00:00'
+end_date: '2025-08-20 00:00'
 
 rgi_ids: ['01.00570'] # , '01.09162']
 # shading_fp: '/trace/group/rounce/cvwilson/shading/'
 method_snicar: 'emulator'
 method_distribute: 'none' # 'scatter' # 
-kp: [2.0588, 2.7100, 3.190]
-wind_factor: [1.5, 2, 2]
-bias_vars: ['temp']
+kp: [2.0588, 2.7100, 3.190, 0.9877, 1.1478, 2.0991]
+# wind_factor: [1.5, 2, 2, 1, 1,1]
+bias_vars: ['temp', 'wind']

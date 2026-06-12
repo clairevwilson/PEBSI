@@ -32,7 +32,6 @@ use_config = True       #$ -c, --use_config         Use configuration file?
 output_fp = None        #$ -out, --output_fp        Output file path (None for a default, descriptive name)
 rgi_ids = None          #$ -ids, --rgi_ids          List of RGI glacier IDs to simulate
 rgi_region = 1          #$ -reg, --rgi_region       RGI region to run (rgi_ids overrides this)
-site = 'center'         #$ -site                    Name of site
 use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
@@ -59,7 +58,7 @@ output_fp = '../Output/'                                    # General output fil
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
 cop30_fp = '../data/dems/COP30'                             # DEM filepath for many glaciers (COP 30)
 cop30_vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'      # Path to VRT file for COP30 DEMs, inside cop30_fp
-dem_fn = '../data/dems/{g}_dem.tif'                         # DEM filename for a single glacier
+dem_fn = None                                               # DEM filename to override COP30 (e.g. for modeling one glacier)
 shading_data_fp = '../data/shading/'                        # Shading data filepath for output of shading model  
 
 # CLIMATE
@@ -94,8 +93,10 @@ merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of B
 ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of UK-ESM-->MERRA-2 deposition ratio
 ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
-bias_fp = 'data/bias_adjustment/'                           # Bias adjustment filepath
-bias_fn = '{m}_{g}_{v}.csv'                                 # Bias adjustment file name format
+bias_fn = 'shop/preprocessing/quantile_cdfs.nc'             # Bias adjustment file name
+
+# UTILITY
+compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
 
 # ====================================================================================================================
 #                                            CLIMATE AND TIME INPUTS
@@ -103,9 +104,11 @@ bias_fn = '{m}_{g}_{v}.csv'                                 # Bias adjustment fi
 # TEMPORAL
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
+temporal_chunks = 8760                      # Number of chunks to split up simulation into
 
 # SPATIAL 
 bin_step = 100                              # Elevation between bins
+n_points = 6                                # Number of points to divide domain into
 
 # WEATHER STATION SITE
 station_elevation = {                       # Elevation of the stations used in temperature quantile mapping [m a.s.l.]
@@ -121,6 +124,7 @@ ukesm_vn = (                                # Name of var in UKESM data
         'tendency_of_atmosphere_'
         'mass_content_of_{sp}_dry_aerosol_'
         'particles_due_to_{t}_deposition')   
+wind_ref_height = 2                         # Reference height for wind speed [m]
 
 # BIAS CORRECTION
 bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
@@ -192,16 +196,6 @@ all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS
 # ====================================================================================================================
-# Anything listed in dynamic_parameters can be a list of len (N_POINTS). Parameters can be added to this as needed, 
-# but added parameters will need to be updated globally to reflect existing in dynamic_args instead of static_args.
-dynamic_parameters = ['kp','wind_factor','precgrad',            
-                      'dust_factor','lapse_rate',
-                      'albedo_ice','albedo_firn','albedo_fresh_snow',
-                      'temp_depth','roughness_aging_rate',
-                      'roughness_fresh_snow', 'roughness_aged_snow',
-                      'roughness_firn','roughness_ice',
-                      'ksp_BC', 'ksp_OC', 'ksp_dust',
-                      'initial_snow_depth', 'initial_firn_depth']
 
 # <<<<<< Climate downscaling >>>>>>
 wind_factor = 1             #* Wind factor [-]
