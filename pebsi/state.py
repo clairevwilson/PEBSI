@@ -1,3 +1,17 @@
+"""
+State classes for PEBSI
+
+Contains the following state trackers:
+  - GlacierState: updated in the main time
+    loop; contains all glacier attributes
+  - ClimateState: contains temporal information
+    and climatic forcings 
+  - PointAttributes: contains time-invariant
+    spatial information
+  - StepOutputs: updated in the main time 
+    loop; contains all output attributes
+"""
+# External libraries
 from typing import NamedTuple
 import jax.numpy as jnp
 

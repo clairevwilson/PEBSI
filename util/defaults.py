@@ -1,5 +1,5 @@
 """
-Params for PEBSI
+Defaults for PEBSI
 
 Contains directories and filepaths, options for
 handling climate inputs, model physics, and outputs,
@@ -18,10 +18,7 @@ variable is present in config.yaml.
 
 Anything with a commented * (also present in the 
 variable dynamic_variables) can either be input 
-as a scalar or as an array of length (N_POINTS)
-to make it spatially variable.
-
-@author: clairevwilson
+as a scalar or as an array of length (N_POINTS).
 """
 import socket
 
@@ -32,11 +29,11 @@ use_config = True       #$ -c, --use_config         Use configuration file?
 output_fp = None        #$ -out, --output_fp        Output file path (None for a default, descriptive name)
 rgi_ids = None          #$ -ids, --rgi_ids          List of RGI glacier IDs to simulate
 rgi_region = 1          #$ -reg, --rgi_region       RGI region to run (rgi_ids overrides this)
+sites = None            #$ --sites                  Names of sites to use with same length as rgi_ids
 use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
-testing = False         #$ -testing                 Test a single function?
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
@@ -53,13 +50,15 @@ machine = socket.gethostname()
 # GENERAL
 config_fn = 'config.yaml'           #$ -cf, --config_fn     # Configuration .yaml file    
 output_fp = '../Output/'                                    # General output filepath
+output_fn = '{g}_{i}.zarr'                                  # Output file name, to be formatted by glacier ID and point index
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
 cop30_fp = '../data/dems/COP30'                             # DEM filepath for many glaciers (COP 30)
 cop30_vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'      # Path to VRT file for COP30 DEMs, inside cop30_fp
 dem_fn = None                                               # DEM filename to override COP30 (e.g. for modeling one glacier)
-shading_data_fp = '../data/shading/'                        # Shading data filepath for output of shading model  
+shading_fp = '../data/shading/'                             # Shading data filepath for output of shading model  
+shading_fn = '{gid}_shadows.zarr'                           # Shading data filename template
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
@@ -85,7 +84,6 @@ emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator fi
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
 glac_fp = 'data/by_glacier/{g}/'                            # Generalized glacier filepath
 site_fn = 'site_constants.csv'                              # Name for site constants file
-shading_fp = 'data/shading/'                                # Generalized shading filepath
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
 
 # CLIMATE

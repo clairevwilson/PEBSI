@@ -1,11 +1,9 @@
 """
 Mass balance class for PEBSI
 
-Contains main() function which executes
-all energy and mass balance calculations
-in an hourly time loop.
-
-@author: clairevwilson
+Contains functions to calculate mass
+balance processes such as melting, 
+refreezing,and percolation.
 """
 # External libraries
 import jax
@@ -25,7 +23,18 @@ class MassBalanceDriver:
         return
 
     # -------------------- WORKER FUNCTIONS --------------------
+    #       These functions are called directly from main()
     def run_new_mass(self, state, forcings):
+        """
+        Runs processes to get snowfall, rainfall,
+        and dry deposition totals.
+
+        Returns
+        -------
+        snowfall, rainfall : jnp.ndarray
+            (N_POINTS) arrays of snowfall and rainfall
+            in kg m-2
+        """
         # divide incoming precip to rain and snow
         rainfall, snowfall = self.get_precip_amounts(forcings)
 
@@ -42,8 +51,8 @@ class MassBalanceDriver:
     
     def run_daily_routines(self, state, forcings):
         """
-        Checks if we are running sup-hourly updates and
-        executes get_daily_updates or skip_daily_updates.
+        Checks if we are at an hour to run daily
+        updates (e.g., albedo)
         """
         albedo_TOD = self.params.albedo_TOD
 
@@ -60,18 +69,17 @@ class MassBalanceDriver:
         )
         return state
     
-    def check_explosion(self, state, forcings, location_code, prev_max):
-        current_max = jnp.sum(state.lice, axis=1)[1]
-        jax.lax.cond(
-            (current_max > 1e6) & (prev_max <= 1e6),
-            lambda: jax_print('EXPLOSION at location {} doy {} hr {} lice {}',
-                            location_code, forcings.doy, forcings.hour, state.lice[1]),
-            lambda: None
-        )
-        return current_max
-    
     def run_vertical_processes(self, state, forcings, fluxes):
-        prev = jnp.sum(state.lice, axis=1)[1]
+        """
+        Runs vertical processes of melting (including
+        penetrating shortwave radiation), percolation,
+        refreezing, and thermal conduction.
+
+        Returns
+        -------
+        mass_fluxes : dict
+            Dictionary containing runoff and melt
+        """
 
         # subsurface heating and melting
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
@@ -79,14 +87,12 @@ class MassBalanceDriver:
         #     jnp.sum(state.lice, axis=1),
         #     jnp.sum(state.lwater, axis=1),
         #     state.basal_reservoir)
-        prev = self.check_explosion(state, forcings, 1, prev)
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
-        prev = self.check_explosion(state, forcings, 2, prev)
         # jax_print('after percolation : lice {} lwater {} reservoir {} melt runoff {}',
         #     jnp.sum(state.lice, axis=1),
         #     jnp.sum(state.lwater, axis=1),
@@ -94,7 +100,6 @@ class MassBalanceDriver:
         
         # refreezing
         state = self.refreezing(state)
-        prev = self.check_explosion(state, forcings, 3, prev)
         # jax_print('after refreezing : lice {} lwater {} reservoir {}',
         #     jnp.sum(state.lice, axis=1),
         #     jnp.sum(state.lwater, axis=1),
@@ -104,7 +109,6 @@ class MassBalanceDriver:
         state, condensation_runoff, mass_fluxes = self.phase_changes(
             state, fluxes['latent_heat']
         )
-        prev = self.check_explosion(state, forcings, 4, prev)
         # jax_print('after phase changes : lice {} lwater {} reservoir {} condensation runoff {}',
         #     jnp.sum(state.lice, axis=1),
         #     jnp.sum(state.lwater, axis=1),
@@ -112,7 +116,6 @@ class MassBalanceDriver:
 
         # check layer sizes for numeric stability before running temp profile
         state, dead_mass = layers.check_layer_sizes(state, self.params)
-        prev = self.check_explosion(state, forcings, 5, prev)
         # jax_print('after check_sizes: ice {} water {} reservoir {} dead mass {}',
         #           jnp.sum(state.lice, axis=1),
         #           jnp.sum(state.lwater,axis=1),
@@ -120,7 +123,6 @@ class MassBalanceDriver:
 
         # resolve temperature profile
         state = self.resolve_temperature_profile(state)
-        prev = self.check_explosion(state, forcings, 6, prev)
         # jax_print('after temperature profile : lice {} lwater {} reservoir {}',
         #     jnp.sum(state.lice, axis=1),
         #     jnp.sum(state.lwater, axis=1),
@@ -135,6 +137,16 @@ class MassBalanceDriver:
         return state, mass_fluxes
     
     def run_state_updates(self, state, forcings):
+        """
+        Runs 'state' updates for densification,
+        roughness, and grain size.
+
+        Returns
+        -------
+        water_squeezed_out : jnp.ndarray
+            (N_POINTS,) water that no longer has 
+            pore space due to densification
+        """
         # densification is only run daily
         is_day_start = forcings.hour == 0
         state, water_squeezed_out = jax.lax.cond(
@@ -158,6 +170,10 @@ class MassBalanceDriver:
         return state, water_squeezed_out
 
     def run_annual_routines(self, state, forcings):
+        """
+        Checks if it is the end of summer to run
+        firn conversion routine.
+        """
         params = self.params
 
         # are we in the end-of-summer window?
@@ -187,14 +203,14 @@ class MassBalanceDriver:
 
     def get_precip_amounts(self, forcings):
         """
-        Determines whether rain or snowfall occurred 
-        and outputs amounts.
+        Determines how much rain and snowfall occurred
+        in a timestep.
 
         Returns:
         --------
-        rain, snow : float
-            Specific mass of liquid and solid 
-            precipitation [kg m-2]
+        rain, snow : jnp.ndarray
+            (N_POINTS) Specific mass of liquid and solid 
+            precipitation to add [kg m-2]
         """
         # CONSTANTS
         SNOW_THRESHOLD_LOW = self.params.snow_threshold_low
@@ -218,10 +234,8 @@ class MassBalanceDriver:
 
     def add_accumulation(self, snowfall, state, forcings):
         """
-        Adds snowfall to the layers. If the existing top 
-        layer has a large enough difference in density 
-        (eg. firn or ice), the fresh snow is a new layer,
-        otherwise it is merged with the top snow layer.
+        Adds snowfall to the layers either as a new layer
+        or merges new snow with the top layer.
         
         Parameters
         ==========
@@ -229,8 +243,8 @@ class MassBalanceDriver:
             Fresh snow mass [kg m-2]
 
         Returns
-        =======
-        snowfall : float
+        -------
+        actual_snowfall : float
             Actual snow mass that was added [kg m-2]
         """
         params = self.params
@@ -334,11 +348,6 @@ class MassBalanceDriver:
         """
         Adds dry deposition of light-absorbing particles
         to the surface layer.
-
-        Parameters
-        ==========
-        layers
-            Class object from pebsi.layers
         """
         dt = self.params.dt
 
@@ -426,6 +435,19 @@ class MassBalanceDriver:
         )
     
     def heating_melting(self, state, fluxes):
+        """
+        Applies melt energy to the column. First
+        warms layers to the melting point, then
+        melts them. Melted mass becomes liquid water.
+        
+        Returns
+        -------
+        layermelt : jnp.ndarray
+            (N_POINTS, N_LAYERS) melt per layer in kg m-2
+        mass_to_route : dict
+            Contains all mass from fully melted layers
+            (ice, water, and particles)
+        """
         params = self.params
         layers_idx = jnp.arange(state.lice.shape[1])[None, :]
 
@@ -541,38 +563,31 @@ class MassBalanceDriver:
         layermelt = jnp.transpose(layermelt)
 
         # collapse grid to purge melted layers
-        for _ in range(3):
-            # looping more than once is rarely needed
-            # only if multiple layers fully melted in the same point
-            fully_melted_mask = state.lice <= 0.001
-            melt_point_mask = jnp.any(fully_melted_mask, axis=1)
-            melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
+        fully_melted_mask = state.lice <= 0.001
+        melt_point_mask = jnp.any(fully_melted_mask, axis=1)
+        melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
 
-            # collapse one layer per point where mask if True
-            state = layers.remove_layer(
-                state, melt_point_mask, melt_layer_idx, params
-            )
+        state = jax.lax.fori_loop(
+            0, 3,
+            lambda i, s: layers.remove_layer(s, melt_point_mask, melt_layer_idx, params),
+            state
+        )
 
         return state, layermelt, mass_to_route
         
     def percolation(self, state, fluxes):
         """
-        Updates the liquid water content in each layer
-        with downward percolation and removes melted
-        mass from layer dry mass.
-
-        Parameters
-        ==========
-        layermelt: np.ndarray
-            Array containing melt amount for each layer
-        rainfall : float
-            Additional liquid water input from 
-            rainfall [kg m-2]
+        Percolates water downward using tipping-bucket
+        approach. Layers never hold more than their
+        irreducible water content.
 
         Returns
         -------
-        runoff : float
+        runoff : jnp.ndarray
             Runoff of liquid water lost to system [kg m-2]
+        fluxes : dict
+            Mass fluxes into and out of domain including
+            flow out of each layer 
         """
         properties = state._asdict()
         params = self.params 
@@ -649,17 +664,9 @@ class MassBalanceDriver:
         
     def route_particles(self, state, forcings, fluxes):
         """
-        Moves LAPs vertically through the snow and firn
+        Routes LAPs vertically through the snow and firn
         layers according to water flow from percolation.
 
-        Parameters
-        ==========
-        q_out : np.ndarray
-            Water flow out of each layer [kg m-2]
-        rain_bool : Bool
-            Raining or not?
-        snow_firn_idx : np.ndarray
-            Indices of snow and firn layers
         """
         params = self.params
         properties = state._asdict()
@@ -739,13 +746,8 @@ class MassBalanceDriver:
 
     def refreezing(self, state):
         """
-        Calculates refreeze in layers due to temperatures 
-        below freezing with liquid water content.
-
-        Returns:
-        --------
-        refreeze : float
-            Total amount of refreeze [kg m-2]
+        Calculates refreeze in layers that are both
+        below freezing and contain liquid water content.
         """
         properties = state._asdict()
         params = self.params
@@ -806,6 +808,14 @@ class MassBalanceDriver:
         Calculates mass lost or gained from latent heat
         exchange (sublimation, deposition, evaporation,
         or condensation).
+
+        Returns
+        -------
+        total_runoff : jnp.ndarray
+            (N_POINTS) runoff from condensation on ice
+        surface_mass_fluxes : dict
+            (N_POINTS) jnp.ndarrays of phase change 
+            mass fluxes [kg m-2]
         """
         properties = state._asdict()
         params = self.params
@@ -907,15 +917,10 @@ class MassBalanceDriver:
     def resolve_temperature_profile(self, state):    
         """
         Resolves the temperature profile with vertical
-        heat conduction following the Forward-in-Time-
-        Central-in-Space (FTCS) scheme
-
-        Parameters
-        ==========
-        layers
-            Class object from pebsi.layers
-        surftemp : float
-            Surface temperature [C]
+        heat conduction following an explicit, linearized
+        Forward-in-Time, Central-in-Space (FTCS) scheme.
+        Uses a Dirichlet boundary condition at the top layer
+        and the temperate boundary at the bottom.
         """   
         params = self.params
 
@@ -1031,6 +1036,12 @@ class MassBalanceDriver:
         """
         Calculates densification of layers due to 
         compression from overlying mass.
+
+        Returns
+        -------
+        squeezed_out : jnp.ndarray
+            Water squeezed out as a result of decreasing
+            pore space [kg m-2]
         """
         params = self.params
 
@@ -1157,17 +1168,14 @@ class MassBalanceDriver:
     
     def roughness(self, state):
         """
-        Function to determine the roughness length of the
-        surface. This assumes the roughness of snow
-        linearly degrades with time in 60 days from that 
-        of fresh snow to firn.
+        Determines the roughness length of the surface, 
+        assuming the roughness of snow linearly degrades 
+        with time in 60 days from that of fresh snow to firn.
 
-        Parameters
-        ==========
-        days_since_snowfall : int
-            Number of days since fresh snow occurred
-        layers
-            Class object from pebsi.layers
+        Returns
+        -------
+        roughness : jnp.ndarray
+            (N_POINTS) surface roughness [m]]
         """
         params = self.params 
 
@@ -1190,6 +1198,11 @@ class MassBalanceDriver:
         Updates grain size according to wet and dry
         metamorphism, refreeze, and addition of fresh
         snow.
+
+        Returns
+        -------
+        updated_grainsize : jnp.ndarray
+            (N_POINTS, N_LAYERS) updated grainsize [um]
         """
         params = self.params
 

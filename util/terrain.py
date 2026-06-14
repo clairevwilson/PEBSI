@@ -1,24 +1,38 @@
+"""
+Terrain class for PEBSI
+
+Contains functions that handle the spatial
+distribution of points, including loading
+their DEM information (elevation, slope)
+and executing the shading model.
+"""
+# Internal libraries
+import os
+import time 
+import psutil
+# External libraries
 import xarray as xr
 import rioxarray as rxr
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-import os, sys
-import time
-from pyproj import CRS
-from pysolar.solar import get_altitude, get_azimuth
+from pyproj import CRS, Transformer
 import shapely.geometry as geom
-from dataclasses import dataclass
+# Local libraries
 from shading.gpu_shading import Shading
 
-@dataclass
 class Terrain:
     """
-    Container for GPU arrays scaled to the number of points.
+    Container for GPU arrays for points in the simulation.
     """
     def __init__(self, params):
+        """
+        Load the points and start timer for Terrain functions.
+        """
         self.params = params
-        self.shade_fn = os.path.join(params.shading_data_fp, '{id}_shadows.nc')
+        self.shade_fn = os.path.join(
+            params.shading_fp, params.shading_fn
+        )
 
         # start timer for loading spatial inputs
         self.start_time = time.time()
@@ -29,31 +43,32 @@ class Terrain:
 
     def get_points(self):
         """
-        Takes a list of RGI IDs, extracts their geometric centerlines, 
-        and samples them at perfectly equal intervals.
-        
-        Returns:
-        --------
-        glacier_lats, glacier_lons : 2D lists/arrays of shape (len(rgi_ids), num_points_per_glacier)
+        Parses method_distribute to break the model domain
+        into points. Stores each point latitude, longitude,
+        and glacier ID to self.
         """
         # load RGI data into memory for this region
         self.get_rgi_data()
 
         if self.params.method_distribute == 'scatter':
             lats, lons, glaciers = self.scatter_points()
-        else:
+        elif self.params.method_distribute == 'sites':
+            assert len(self.params.rgi_ids) == len(self.params.sites), \
+                'N sites must equal N rgi_ids'
             lats, lons, glaciers = [], [], []
-            df = pd.read_csv('data/by_glacier/gulkana/site_constants.csv', index_col=0)
-            for site in ['AU','B','D']:
-                lats.append(df.loc[site, 'lat'])
-                lons.append(df.loc[site, 'lon'])
-                glaciers.append('01.00570')
 
-            df = pd.read_csv('data/by_glacier/wolverine/site_constants.csv', index_col=0)
-            for site in ['N','B','EC']:
-                lats.append(df.loc[site, 'lat'])
-                lons.append(df.loc[site, 'lon'])
-                glaciers.append('01.09162')
+            metadata_fn = self.params.metadata_fn
+            metadata = pd.read_csv(metadata_fn, index_col=0,converters={0: str})
+            for gid, site in zip(self.params.rgi_ids, self.params.sites):
+                assert gid in metadata.index, \
+                    f'To index by site, glacier ID must be associated with name in glacier_metadata {gid}'
+
+                name = metadata.loc[gid, 'name']
+                site_fp = self.params.glac_fp.format(g=name)
+                df_sites = pd.read_csv(os.path.join(site_fp, self.params.site_fn), index_col=0)
+                lats.append(df_sites.loc[site, 'lat'])
+                lons.append(df_sites.loc[site, 'lon'])
+                glaciers.append(gid)
 
         # store to self
         self.lat_n = np.array(lats)
@@ -64,6 +79,9 @@ class Terrain:
         return
     
     def get_rgi_data(self):
+        """
+        Loads the shapefile for the region of interest.
+        """
         # find the regional shapefile
         region = str(self.params.rgi_region).zfill(2)
         all_rgi = os.listdir(self.params.rgi_fp)
@@ -84,14 +102,23 @@ class Terrain:
 
     def scatter_points(self, tolerance=0.05):
         """
-        Samples approximately N points evenly distributed inside a polygon shapefile
-        using an adaptive grid spacing search.
+        Samples approximately n_points, evenly distributed 
+        inside a polygon shapefile using an adaptive grid 
+        spacing search. Glaciers are naturally weighted by
+        their area (bigger = more points).
+
+        Parameters
+        ==========
+        tolerance : float
+            Acceptable deviation between actual points 
+            generated and n_points
         """
         # find the total number of parallel processes available 
         N_PARALLEL = self.params.n_points
 
         # first find the number of points for each glacier
-        ids_fmtd = ['RGI60-'+id for id in self.rgiid_unique]
+        unique_ids = np.unique(self.params.rgi_ids)
+        ids_fmtd = ['RGI60-'+id for id in unique_ids]
         rgi_df = self.rgi_df.loc[self.rgi_df['RGIId'].isin(ids_fmtd)]
         total_area = rgi_df['Area'].sum()
         rgi_df['exact_points'] = (rgi_df['Area'] / total_area) * N_PARALLEL
@@ -119,15 +146,15 @@ class Terrain:
 
         # loop through RGI IDs
         lats, lons, glaciers = [], [], []
-        for id in self.rgiid_unique:
-            target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+id, 'points'].item()
-            current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+id]
+        for gid in unique_ids:
+            target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'points'].item()
+            current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
             
             polygon = current_glacier.unary_union
             xmin, ymin, xmax, ymax = polygon.bounds
             area = polygon.area
             
-            # Initial analytical guess for even grid spacing: sqrt(Area / N)
+            # initial analytical guess for even grid spacing: sqrt(Area / N)
             spacing = np.sqrt(area / target_n)
             
             # optimization loop to fine-tune spacing to hit your exact target N count
@@ -143,14 +170,14 @@ class Terrain:
                 points_inside = [p for p in candidate_points if polygon.contains(p)]
                 current_count = len(points_inside)
                 
-                # Check if we are within acceptable tolerance of our target N count
+                # check if we are within acceptable tolerance of our target N count
                 if abs(current_count - target_n) / target_n <= tolerance:
                     break
                     
-                # Adjust grid step density dynamically based on overshoot/undershoot
+                # adjust grid step density dynamically based on overshoot/undershoot
                 spacing *= np.sqrt(current_count / target_n)
 
-            # Package coordinates out cleanly
+            # package coordinates as lists
             points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=rgi_gdf.crs)
             points_latlon = points_gdf.to_crs(epsg=4326)
             xs = points_latlon.geometry.x.tolist()
@@ -160,22 +187,21 @@ class Terrain:
             for lon, lat in zip(xs, ys):
                 lons.append(lon)
                 lats.append(lat)
-                glaciers.append(id)
+                glaciers.append(gid)
             
         return lats, lons, glaciers
     
     def load_dem_info(self, dem, lats_in, lons_in):
         """
-        Loads the DEM to get slope, aspect, 
-        and elevation of each point.
+        Loads the DEM to get slope, aspect, and elevation 
+        of each point.
 
         Parameters
         ==========
         dem : DataArray
             DEM for a region
         lats_in, lons_in : 1D arrays
-            Latitude and longitude of points within
-            this DEM
+            Latitude and longitude of points within this DEM
         """
         dem = dem['elevation']
 
@@ -216,13 +242,13 @@ class Terrain:
     
     def get_median_elevation(self):
         """
-        Finds the median glacier elevation for every 
-        individual point, dynamically loading across 
-        multiple regional CSV files.
+        Finds the median glacier elevation for every  individual 
+        point, dynamically loading across multiple regional 
+        CSV files.
         """
         # figure out what unique IDs there are
         unique_ids = np.unique(self.rgiid_n)
-        unique_ids_fmtd = ['RGI60-'+id for id in unique_ids]
+        unique_ids_fmtd = ['RGI60-'+i for i in unique_ids]
         ids = self.rgiid_n
         
         # store mapping by glacier ID: median elvation
@@ -248,9 +274,9 @@ class Terrain:
     
     def yield_dem_chunks(self, block_size_deg=0.5, buffer_meters=10_000):
         """
-        Generator that yields sliced, buffered sub-DEM datasets 
-        and their corresponding glacier sub-DataFrames for gathering 
-        DEM information and running shading.
+        Generator that yields sliced, buffered sub-DEM 
+        datasets and their corresponding glacier sub-DataFrames 
+        for gathering DEM information and running shading.
         """
         rgi_gdf = self.rgi_gdf
         region = str(self.params.rgi_region).zfill(2)
@@ -313,11 +339,11 @@ class Terrain:
 
     def yield_single_dem(self):
         """
-        Single-glacier mode: load a single DEM directly and yields it
-        as a single chunk with all glaciers.
+        Single-glacier mode: load a single DEM directly 
+        and yields it as a single chunk.
         """
-        glacier_id = self.params.rgi_ids[0]
-        dem_fn = self.params.dem_fn.format(g=glacier_id)
+        gid = self.params.rgi_ids[0]
+        dem_fn = self.params.dem_fn.format(g=gid)
         assert os.path.exists(dem_fn), f'Missing DEM at {dem_fn}'
 
         # load the DEM
@@ -355,7 +381,13 @@ class Terrain:
     def _get_metric_crs(self, gdf):
         """
         Derives a region-appropriate equal-area projection 
-        using the glacier centroid."""
+        using the glacier centroid.
+
+        Parameters
+        ==========
+        gdf : gpd.GeoDataFrame
+            RGI dataframe clipped to the glacier(s) of interest
+        """
         centroid = gdf.to_crs(epsg=4326).union_all().centroid
         return CRS(
             f"+proj=laea +lat_0={centroid.y:.2f} +lon_0={centroid.x:.2f} "
@@ -379,7 +411,7 @@ class Terrain:
             cropping DEM to capture surrounding peaks
         """
         # make sure there is storage space for shading output
-        output_fp = self.params.shading_data_fp
+        output_fp = self.params.shading_fp
         os.makedirs(output_fp, exist_ok=True)
 
         # storage for 1D arrays
@@ -415,16 +447,16 @@ class Terrain:
             # check if any of these glaciers don't have a shading file
             missing_glaciers = []
             for _, glacier in glaciers_in_block.iterrows():
-                id = glacier['RGIId'].split('-')[-1]
-                shade_fn = self.shade_fn.format(id=id) 
+                gid = glacier['RGIId'].split('-')[-1]
+                shade_fn = self.shade_fn.format(gid=gid) 
                 if not os.path.exists(shade_fn):
-                    missing_glaciers.append(glacier)
+                    missing_glaciers.append(gid)
 
             # if there are no missing glaciers, skip shading
             if len(missing_glaciers) < 1:
                 continue
 
-            print(f'Computing GPU shadows for {len(missing_glaciers)} missing glaciers in current chunk...')
+            print(f'Computing GPU shadows for {len(missing_glaciers)} missing glacier(s) in current chunk...')
             
             # calculate regional center point and bounds
             centroid_geo = glaciers_in_block.to_crs(epsg=4326).union_all().centroid
@@ -445,6 +477,24 @@ class Terrain:
             datetimes_utc = pd.date_range('2000-01-01 00:00', '2000-12-31 23:00', freq='h', tz='UTC')
             masks_gpu, sun_az, sun_zen, svf = shading_model.compute_shadow_masks(datetimes_utc)
             
+            # check size of dataset to avoid crashing RAM
+            nt, nx, ny = masks_gpu.shape
+            array_bytes = nt * ny * nx # int8 = 1 byte each cell
+
+            # leave ~4 GB of RAM free
+            available_ram = psutil.virtual_memory().available
+            threshold_bytes = available_ram - 4e9
+            if array_bytes > threshold_bytes:
+                factor = np.ceil(np.sqrt(array_bytes / threshold_bytes)).astype(int)
+                masks_gpu = masks_gpu[:, ::factor, ::factor]
+                svf = svf[::factor, ::factor]
+                y_coords = cropped_dem_ds['y'].values[::factor]
+                x_coords = cropped_dem_ds['x'].values[::factor]
+                print(f'Downsampled shadow mask by {factor} to fit in RAM')
+            else:
+                y_coords = cropped_dem_ds['y'].values
+                x_coords = cropped_dem_ds['x'].values
+            
             mask_3d_cpu = masks_gpu.get() if hasattr(masks_gpu, 'get') else masks_gpu
 
             datetimes_clean = datetimes_utc.tz_localize(None)
@@ -453,12 +503,11 @@ class Terrain:
                  'solar_azimuth': (['time'], sun_az),
                  'solar_zenith': (['time'], sun_zen),
                  'sky_view_factor': (['y','x'], svf)},
-                coords={'time': datetimes_clean, 'y': cropped_dem_ds['y'], 'x': cropped_dem_ds['x']}
-            )
+                coords={'time': datetimes_clean, 'y': y_coords, 'x':x_coords}
+            ).rio.write_crs(cropped_dem_ds.rio.crs)
 
             # crop shadows cleanly to individual glacier box
-            for glacier in missing_glaciers:
-                glacier_id = glacier['RGIId'].split('-')[-1]
+            for gid in missing_glaciers:
                 g_bounds = glacier.geometry.bounds
                 
                 glacier_masks = subregion_masks.sel(
@@ -469,14 +518,14 @@ class Terrain:
                 # grab the CUDA arrays as numpy
                 glacier_masks = glacier_masks.as_numpy()
                 
-                fn_out = self.shade_fn.format(id=id) 
-                glacier_masks.to_netcdf(fn_out)
-                print('stored', glacier_id)
+                fn_out = self.shade_fn.format(gid=gid) 
+                glacier_masks.chunk({'time': 8784, 'y': 8, 'x': 8}).to_zarr(fn_out)
+                print(f'stored {gid} to {fn_out}')
 
             # clear items from memory
             del subregion_masks
             if 'glacier_masks' in locals(): del glacier_masks
-            del masks_gpu
+            del masks_gpu, svf
             if 'mask_3d_cpu' in locals(): del mask_3d_cpu
 
             import gc
@@ -496,44 +545,72 @@ class Terrain:
         self.tz_n = compiled_inputs['tz_n']
         return
     
-    def load_shading(self, dates):
+    def load_shading(self, dates_UTC):
+        """
+        Loads the shading mask for the points in the
+        simulation from the preprocessed shading .zarr.
+
+        Parameters
+        ==========
+        dates_UTC : np.ndarray (N_TIME, ) or (N_POINTS, N_TIME)
+            Dates in UTC for the simulation.
+        """
         # define storage for shading masks
         N_POINTS = self.N_POINTS 
-        N_TIME = len(dates)
+        N_TIME = len(dates_UTC) if len(dates_UTC.shape)==1 else dates_UTC.shape[1]
         masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
         azimuth = np.full((N_POINTS, N_TIME), np.pi)
         zenith = np.zeros((N_POINTS, N_TIME))
         sky_view_factor = np.ones(N_POINTS)
 
-        # find unique RGI IDs in the list of all points
-        for id in self.rgiid_unique:
-            idx = np.where(self.rgiid_unique == id)[0]
+        # find unique timezones from list of all points
+        for tz in np.unique(self.tz_n):
+            tz_idx = np.where(self.tz_n == tz)[0]
 
-            # get xr DataArrays for the slicing variables
-            target_lat = xr.DataArray(self.lat_n[idx] , dims='points')
-            target_lon = xr.DataArray(self.lon_n[idx] , dims='points')
+            # build 1D time lookup once for this timezone
+            if dates_UTC.ndim == 1:
+                dates_tz = pd.DatetimeIndex(dates_UTC)
+            else:
+                dates_tz = pd.DatetimeIndex(dates_UTC[tz_idx[0]])
 
-            # load shading file
-            fn = self.shade_fn.format(id=id)
-            ds = xr.open_dataset(fn)
-            ds_doy = ds.time.dt.dayofyear.values
-            ds_hour = ds.time.dt.hour.values
+            # loop through glaciers in this timezone
+            for gid in np.unique(self.rgiid_n[tz_idx]):
+                # intersect index: glacier and timezone
+                gid_idx = np.where(self.rgiid_n == gid)[0]
+                gid_idx = gid_idx[np.isin(gid_idx, tz_idx)]
 
-            # map times in dates to the index of that doy/hour in ds
-            lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
-            target_indices = [lookup[(d, h)] for d, h in zip(dates.dayofyear, dates.hour)]
-            target_time_idx = xr.DataArray(target_indices, dims='time')
-            
-            # select data for the lats, lons, and times
-            selected = (ds
-                .sel(y=target_lat, x=target_lon, method='nearest')
-                .isel(time=target_time_idx)
-                .transpose('points','time'))
+                # open the shade file and parse the lookup
+                fn = self.shade_fn.format(gid=gid)
+                ds = xr.open_zarr(fn)
+                ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
+                ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
+                ds_doy = ds.time.dt.dayofyear.values
+                ds_hour = ds.time.dt.hour.values
+                lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
 
-            masks[idx, :] = selected['shadow_mask'].values
-            azimuth[idx, :] = selected['solar_azimuth'].values
-            zenith[idx, :] = selected['solar_zenith'].values
-            sky_view_factor[idx] = selected['sky_view_factor'].values
+                # create new dataarray with the target time indices
+                target_indices = [lookup[(d, h)]
+                                for d, h in zip(dates_tz.dayofyear, dates_tz.hour)]
+                target_time_idx = xr.DataArray(target_indices, dims='time')
+
+                # grab lat/lon for each point and convert to a dataarray
+                transformer = Transformer.from_crs("EPSG:4326", ds.rio.crs, always_xy=True)
+                x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
+                target_x = xr.DataArray(x_pts, dims='points')
+                target_y = xr.DataArray(y_pts, dims='points')
+
+                # index mask to get points and time for this glacier
+                selected = (ds
+                    .sel(y=target_y, x=target_x, method='nearest')
+                    .isel(time=target_time_idx)
+                    .transpose('points', 'time'))
+
+                masks[gid_idx, :] = selected['shadow_mask'].values
+                azimuth[gid_idx, :] = selected['solar_azimuth'].values
+                zenith[gid_idx, :] = selected['solar_zenith'].values
+                sky_view_factor[gid_idx] = selected['sky_view_factor'].values
+
+                ds.close()
 
         self.sky_view_factor = sky_view_factor
         self.solar_zenith = zenith 
@@ -553,7 +630,8 @@ class Terrain:
             missing_str = f'Missing {name[:-2]} data for {missing} points'
             assert ~np.any(np.isnan(input_array)), missing_str
 
-            wrong_len = f'Wrong length in {name}\nShould be {self.N_POINTS}; is {len(input_array)}'
+            wrong_len = (f'Wrong length in {name}\n'
+                         f'Should be {self.N_POINTS}; is {len(input_array)}')
             assert len(input_array) == self.N_POINTS, wrong_len
 
         self.get_median_elevation()
@@ -563,7 +641,6 @@ class Terrain:
             if isinstance(v, np.ndarray) and len(v) > 1:
                 assert len(v) == self.N_POINTS, \
                     f"Parameter '{k}' has length {len(v)} but expected 1 or {self.N_POINTS}"
-
 
         elapsed = time.time()-self.start_time
         if elapsed < 60:

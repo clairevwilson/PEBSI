@@ -7,19 +7,21 @@ by the model.
 
 @author: clairevwilson
 """
-import yaml, os
+# Internal libraries
+import os
+from collections import namedtuple 
 import types
-import util.defaults as defaults
-
+import time
+# External libraries
+import yaml
 import xarray as xr
-import rioxarray as rxr
 import numpy as np
 import pandas as pd
 import xarray as xr
-from jax.scipy.interpolate import RegularGridInterpolator
-from collections import namedtuple 
-from types import SimpleNamespace
 import jax
+from jax.scipy.interpolate import RegularGridInterpolator
+# Local lbiraries
+import util.defaults as defaults
 
 # list fields that must be static
 static_fields = [
@@ -50,15 +52,15 @@ dynamic_fields = ['kp','wind_factor','precgrad',
 
 # list fields that don't need to be in static OR dynamic args
 external_fields = [
-    'start_date', 'end_date', 'rgi_ids', 
+    'start_date', 'end_date', 'rgi_ids', 'sites',
     'store_vars', 'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
     'debug', 'testing', 'progress_bar'
 ]
 
 # anything else is treated as:
-#   strings get tossed into static args
-#   non-strings get tossed into dynamic args
+# - strings get tossed into static args
+# - non-strings get tossed into dynamic args
 
 class ConfigError(Exception):
     """Raised when an expected crash
@@ -73,7 +75,7 @@ class Config():
         2. Overwrites the variables present in config.yaml.
         3. Overwrites the variables present in the command line (cmd_args).
         """
-        args = SimpleNamespace()
+        args = types.SimpleNamespace()
         valid = 'Please check pebsi/defaults.py for valid variable names.'
 
         # if config filename was specified, make sure use_config is True
@@ -249,12 +251,52 @@ class Config():
         DynamicArgs = namedtuple('DynamicArgs', dynamic_dict.keys())
         self.dynamic_args = DynamicArgs(**dynamic_dict)
 
+        # 3. Stack all parameters including external ones into a namespace
         all_params = {
             k: to_array_if_numeric(v, k)
             for k, v in raw_config_dict.items()
         }
-        self.params = SimpleNamespace(**all_params)
+        
+        self.params = types.SimpleNamespace(**all_params)
         self.params.static_args = self.static_args
         self.params.dynamic_args = self.dynamic_args
-
         return
+    
+class ProgressTimer():
+    """
+    Keeps track of time elapsed and 
+    estimates time remaining based on
+    the number of timesteps.
+    """
+    def __init__(self, total_steps):
+        self.total_steps = total_steps
+        self.start = time.perf_counter()
+        self.elapsed = 0
+        self.remaining = float("inf")
+        self.step = -1
+
+    def update(self):
+        """
+        Steps counter and estimates remaining time.
+        """
+        now = time.perf_counter()
+        elapsed = now - self.start
+        self.step += 1
+
+        frac = self.step / self.total_steps
+        est_total = elapsed / frac if frac > 0 else float("inf")
+        remaining = est_total - elapsed
+
+        self.remaining = remaining 
+        self.elapsed = elapsed
+
+    def printout(self):
+        percent_done = self.step / self.total_steps * 100
+        blocks_total = 48
+        n_blocks_filled = int(percent_done / 100 * blocks_total)
+        n_blocks_empty = blocks_total - n_blocks_filled
+        print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
+        print(
+            f"{percent_done:.0f}%  "
+            f"[ Elapsed: {self.elapsed/60:.2f} min | Remaining: {self.remaining/60:.2f} min ]"
+        )

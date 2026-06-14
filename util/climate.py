@@ -74,12 +74,12 @@ class Climate():
         tz = self.terrain.tz_n
         if len(np.unique(tz)) == 1:
             # if all glaciers are in the same timezone, dates_UTC can be 1D
-            self.dates_UTC = self.dates - pd.to_timedelta(int(tz[0]), unit='h')
+            self.dates_UTC = (self.dates - pd.to_timedelta(int(tz[0]), unit='h')).to_numpy()
         else:
             # else, need dates_UTC to be a 2D array (points, time)
-            timedelta_col = pd.to_timedelta(tz, unit='h')[:, np.newaxis]
-            self.dates_UTC = self.dates[np.newaxis, :] - timedelta_col
-
+            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, np.newaxis]
+            self.dates_UTC = self.dates.to_numpy()[np.newaxis, :] - timedelta_col
+            
         # specify spatial and temporal information
         self.N_TIME = len(self.dates)
         self.shape = (self.terrain.N_POINTS, self.N_TIME)
@@ -156,15 +156,11 @@ class Climate():
         Loads all the raw climate data.
         """
         # load time and point data
-        dates = self.dates_UTC
-        sd = self.terrain
+        terrain = self.terrain
         
-        # interpolate data if time was input on the hour instead of half-hour
-        self.interpolate = dates[0].minute != 30 and self.params.climate_source == 'MERRA2'
-
         # get lat/lon DataArrays for indexing spatial data
-        lat_n = sd.lat_n.get() if hasattr(sd.lat_n, 'get') else sd.lat_n
-        lon_n = sd.lon_n.get() if hasattr(sd.lon_n, 'get') else sd.lon_n
+        lat_n = terrain.lat_n
+        lon_n = terrain.lon_n
         self.point_lats = xr.DataArray(lat_n, dims='point')
         self.point_lons = xr.DataArray(lon_n, dims='point')
         
@@ -180,11 +176,6 @@ class Climate():
         for var in self.need_vars:
             # gather data for each var and add to all_data
             region = 'reg' + str(self.params.rgi_region).zfill(2)
-
-            # region = 'gulkana' # 
-            # if var == self.need_vars[0]:
-            #     print('hard coded gulkana region for testing')
-
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
             
             self.get_var_data(fn, var)
@@ -246,27 +237,47 @@ class Climate():
         if var in self.carbon_vars and params.deposition_data:
             # turn daily into hourly
             ds = ds.resample(time='h').ffill()
+        
+        # MERRA2 has timestamps on half hour; shift them back 30 minutes
+        # i.e., 1:30 represents the hour from 1-->2
+        if self.params.climate_source == 'MERRA2':
+            ds['time'] = ds.time - pd.Timedelta(minutes=30)
 
         # check the units
         ds = self.check_units(var,ds)
 
         # for time-varying variables, select/interpolate to the model time
-        if var != 'elev':
-            assert dates[0] >= pd.to_datetime(ds.time.values[0]), f'Check input times and {var} data'
-            assert dates[-1] <= pd.to_datetime(ds.time.values[-1]), f'Check input times and {var} data'
-            if not dep_var and params.climate_source == 'ERA5-hourly':
-                ds = ds.interp(time=dates)
-            elif self.interpolate:
-                ds = ds.interp(time=dates)
-            else:
-                ds = ds.sel(time=dates)
-        
+        dates_2d = np.atleast_2d(dates)  # (n_points, n_times)
+        n_points, n_times = dates_2d.shape
+        data_array = np.empty((n_points, n_times), dtype=np.float32)
+
+        assert np.all(dates_2d[:, 0] >= pd.to_datetime(ds.time.values[0])), \
+            f'Dates out of range: check input times and {var} data'
+        assert np.all(dates_2d[:, -1] <= pd.to_datetime(ds.time.values[-1])), \
+            f'Dates out of range: check input times and {var} data'
+
+        # loop through unique timezones
+        if len(np.unique(self.terrain.tz_n)) > 1:
+            for tz in np.unique(self.terrain.tz_n):
+                # get points which share this timezone (they all have the same UTC timestamps)
+                point_indices = np.where(self.terrain.tz_n == tz)[0]
+                tz_dates = dates_2d[point_indices[0]]  
+
+                # select the dataset at these UTC dates
+                group_ds = (ds.isel(point=point_indices)
+                            .sel(time=tz_dates)
+                            .transpose('point','time'))
+                data_array[point_indices] = group_ds.values
+        else:
+            data_array = ds.sel(time=dates).transpose('point','time').values
+            
         # make sure the correct grid cell was accessed
-        assert np.all(np.abs(ds.coords[lat_vn].values - self.point_lats.values) <= lat_res), 'Wrong grid cell was accessed'
-        assert np.all(np.abs(ds.coords[lon_vn].values - self.point_lons.values) <= lon_res), 'Wrong grid cell was accessed'
+        assert np.all(np.abs(ds.coords[lat_vn].values - self.point_lats.values) <= lat_res), \
+            'Wrong grid cell was accessed: check climate data covers the whole region'
+        assert np.all(np.abs(ds.coords[lon_vn].values - self.point_lons.values) <= lon_res), \
+            'Wrong grid cell was accessed: check climate data covers the whole region'
 
         # store result
-        data_array = ds.transpose('point','time').values
         setattr(self, var, data_array.astype(np.float32))
         ds.close()
         return
@@ -333,6 +344,9 @@ class Climate():
         # print any missing data
         if len(failed) > 0:
             failed_str = ', '.join(failed)
+            for var in failed:
+                data = getattr(self, var)
+                print(np.where(np.isnan(data)))
             raise ConfigError(f'Climate is missing data from {failed_str}')
         
         # print out the time taken to process climate data
@@ -710,7 +724,9 @@ class Climate():
 
         rain_scale = np.linspace(1, 0, 20)
         temp_scale = np.linspace(temp_low, temp_high, 20)
-        snow_fraction = np.interp(temp, temp_scale, rain_scale)
+        snow_fraction = np.interp(
+            temp.ravel(), temp_scale, rain_scale
+        ).reshape(temp.shape)
 
         # calculate snowfall in each hour
         hourly_snow = tp * snow_fraction
@@ -725,10 +741,8 @@ class Climate():
         upcoming_snow = np.zeros_like(hourly_snow)
     
         # calculate snow upcoming in upcoming days
-        upcoming_snow[:, :-look_ahead_steps] = (
-            running_total[:, look_ahead_steps:] - \
-                running_total[:, :-look_ahead_steps]
-        )
+        diff = running_total[:, look_ahead_steps:] - running_total[:, :-look_ahead_steps]
+        upcoming_snow[:, :-look_ahead_steps] = diff
 
         # for final hours where can't look into the future,
         # subtract the current toal from the absolute final total
@@ -746,6 +760,7 @@ class Climate():
 
         Only set up for MERRA-2.
         """
+        print('~ Did not find RH2M data: calculating . . .')
         # CONSTANTS
         CTOK = self.params.celsius_to_kelvin
 
@@ -760,24 +775,24 @@ class Climate():
             ds_temp = xr.open_dataset(fn.replace(rh_vn, temp_vn))
             ds_sp = xr.open_dataset(fn.replace(rh_vn, sp_vn))
         elif '.zarr' in fn:
-            ds_qv = xr.open_zarr(fn.replace(rh_vn, qv_vn), consolidated=False)
-            ds_temp = xr.open_zarr(fn.replace(rh_vn, temp_vn), consolidated=False)
-            ds_sp = xr.open_zarr(fn.replace(rh_vn, sp_vn), consolidated=False)
+            ds_qv = xr.open_zarr(fn.replace(rh_vn, qv_vn), consolidated=False).chunk({'time': 1000})
+            ds_temp = xr.open_zarr(fn.replace(rh_vn, temp_vn), consolidated=False).chunk({'time': 1000})
+            ds_sp = xr.open_zarr(fn.replace(rh_vn, sp_vn), consolidated=False).chunk({'time': 1000})
 
         # calculate saturation pressure from air temperature
-        esat = self.sat_vapor_pressure(ds_temp[temp_vn].values - CTOK)
+        esat = self.sat_vapor_pressure(ds_temp[temp_vn] - CTOK)
 
         # saturation and actual specific humidity vapor pressure
-        ws = 0.622 * esat / (ds_sp[sp_vn].values - esat)
-        w = ds_qv[qv_vn].values / (1 - ds_qv[qv_vn].values)
+        ws = 0.622 * esat / (ds_sp[sp_vn] - esat)
+        w = ds_qv[qv_vn] / (1 - ds_qv[qv_vn])
 
         # relative humidity as a percentage of saturation humidity
         rh = w / ws * 100
 
         # create copy dataset and fill with RH data
         ds_rh = ds_qv.copy(deep=True)
-        ds_rh['RH2M'] = (ds_qv[qv_vn].dims, rh)
-        ds_rh['RH2M'].attrs = {
+        ds_rh[rh_vn] = rh
+        ds_rh[rh_vn].attrs = {
             'units': '%', 
             'long_name': '2-meter_relative_humidity'
         }
@@ -796,9 +811,21 @@ class Climate():
 
         if 'zarr' in fn:
             import zarr
-            ds_rh.to_zarr(fn, mode='w', consolidated=False)
-            store = zarr.DirectoryStore(fn)
-            zarr.consolidate_metadata(store)
+            n_time = len(ds_qv.time)
+            time_chunk = 1000
+
+            first_chunk = ds_rh.isel(time=slice(0, time_chunk)).compute()
+            first_chunk.to_zarr(fn, mode='w', consolidated=False)
+            del first_chunk
+
+            # append remaining chunks
+            for i in range(time_chunk, n_time, time_chunk):
+                chunk = ds_rh.isel(time=slice(i, i + time_chunk)).compute()
+                chunk.drop_vars([v for v in chunk.coords if 'time' not in chunk[v].dims])
+                chunk.to_zarr(fn, append_dim='time', consolidated=False)
+                del chunk
+
+            zarr.consolidate_metadata(fn)
         else:
             ds_rh.to_netcdf(fn)
         if self.params.debug:

@@ -3,21 +3,19 @@ Layers class for PEBSI
 
 Tracks layer properties and contains utility
 functions to maintain layer arrays.
-
-@author: clairevwilson
 """
 # Built-in libraries
 import warnings, sys
 warnings.simplefilter('error', RuntimeWarning)
 # External libraries
 import jax
+from jax.debug import print as jax_print
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import xarray as xr
 # Internal libraries
 from util.config import ConfigError
-from jax.debug import print as jax_print
 
 class Layers():
     """
@@ -29,12 +27,6 @@ class Layers():
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
-
-        Parameters
-        ==========
-        climate
-            Class object from pebsi.climate
-        params : command line arguments
         """
         # INPUTS
         self.climate = climate 
@@ -154,20 +146,7 @@ class Layers():
     def initialize_layers(self):
         """
         Initializes the layer temperature, density, 
-        water content and grain size.
-
-        Parameters:
-        ==========
-        snow_height : float
-        firn_height : float
-            Initial depth of snow and firn [m]
-        
-        Returns:
-        --------
-        ltemp, ldensity, lwater, lgrainsize : np.ndarray
-            Arrays containing layer temperature [C], 
-            density [kg m-3], water content [kg m-2],
-            and grain size [um]
+        water content, grain size, LAPs, and age.
         """
         params = self.params
         snow_mask = self.snow_mask
@@ -349,8 +328,6 @@ def add_top_layer(state, mask, new_layer):
 
     Parameters
     ==========
-    state : NamedTuple
-        Current model state containing point/layer properties
     mask : jnp.Array (N_POINTS,)
         Boolean mask for points where a new layer is added
     new_layer : dict
@@ -540,7 +517,7 @@ def remove_layer(state, mask, idx, params):
     # combine point mask with index mask
     # (shift layers below removed up by one)
     target_mask = mask[:, None] & (
-        layers_idx[None, :] >= jnp.atleast_1d(idx)[:, None]
+        layers_idx[None, :] >= idx[:, None]
     )
 
     for var in params.all_layer_vars:

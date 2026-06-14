@@ -1,39 +1,40 @@
 """
 Main script to execute PEBSI
 
-Parses the command-line arguments, checks the 
-inputs of the model, runs the shading model if 
-the inputs are incomplete, initializes the
-climate dataset, and runs the model for a
-single point.
+Parses the command-line arguments, loads all
+of the initial states and forcing data,
+and runs the main() function.
 
 @author: clairevwilson
 """
-import os 
-import jax
-os.environ["JAX_TRACEBACK_FILTERING"] = "off"
-jax.config.update("jax_enable_x64", True)
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
-
 # Built-in libraries
+import os
 import argparse
 import time
-import netCDF4
+import warnings
 # External libraries
+import jax 
+import zarr
 import numpy as np
-import xarray as xr
 import pandas as pd
 import jax.numpy as jnp
+import netCDF4
 # Internal libraries
 import util.defaults as defaults
-from util.config import Config
+from util.config import *
 from util.terrain import Terrain
 from util.output import Output
 from util.climate import Climate
 from util.layers import Layers
 from pebsi.state import *
 from pebsi.main import main
+
+os.umask(0o000) # make sure files are created with universal permissions
+os.environ["JAX_TRACEBACK_FILTERING"] = "off" # show full error statements
+jax.config.update("jax_enable_x64", True) # enable floaf64 storage
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
+warnings.filterwarnings('ignore', category=zarr.errors.ZarrUserWarning)
 
 def get_args(parse=True):
     """
@@ -80,9 +81,6 @@ def get_args(parse=True):
     # CLIMATE OPTOINS
     parser.add_argument('-use_aws', action='store_true',
                         help='use AWS or just reanalysis?')
-    
-    parser.add_argument('-testing', action='store_true',
-                        help='test a single function?')
 
     if parse:
         args = parser.parse_args()
@@ -283,45 +281,67 @@ class PEBSI():
 
         # ======== INITIALIZE THE OUTPUTS ========
         dates = self.climate.dates
-        model_output = Output(dates, params, self.terrain)
+        model_output = Output(params, self.terrain)
 
-        self.start_prints()
+        self.start_print()
 
         # ========== RUN ENERGY BALANCE ==========
         total_steps = len(dates)
         state = initial_state
-        all_records = []
+        chunk_size = params.temporal_chunks
 
-        for start in range(0, total_steps, params.temporal_chunks):
-            end = min(start + params.temporal_chunks, total_steps)
-            chunk_forcings = jax.tree.map(lambda x, s=start, e=end: x[s:e], all_forcings)
+        # start model timer
+        total_chunks = (total_steps + chunk_size - 1) // chunk_size
+        model_timer = ProgressTimer(total_chunks)
+
+        for start in range(0, total_steps, chunk_size):
+            # crop forcings to the temporal subset
+            end = min(start + chunk_size, total_steps)
+            actual_length = end - start
+            chunk_forcings = jax.tree.map(lambda x: x[start:end], all_forcings)
            
+           # pad the forcings so the shape matches temporal_chunks
+            if actual_length < chunk_size:
+                pad_amt = chunk_size - actual_length
+                chunk_forcings = jax.tree.map(
+                    lambda x: jnp.pad(x, ((0, pad_amt),) + ((0, 0),) * (x.ndim - 1)), 
+                    chunk_forcings
+                )
+
+            # RUN MODEL FOR ONE TIME CHUNK
+            before = time.time()
             state, chunk_records = main(
                 state, chunk_forcings, point_attrs, static_args, dynamic_args
             )
-            all_records.append(chunk_records)
+            jax.effects_barrier()
+            if params.debug:
+                print(f'. . . chunk {start / chunk_size + 1} /  in {time.time() - before:.1f} s')
 
-        # concatenate records across years
-        records = jax.tree.map(
-            lambda *xs: jnp.concatenate(xs, axis=0), 
-            all_records[0], *all_records[1:])
-        final_state = state
+            # remove the padded garbage
+            if actual_length < chunk_size:
+                chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
+
+            # store this chunk (append it onto the zarr)
+            if params.store_data:
+                model_output.store_chunk(chunk_records, dates[start:end], start)
+            
+            # clear chunk records from RAM
+            del chunk_records
 
         # ============== END TIMER ===============
-        records.airtemp.block_until_ready() 
         time_elapsed = time.time() - self.start_time
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
         print(f'~ Simulation completed in {time_elapsed:.2f} seconds ~')
 
         # ============ STORE OUTPUT ==============
         if self.params.store_data:
-            model_output.store_data(records)
-            model_output.add_basic_attrs(self.params,time_elapsed,self.climate)
+            model_output.close_out(params, time_elapsed, self.climate)
         else:
             print('~ Success: data was not saved ~')
-        return final_state
+        return state
     
-    def start_prints(self):
+    def start_print(self):
+
         # get info about the simulation time
         start = pd.to_datetime(self.params.start_date)
         end = pd.to_datetime(self.params.end_date)
@@ -337,94 +357,11 @@ class PEBSI():
             print(f'~ Running {self.terrain.N_POINTS} points in region {self.params.rgi_region} for {n_months} months starting in {start_fmtd} ~')
         return
     
-    ############################ TESTING FUNCTIONALITY ############################
-    
-    def load_single_forcing_step_jax(self, all_forcings):
-        """Uses jax.tree_util to cleanly slice a whole forcing structure at index 0."""
-        import jax
-        
-        # grab the first forcing state for testing
-        single_forcing_state = jax.tree_util.tree_map(
-            lambda x: x[0], 
-            all_forcings
-        )
-        return single_forcing_state
-    
-    def test(self):
-        # ======== INITIALIZE THE INPUTS ========
-        self.prepare_inputs()
-        self.prepare_initial_state()
-        state, forcings, point_attrs = self.pack_states()
-        forcings = self.load_single_forcing_step_jax(forcings)
-
-        mock_mask = jnp.array([True, False, False])
-
-        # TEST ONE FUNCTION
-        import pebsi.massbalance as pmb
-        import pebsi.energybalance as peb
-        mb = pmb.MassBalanceDriver(None, self.params)
-        eb = peb.EnergyBalanceDriver(None, self.args)
-
-        # CHECK ENERGY BALANCE
-        mass_before = jnp.sum(state.lice, axis=1) + \
-            jnp.sum(state.lwater, axis=1) + state.basal_reservoir
-        state, squee = mb.run_state_updates(state, forcings)
-        mass_after = jnp.sum(state.lice, axis=1) + \
-            jnp.sum(state.lwater, axis=1) + state.basal_reservoir
-        print(mass_before - mass_after, squee)
-
-        # print(state.surftemp, fluxes)
-        # state, melt, mass = mb.heating_melting(state, fluxes)
-        # print(state.lice, mass)
-
-        # ice_before = jnp.sum(state.lice)
-        # updated_state = mb.run_daily_routines(state, forcings, point_attrs)
-        # print('Mass change:', jnp.sum(updated_state.lice) - ice_before)
-        # print('Reservoir:', updated_state.basal_reservoir)
-        # print(updated_state.albedo_surr)
-
-        # self.plot_test_diagnostic(state, updated_state, title="daily_updates test", bottom = 2)
-        return
-
-    def plot_test_diagnostic(self, old_state, new_state, bottom = 10, title="Component Test"):
-        """Plots the vertical profile of layer masses to verify grid scaling."""
-        import matplotlib.pyplot as plt
-        
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5), sharey=True)
-        
-        layers = jnp.arange(bottom)
-        
-        axes[0].plot(old_state.lice[0, :bottom], layers, 'o--', label='Before', color='gray')
-        axes[0].plot(new_state.lice[0, :bottom], layers, 's-', label='After', color='blue')
-        axes[0].set_title("Point 0 (Mask = True)")
-        axes[0].set_xlabel("Layer Mass (lice)")
-        axes[0].set_ylabel("Layer Index")
-        axes[0].grid(True)
-        axes[0].legend()
-        
-        # Plot Point 1 (where mask was False)
-        axes[1].plot(old_state.lice[1, :bottom], layers, 'o--', label='Before', color='gray')
-        axes[1].plot(new_state.lice[1, :bottom], layers, 's-', label='After', color='orange')
-        axes[1].set_title("Point 1 (Mask = False)")
-        axes[1].set_xlabel("Layer Mass (lice)")
-        axes[1].grid(True)
-        axes[1].legend()
-        
-        plt.suptitle(title)
-        plt.gca().invert_yaxis() # Put layer 0 at the top, layer 49 at the bottom
-        plt.savefig(title.replace(' ','_').lower() + '.png')
-        plt.close()
-    
 # execute the model if this script is called from command line
 if __name__ == '__main__':
     # get command-line args
     args = get_args()
 
-    # initialize the model
+    # initialize and run the model
     model = PEBSI(args)
-
-    if model.params.testing:
-        # tests a single function in a single timestep so you can inspect output
-        model.test()
-    else:
-        model.run()
+    model.run()

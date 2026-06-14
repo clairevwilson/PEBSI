@@ -1,10 +1,9 @@
 """
-Surface class for PEBSI
+Albedo class for PEBSI
 
-Calculates the surface properties such
-as albedo and surface temperature.
-
-@author: clairevwilson
+Contains functions to load and apply the 
+emulator for SNICAR (the Snow, Ice and Aerosol
+Radiative model)
 """
 # External libraries
 import equinox as eqx
@@ -54,6 +53,13 @@ norm  = np.load('snicar_norm.npz')
 mu, sigma = jnp.array(norm['mu']), jnp.array(norm['sigma'])
 
 def get_albedo(state, params, forcings):
+    """
+    Calculates albedo using the emulator and tracks
+    annual minimum albedo. When firn layers are 
+    exposed, the surface uses the minimum albedo from 
+    the year the firn was created. Ice has a constant
+    albedo.
+    """
     # grab the top four layers
     lheight = state.lheight[:, :4]
     ldensity = state.ldensity[:, :4]

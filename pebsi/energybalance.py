@@ -1,11 +1,10 @@
 """
 Energy balance class for PEBSI
 
-Loads climate variables for each timestep
-and calculates the surface energy balance
-from individual heat fluxes.
-
-@author: clairevwilson
+Contains functions to calculate each individual
+surface energy flux (shortwave, longwave, 
+sensible, latent, rain, and ground) and to find
+the root of the surface energy balance equation.
 """
 # External libraries
 import jax
@@ -21,8 +20,8 @@ class EnergyBalanceDriver():
 
     def solve_energy_balance(self, state, forcings, point_attrs):
         """
-        Finds the exact surftemp where compute_fluxes 
-        equals 0. Runs inside the spatial vmap.
+        Finds the exact surftemp at each point where 
+        the surface energy balance equals 0. 
         """
         # 1. check if the melt energy is positive with 0 surface temperature
         t_melt = 0.0
@@ -136,10 +135,12 @@ class EnergyBalanceDriver():
         albedo = state.albedo
         albedo_surr = state.albedo_surr
 
-        # get solar position and shading
+        # get solar position 
         sun_az = forcings.solar_azimuth
         sun_zen = forcings.solar_zenith
-        shade = forcings.shadow_mask
+
+        # shade mask has 0 for shade, 1 for sun
+        sunny = forcings.shadow_mask
 
         # calculate slope correction
         cos_theta = (jnp.cos(sun_zen)*jnp.cos(slope) + 
@@ -158,9 +159,9 @@ class EnergyBalanceDriver():
 
         # determine overall incoming flux
         SWin = jnp.where(
-            shade,
-            SWin_terrain + SWin_diffuse,
-            SWin_terrain + SWin_diffuse + SWin_direct * slope_correction
+            sunny, # True = point is receiving direct sunlight
+            SWin_terrain + SWin_diffuse + SWin_direct * slope_correction,
+            SWin_terrain + SWin_diffuse
         )
 
         # get reflected radiation
@@ -169,16 +170,7 @@ class EnergyBalanceDriver():
 
     def get_LW(self, state, forcings):
         """
-        Calculates incoming and outgoing longwave heat
-        flux. If not input in climate data, scheme follows 
-        Klok and Oerlemans (2002) for calculating net 
-        longwave radiation from the air temperature
-        and cloud cover.
-        
-        Parameters
-        ==========
-        surftemp : float
-            Surface temperature [C]
+        Calculates incoming and outgoing longwave heat flux. 
         """
         params = self.params
 
@@ -201,15 +193,10 @@ class EnergyBalanceDriver():
     
     def get_rain(self, state, forcings):
         """
-        Calculates amount of energy supplied by
-        precipitation that falls as rain.
-        
-        Parameters
-        ==========
-        surftemp : float
-            Surface temperature [C]
+        Calculates amount of energy supplied by liquid
+        precipitation, assuming it falls at the 2-meter
+        air temperature.
         """
-      
         # CONSTANTS
         SNOW_THRESHOLD_LOW = self.params.snow_threshold_low
         SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
@@ -234,14 +221,8 @@ class EnergyBalanceDriver():
     def get_ground(self, state):
         """
         Calculates amount of energy supplied to the surface
-        by heat conduction from the temperate ice.
-        
-        Parameters
-        ==========
-        surftemp : float
-            Surface temperature [C]
+        by heat conduction from underlying temperate ice.
         """
-
         # CONSTANTS
         K_ICE = self.params.k_ice
         TEMP_TEMP = self.params.temp_temp 
@@ -254,15 +235,7 @@ class EnergyBalanceDriver():
     def get_turbulent(self, state, forcings, point_attrs):
         """
         Calculates turbulent (sensible and latent heat)
-        fluxes based on Monin-Obukhov Similarity Theory 
-        or Bulk Richardson number.
-
-        Parameters
-        ==========
-        surftemp : float
-            Surface temperature [C]
-        roughness : float
-            Surface roughness [m]
+        fluxes using the Bulk Richardson stability correction.
         """
         params = self.params 
 
@@ -327,13 +300,8 @@ class EnergyBalanceDriver():
     
     def sat_vapor_pressure(self, airtemp, method='ARM'):
         """
-        Calculates vapor pressure [Pa] 
-        from air temperature 
-
-        Parameters
-        ==========
-        airtemp : float
-            Air temperature [C]
+        Calculates saturation vapor pressure [Pa] 
+        from air temperature [C]
         """
         # CONSTANTS
         CTOK = self.params.celsius_to_kelvin
@@ -353,7 +321,7 @@ class EnergyBalanceDriver():
         # return vapor pressure in Pa
         return P*1000
 
-    def diffuse_fraction(self,rad_glob,solar_zenith,doy):
+    def diffuse_fraction(self, rad_glob, solar_zenith, doy):
         """
         Determines the fraction shortwave radiation 
         that is diffuse using an empirical formulation 
@@ -366,10 +334,12 @@ class EnergyBalanceDriver():
 
         Parameters
         ==========
-        rad_glob : float
-            Horizontal global (all-sky) radiation [W m-2]
-        solar_zenith : float
-            Solar zenith angle [rad]
+        rad_glob : jnp.ndarray
+            (N_POINTs) Horizontal global (all-sky) radiation [W m-2]
+        solar_zenith : jnp.ndarray
+            (N_POINTS) solar zenith angle [rad] 
+        doy : int
+            Julien day of year
         """
         # CONSTANTS
         SOLAR_CONSTANT = self.params.solar_constant
