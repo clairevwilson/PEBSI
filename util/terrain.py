@@ -287,6 +287,7 @@ class Terrain:
         master_dem = (rxr.open_rasterio(vrt_path)
                     .squeeze().drop_vars('band'))
         self.dem_crs = dem_crs = master_dem.rio.crs
+        rgi_gdf = rgi_gdf.to_crs(dem_crs)
         
         # reproject RGI dataset to match the DEM
         if rgi_gdf.crs != dem_crs:
@@ -302,12 +303,12 @@ class Terrain:
         x_edges = np.arange(minx, maxx + block_size_deg, block_size_deg)
         y_edges = np.arange(miny, maxy + block_size_deg, block_size_deg)
 
-        for i in range(len(x_edges) - 1):
-            for j in range(len(y_edges) - 1):
+        for xi in range(len(x_edges) - 1):
+            for yj in range(len(y_edges) - 1):
                 # Filter for glaciers whose centroid falls within this block
                 glaciers_in_block = rgi_gdf[
-                    rgi_gdf['CenLon'].between(x_edges[i], x_edges[i+1]) &
-                    rgi_gdf['CenLat'].between(y_edges[j], y_edges[j+1]) &
+                    rgi_gdf['CenLon'].between(x_edges[xi], x_edges[xi+1]) &
+                    rgi_gdf['CenLat'].between(y_edges[yj], y_edges[yj+1]) &
                     rgi_gdf['RGIId'].isin(['RGI60-' + i for i in self.rgiid_unique])
                 ]
                 
@@ -326,7 +327,7 @@ class Terrain:
                 # get metric projection
                 self.dem_crs = metric_crs = self._get_metric_crs(glaciers_in_block)
 
-                # slice and creproject the cropped chunk
+                # slice and reproject the cropped chunk
                 sub_dem = master_dem.rio.clip_box(*buffered_bounds)
                 sub_dem = sub_dem.rio.reproject(metric_crs)
                 glaciers_in_block = glaciers_in_block.to_crs(metric_crs)
@@ -545,7 +546,7 @@ class Terrain:
         self.tz_n = compiled_inputs['tz_n']
         return
     
-    def load_shading(self, dates_UTC):
+    def load_shading(self, dates_local):
         """
         Loads the shading mask for the points in the
         simulation from the preprocessed shading .zarr.
@@ -555,6 +556,16 @@ class Terrain:
         dates_UTC : np.ndarray (N_TIME, ) or (N_POINTS, N_TIME)
             Dates in UTC for the simulation.
         """
+        # handle timezones
+        tz = self.tz_n
+        if len(np.unique(tz)) == 1:
+            # if all glaciers are in the same timezone, dates_UTC can be 1D
+            dates_UTC = (dates_local - pd.to_timedelta(int(tz[0]), unit='h')).to_numpy()
+        else:
+            # else, need dates_UTC to be a 2D array (points, time)
+            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, np.newaxis]
+            dates_UTC = dates_local.to_numpy()[np.newaxis, :] - timedelta_col
+
         # define storage for shading masks
         N_POINTS = self.N_POINTS 
         N_TIME = len(dates_UTC) if len(dates_UTC.shape)==1 else dates_UTC.shape[1]
@@ -581,6 +592,7 @@ class Terrain:
 
                 # open the shade file and parse the lookup
                 fn = self.shade_fn.format(gid=gid)
+
                 ds = xr.open_zarr(fn)
                 ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
                 ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])

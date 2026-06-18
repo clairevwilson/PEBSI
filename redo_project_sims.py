@@ -6,11 +6,11 @@ import simulation as sim
 config_fn = 'sim_redo_config.yaml'
 
 site_dict = {
-    'wolverine':['N','B','EC'],
-    'kahiltna':['K53','K17b'], 
-    'kennicott':['GTL','GTH','KC31'],
-    'lemon_creek':['B','C','D'],
-    'taku':['NWB1','TKG3'],
+    # 'wolverine':['N','B','EC'],
+    # 'kahiltna':['K53','K17b'], 
+    # 'kennicott':['GTL','GTH'], # ,'KC31'],
+    # 'lemon_creek':['B','C','D'],
+    # 'taku':['NWB1','TKG3'],
     'gulkana':['AU','B','D']
 }
 
@@ -51,20 +51,23 @@ configs = {
     'rgi_ids': gids, 
     'sites': sites, 
     'n_points': len(sites),
+    'bias_vars': ['temp'],
 
     'start_date': '2000-04-20',
-    'end_date': '2025-04-20',
+    'end_date': '2025-08-20',
 
     'dust_factor': 20,
     'kp': kps, 
     'albedo_ice': a_ices,
     'wind_factor': wind_factors, 
+    'option_accel_grains': True,
 
     'debug': True,
     'store_data': True,
+    'store_vars': ['MB','EB','layers','climate'],
 
     'output_fp': '../Output/new_sims/',
-    'climate_fp': '/run/media/claire/TOSHIBA EXT/',
+    'climate_fp': '/Volumes/TOSHIBA EXT/', # '/run/media/claire/TOSHIBA EXT/',
 
     'method_snicar': 'emulator',
     'method_distribute': 'sites',

@@ -24,7 +24,7 @@ class EnergyBalanceDriver():
         the surface energy balance equals 0. 
         """
         # 1. check if the melt energy is positive with 0 surface temperature
-        t_melt = 0.0
+        t_melt = jnp.zeros_like(state.surftemp)
         y_melt, _ = self.compute_fluxes(t_melt, state, forcings, point_attrs)
 
         # 2. solve for the root of the energy balance equation
@@ -129,7 +129,6 @@ class EnergyBalanceDriver():
         sky_view = point_attrs.sky_view_factor
         slope = point_attrs.slope * jnp.pi/180
         aspect = point_attrs.aspect * jnp.pi/180
-        dt = self.params.dt
 
         # albedo input
         albedo = state.albedo
@@ -149,7 +148,7 @@ class EnergyBalanceDriver():
         
         # SWin needs to be corrected for shade
         # get sky (diffuse+direct) and terrain (diffuse) SWin
-        SWin_sky = forcings.shortwave_in / dt
+        SWin_sky = forcings.shortwave_in / self.params.dt
         SWin_terrain = SWin_sky * (1-sky_view) * albedo_surr
 
         # split sky into direct and diffuse
@@ -256,8 +255,8 @@ class EnergyBalanceDriver():
 
         # adjust wind speed to reference height
         z = 2 # reference height in m
-        wind_2m = forcings.wind * jnp.log(2/z0) / jnp.where(
-            WIND_REF_Z == 2, 1.0, jnp.log(WIND_REF_Z/z0)
+        wind_2m = forcings.wind * jnp.where(
+            WIND_REF_Z == 2, 1.0, jnp.log(2/z0) / jnp.log(WIND_REF_Z/z0)
         )
 
         # transform humidity into mixing ratio (q) 
@@ -271,8 +270,8 @@ class EnergyBalanceDriver():
         density_air = forcings.sp / R_GAS / forcings.tempK * MM_AIR
 
         # latent heat term depends on direction of heat exchange
-        is_sublimating = (surftemp == 0.0) & ((qz - q0) > 0.0)
-        Lv = jnp.where(is_sublimating, params.Lv_evap, params.Lv_sub)
+        is_sublimating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
+        Lv = jnp.where(is_sublimating, params.Lv_sub, params.Lv_evap)
 
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
@@ -295,6 +294,11 @@ class EnergyBalanceDriver():
         # final flux calculation
         Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.tempC - surftemp) * jnp.cos(slope)
         Ql = density_air * Lv * csQ * psi * wind_2m * (qz - q0) * jnp.cos(slope)
+
+        # def print_notna(doy, hr, Qs, temp, wind, surf):
+        #     if str(Qs) != 'nan':
+        #         print(f'doy {doy} hour {hr} Qs {Qs} air temp {temp} wind {wind} surf temp {surf}')
+        # jax.debug.callback(print_notna, forcings.doy, forcings.hour, Qs[0], forcings.tempC[0], forcings.wind[0], surftemp[0])
 
         return Qs, Ql
     

@@ -33,7 +33,7 @@ class Climate():
     If use_aws = False, only reanalysis data will 
     be used.
     """
-    def __init__(self, params, terrain):
+    def __init__(self, dates, params, terrain):
         """
         Initializes glacier information and creates
         the dataset where climate data will be stored.
@@ -44,7 +44,7 @@ class Climate():
         # load params and simulation information
         self.params = params
         self.terrain = terrain
-        self.get_spatial_temporal_info()
+        self.get_spatial_temporal_info(dates)
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
@@ -63,12 +63,12 @@ class Climate():
             pass
         return
     
-    def get_spatial_temporal_info(self):
+    def get_spatial_temporal_info(self, dates):
         """
         Loads metadata about the points and 
         dates in the simulation.
         """
-        self.dates = pd.date_range(self.params.start_date,self.params.end_date,freq='h')
+        self.dates = pd.to_datetime(dates)
 
         # handle timezones
         tz = self.terrain.tz_n
@@ -196,10 +196,11 @@ class Climate():
 
         # special check for deposition variables
         dep_var = 'dry' in var or 'wet' in var
+        non_merra_dep_var = (var in self.carbon_vars) and (params.deposition_data)
 
         # open the dataset for this variable
         if 'zarr' in fn:
-            ds = xr.open_zarr(fn, decode_timedelta=False, consolidated=False)
+            ds = xr.open_zarr(fn, decode_timedelta=False, consolidated=False, chunks={})
         else:
             ds = xr.open_dataset(fn, decode_timedelta=False)
 
@@ -214,7 +215,7 @@ class Climate():
                 # tell lat/lon to use MERRA2 lat/lon names
                 lat_vn,lon_vn = ['lat','lon']
             
-            if params.deposition_data == 'UKESM' and var in self.carbon_vars:
+            if params.deposition_data == 'UKESM' and non_merra_dep_var:
                 # tell lat/lon to use UKESM lat/lon names for BC/OC
                 lat_vn,lon_vn = ['latitude','longitude']
                 lat_res = np.diff(ds.isel({lat_vn:range(2)})[lat_vn].values)[0]
@@ -224,62 +225,61 @@ class Climate():
                 ds = ds.assign_coords({lon_vn: ((ds[lon_vn] + 180) % 360) - 180})
                 ds = ds.sortby(lon_vn)
 
-        # index by lat and lon and select variable
-        if lat_vn not in ds.dims or lon_vn not in ds.dims:
-            # extract the single cell and replicate it for additional points
-            n_points = len(self.point_lats)
-            ds = ds[vn].expand_dims(point=n_points)
-        else:
-            # extract lats/lons across full dataset
-            ds = ds.sel({lat_vn: self.point_lats, 
-                         lon_vn: self.point_lons}, method='nearest')[vn]
-
-        if var in self.carbon_vars and params.deposition_data:
-            # turn daily into hourly
-            ds = ds.resample(time='h').ffill()
-        
-        # MERRA2 has timestamps on half hour; shift them back 30 minutes
-        # i.e., 1:30 represents the hour from 1-->2
-        if self.params.climate_source == 'MERRA2':
-            ds['time'] = ds.time - pd.Timedelta(minutes=30)
-
         # check the units
-        ds = self.check_units(var,ds)
+        da = self.check_units(var, ds[vn])
 
-        # for time-varying variables, select/interpolate to the model time
-        dates_2d = np.atleast_2d(dates)  # (n_points, n_times)
-        n_points, n_times = dates_2d.shape
-        data_array = np.empty((n_points, n_times), dtype=np.float32)
-
-        assert np.all(dates_2d[:, 0] >= pd.to_datetime(ds.time.values[0])), \
-            f'Dates out of range: check input times and {var} data'
-        assert np.all(dates_2d[:, -1] <= pd.to_datetime(ds.time.values[-1])), \
-            f'Dates out of range: check input times and {var} data'
+        # slice time to chunk window before spatial sel to minimize data pulled
+        dates_2d = np.atleast_2d(dates)
+        N_TIME = dates_2d.shape[-1]
+        N_POINTS = len(self.point_lats)
+        data_array = np.empty((N_POINTS, N_TIME), dtype=np.float32)
 
         # loop through unique timezones
-        if len(np.unique(self.terrain.tz_n)) > 1:
-            for tz in np.unique(self.terrain.tz_n):
-                # get points which share this timezone (they all have the same UTC timestamps)
-                point_indices = np.where(self.terrain.tz_n == tz)[0]
-                tz_dates = dates_2d[point_indices[0]]  
+        for tz in np.unique(self.terrain.tz_n):
+            # points in this timezone
+            point_indices = np.where(self.terrain.tz_n == tz)[0]
+            tz_lats = self.point_lats.isel(point=point_indices)
+            tz_lons = self.point_lons.isel(point=point_indices)
 
-                # select the dataset at these UTC dates
-                group_ds = (ds.isel(point=point_indices)
-                            .sel(time=tz_dates)
-                            .transpose('point','time'))
-                data_array[point_indices] = group_ds.values
-        else:
-            data_array = ds.sel(time=dates).transpose('point','time').values
+            # UTC dates (same for all points in point_indices so grab the first)
+            tz_dates = dates_2d[point_indices[0]]
+            tz_start = tz_dates[0]
+            tz_end = tz_dates[-1]
+
+            # if using MERRA-2, shift our lookup times forward 30 minutes
+            if self.params.climate_source == 'MERRA2' and not non_merra_dep_var:
+                tz_start = tz_start + pd.Timedelta(minutes=30)
+                tz_end = tz_end + pd.Timedelta(minutes=30)
             
-        # make sure the correct grid cell was accessed
-        assert np.all(np.abs(ds.coords[lat_vn].values - self.point_lats.values) <= lat_res), \
-            'Wrong grid cell was accessed: check climate data covers the whole region'
-        assert np.all(np.abs(ds.coords[lon_vn].values - self.point_lons.values) <= lon_res), \
-            'Wrong grid cell was accessed: check climate data covers the whole region'
+            # slice by time
+            tz_da = da.sel(time=slice(tz_start, tz_end))
+
+            # non-MERRA2 deposition data can be daily; forward fill to hourly
+            if non_merra_dep_var:
+                tz_da = tz_da.resample(time='h').ffill()
+
+            # make sure the time is actually there
+            assert tz_start in tz_da.time.values, f'Dates out of range: {tz_start}'
+            assert tz_end in tz_da.time.values, f'Dates out of range: {tz_end}'
+
+            # slice by lat and lon points
+            if lat_vn not in tz_da.dims or lon_vn not in tz_da.dims:
+                tz_da = tz_da.expand_dims(point=len(point_indices))
+            else:
+                tz_da = tz_da.sel(
+                    {lat_vn: tz_lats, lon_vn: tz_lons},
+                method='nearest')
+            
+            data_array[point_indices] = tz_da.transpose('point', 'time').values
+            
+            # make sure the correct grid cells were accessed
+            assert np.all(np.abs(tz_da.coords[lat_vn].values - tz_lats.values) <= lat_res), \
+                'Wrong grid cell was accessed: check climate data covers the whole region'
+            assert np.all(np.abs(tz_da.coords[lon_vn].values - tz_lons.values) <= lon_res), \
+                'Wrong grid cell was accessed: check climate data covers the whole region'
 
         # store result
         setattr(self, var, data_array.astype(np.float32))
-        ds.close()
         return
     
     def process_climate(self):
@@ -699,6 +699,10 @@ class Climate():
             corrected[m] = np.interp(to_correct[m], merra_cdf[s], aws_cdf[s])
             temp_elev[m] = elevation[s]
 
+            # make sure zeros stay as zeros in shortwave radiation
+            if var == 'SWin':
+                corrected[m] = np.wnere(to_correct[m] < 5, 0, corrected[m])
+
         if var == 'temp':
             self.temp_elev = temp_elev
 
@@ -706,50 +710,6 @@ class Climate():
         setattr(self, var, corrected)
 
         ds.close()
-        return
-    
-    def precompute_upcoming_snow(self):
-        """
-        Computes the upcoming snow for every timestep
-        in the simulation. Upcoming snow is used to
-        prognostically determine the end-of-summer 
-        when snow layers are merged into firn.
-        """
-        temp = self.temp 
-        tp = self.tp
-
-        # load the scaling of precip between rain and snow
-        temp_low = self.params.snow_threshold_low
-        temp_high = self.params.snow_threshold_high
-
-        rain_scale = np.linspace(1, 0, 20)
-        temp_scale = np.linspace(temp_low, temp_high, 20)
-        snow_fraction = np.interp(
-            temp.ravel(), temp_scale, rain_scale
-        ).reshape(temp.shape)
-
-        # calculate snowfall in each hour
-        hourly_snow = tp * snow_fraction
-
-        # number of steps to look ahead
-        look_ahead_steps = int(self.params.new_snow_days * 24)
-        
-        # calculate the running total on time axis
-        running_total = np.cumsum(hourly_snow, axis=1)
-
-        # define storage for upcoming snow
-        upcoming_snow = np.zeros_like(hourly_snow)
-    
-        # calculate snow upcoming in upcoming days
-        diff = running_total[:, look_ahead_steps:] - running_total[:, :-look_ahead_steps]
-        upcoming_snow[:, :-look_ahead_steps] = diff
-
-        # for final hours where can't look into the future,
-        # subtract the current toal from the absolute final total
-        final_total = running_total[:, -1:]
-        upcoming_snow[:, -look_ahead_steps:] = final_total - running_total[:, -look_ahead_steps:]
-        
-        self.upcoming_snow = upcoming_snow
         return
     
     def create_rh2m_ds(self, fn):

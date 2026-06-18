@@ -43,6 +43,12 @@ class MassBalanceDriver:
             snowfall, state, forcings
         )
 
+        # append accumulation to past_snow
+        new_past_snow = jnp.roll(
+            state.past_snow, shift=-1, axis=1
+        ).at[:, -1].set(snowfall)
+        state = state._replace(past_snow=new_past_snow)
+
         # add dry deposition of light-absorbing particles
         state = self.add_dry_deposition(
             state, forcings
@@ -80,53 +86,49 @@ class MassBalanceDriver:
         mass_fluxes : dict
             Dictionary containing runoff and melt
         """
+        doy = forcings.doy 
+        hr = forcings.hour 
+        def print_state(i, doy, hr, lwater, lice, reservoir):
+            if doy == 141 and hr == 8:
+                print(f'at {i}    lwater {lwater}   lice {lice}   res {reservoir}')
 
         # subsurface heating and melting
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
-        # jax_print('after heating_melting: lice {} lwater {} reservoir {}',
-        #     jnp.sum(state.lice, axis=1),
-        #     jnp.sum(state.lwater, axis=1),
-        #     state.basal_reservoir)
+        jax.debug.callback(print_state, 1, doy, hr, 
+                           jnp.sum(state.lwater, axis=1), 
+                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
-        # jax_print('after percolation : lice {} lwater {} reservoir {} melt runoff {}',
-        #     jnp.sum(state.lice, axis=1),
-        #     jnp.sum(state.lwater, axis=1),
-        #     state.basal_reservoir, melt_runoff)
+        jax.debug.callback(print_state, 2, doy, hr, 
+                           jnp.sum(state.lwater, axis=1), 
+                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
         
         # refreezing
         state = self.refreezing(state)
-        # jax_print('after refreezing : lice {} lwater {} reservoir {}',
-        #     jnp.sum(state.lice, axis=1),
-        #     jnp.sum(state.lwater, axis=1),
-        #     state.basal_reservoir)
+        jax.debug.callback(print_state, 3, doy, hr, 
+                           jnp.sum(state.lwater, axis=1), 
+                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
 
         # phase changes (e.g., sublimation, condensation)
         state, condensation_runoff, mass_fluxes = self.phase_changes(
             state, fluxes['latent_heat']
         )
-        # jax_print('after phase changes : lice {} lwater {} reservoir {} condensation runoff {}',
-        #     jnp.sum(state.lice, axis=1),
-        #     jnp.sum(state.lwater, axis=1),
-        #     state.basal_reservoir, condensation_runoff)
+        jax.debug.callback(print_state, 4, doy, hr, 
+                           jnp.sum(state.lwater, axis=1), 
+                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
 
         # check layer sizes for numeric stability before running temp profile
         state, dead_mass = layers.check_layer_sizes(state, self.params)
-        # jax_print('after check_sizes: ice {} water {} reservoir {} dead mass {}',
-        #           jnp.sum(state.lice, axis=1),
-        #           jnp.sum(state.lwater,axis=1),
-        #           state.basal_reservoir, dead_mass)
-
+        jax.debug.callback(print_state, 5, doy, hr, 
+                           jnp.sum(state.lwater, axis=1), 
+                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+        
         # resolve temperature profile
         state = self.resolve_temperature_profile(state)
-        # jax_print('after temperature profile : lice {} lwater {} reservoir {}',
-        #     jnp.sum(state.lice, axis=1),
-        #     jnp.sum(state.lwater, axis=1),
-        #     state.basal_reservoir)
 
         # calculate total runoff and store mass fluxes together
         runoff = melt_runoff + condensation_runoff
@@ -180,8 +182,8 @@ class MassBalanceDriver:
         is_summer_end_window = (forcings.doy >= params.start_end_summer) & \
             (forcings.doy <= params.start_end_summer + 60)
         is_midnight = forcings.hour == 0 
-        # does upcoming snowfall surpass the threshold to consider winter?
-        weather_trigger = forcings.upcoming_snow >= params.new_snow_threshold
+        # does past snowfall surpass the threshold to consider winter?
+        weather_trigger = jnp.sum(state.past_snow, axis=1) >= params.new_snow_threshold
         # put temporal triggers together
         time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
 
@@ -563,15 +565,13 @@ class MassBalanceDriver:
         layermelt = jnp.transpose(layermelt)
 
         # collapse grid to purge melted layers
-        fully_melted_mask = state.lice <= 0.001
-        melt_point_mask = jnp.any(fully_melted_mask, axis=1)
-        melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
+        def remove_one(i, s):
+            fully_melted_mask = s.lice <= 0.001
+            melt_point_mask = jnp.any(fully_melted_mask, axis=1)
+            melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
+            return layers.remove_layer(s, melt_point_mask, melt_layer_idx, params)
 
-        state = jax.lax.fori_loop(
-            0, 3,
-            lambda i, s: layers.remove_layer(s, melt_point_mask, melt_layer_idx, params),
-            state
-        )
+        state = jax.lax.fori_loop(0, 3, remove_one, state)
 
         return state, layermelt, mass_to_route
         
@@ -1332,7 +1332,7 @@ class MassBalanceDriver:
         
         # accelerate grain growth?
         if params.option_accel_grains:
-            F = jnp.exp(0.01 * layers.ldensity)
+            F = jnp.exp(0.01 * state.ldensity)
             drwet = drwet * F
 
         # apply metamorphosis and refreezing 
@@ -1352,11 +1352,11 @@ class MassBalanceDriver:
 
     def end_of_summer(self, state):
         """
-        Checks prognostically if enough snow will fall
-        in the upcoming days to constitute the start
-        of the accumulation season. If so, snow layers
-        are transformed to firn and cumulative refreeze
-        is reset to 0.
+        Checks prognostically if enough snow fell in the 
+        previous days to constitute the start of the 
+        accumulation season. If so, snow layers over a 
+        certain age are transformed to firn and cumulative 
+        refreeze is reset to 0.
         """
         params = self.params
         N_LAYERS = state.lice.shape[1]

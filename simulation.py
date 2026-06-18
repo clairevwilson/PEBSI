@@ -34,7 +34,7 @@ os.environ["JAX_TRACEBACK_FILTERING"] = "off" # show full error statements
 jax.config.update("jax_enable_x64", True) # enable floaf64 storage
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
-warnings.filterwarnings('ignore', category=zarr.errors.ZarrUserWarning)
+# warnings.filterwarnings('ignore', category=zarr.errors.ZarrUserWarning)
 
 def get_args(parse=True):
     """
@@ -102,13 +102,14 @@ class PEBSI():
         self.params = self.config.params 
         return
     
-    def prepare_inputs(self):
+    def prepare_spatial_inputs(self):
         """
-        Initializes the spatial (elevation, shading, etc.) and
-        temporal (air temperature, precipitation, etc.) 
+        Initializes the spatial (elevation, shading, etc.)
         inputs to the model.
         """
         params = self.params
+        all_dates_local = pd.date_range(params.start_date, params.end_date, freq='h')
+        self.dates = all_dates_local
 
         # =========== SPATIAL DATA HANDLING ===========
         terrain = Terrain(params)
@@ -119,25 +120,10 @@ class PEBSI():
         # validate spatial inputs
         terrain.validate_terrain_data()
 
-        # ====== TEMPORAL (CLIMATE) DATA HANDLING ======
-        climate = Climate(params, terrain)
-        climate.get_data()
-
-        # process the dataset for elevation, bias, etc.
-        climate.process_climate()
-
-        # adjust elevation-dependent variables
-        climate.adjust_to_elevation()
-
-        # precompute the upcoming snowfall amounts
-        climate.precompute_upcoming_snow()
-
         # ================== SHADING ==================
-        terrain.load_shading(climate.dates_UTC)
+        terrain.load_shading(all_dates_local)
 
-        # ============================================
         self.terrain = terrain 
-        self.climate = climate
         return
     
     def prepare_initial_state(self):
@@ -146,20 +132,17 @@ class PEBSI():
         temperature, density, etc.) across points.
         """
         # ================== LAYERS ==================
-        layers = Layers(
-            self.params, self.climate, self.terrain
-        )
+        layers = Layers(self.params, self.terrain)
 
         # initialize layer properties
         layers.initialize_layers()
-        
-        # ============================================
+
         self.layers = layers
         return
     
     def pack_states(self):
         """
-        Packs the terrain, layer, and climate inputs into 
+        Packs the terrain and layer inputs into 
         JAX-compatible states.
         """
         params = self.params 
@@ -167,49 +150,12 @@ class PEBSI():
         # CONSTANTS
         self.N_POINTS = N_POINTS = self.terrain.N_POINTS
         self.N_LAYERS = self.layers.N_LAYERS
-        CTOK = self.params.celsius_to_kelvin
-        SPH = self.params.seconds_per_hour
 
-        # get timestamps in Pandas format
-        dates = pd.to_datetime(self.climate.dates)
-        N_YEARS = len(np.unique(dates.year))
+        # get number of years in the simulation
+        N_YEARS = len(np.unique(self.dates.year))
 
-        # ================== CLIMATE ==================
-        forcings = ClimateState(
-            time_idx=jnp.array(jnp.arange(len(dates)), dtype=jnp.int32),
-            year=jnp.array(dates.year, dtype=jnp.int32),
-            month=jnp.array(dates.month, dtype=jnp.int32),
-            day=jnp.array(dates.day, dtype=jnp.int32),
-            hour=jnp.array(dates.hour, dtype=jnp.int32),
-            doy=jnp.array(dates.day_of_year, dtype=jnp.int32),
-
-            # basic climate variables
-            tempC=jnp.array(self.climate.temp, dtype=jnp.float64).T,
-            tempK=jnp.array(self.climate.temp, dtype=jnp.float64).T + CTOK,
-            tp=jnp.array(self.climate.tp, dtype=jnp.float64).T,
-            prec=jnp.array(self.climate.tp, dtype=jnp.float64).T / SPH,
-            wind=jnp.array(self.climate.wind, dtype=jnp.float64).T,
-            winddir=jnp.array(self.climate.winddir, dtype=jnp.float64).T,
-            rh=jnp.array(self.climate.rh, dtype=jnp.float64).T,
-            sp=jnp.array(self.climate.sp, dtype=jnp.float64).T,
-            tcc=jnp.array(self.climate.tcc, dtype=jnp.float64).T,
-            upcoming_snow=jnp.array(self.climate.upcoming_snow, dtype=jnp.float64).T,
-
-            # deposition fluxes for light-absorbing particles
-            bcwet=jnp.array(self.climate.bcwet, dtype=jnp.float64).T,
-            bcdry=jnp.array(self.climate.bcdry, dtype=jnp.float64).T,
-            ocwet=jnp.array(self.climate.ocwet, dtype=jnp.float64).T,
-            ocdry=jnp.array(self.climate.ocdry, dtype=jnp.float64).T,
-            dustwet=jnp.array(self.climate.dustwet, dtype=jnp.float64).T,
-            dustdry=jnp.array(self.climate.dustdry, dtype=jnp.float64).T,
-
-            # radiation terms
-            shortwave_in=jnp.array(self.climate.SWin, dtype=jnp.float64).T,
-            longwave_in=jnp.array(self.climate.LWin, dtype=jnp.float64).T,
-            shadow_mask=jnp.array(self.terrain.shadow_mask, dtype=bool).T,
-            solar_azimuth=jnp.array(self.terrain.solar_azimuth, dtype=jnp.float64).T,
-            solar_zenith=jnp.array(self.terrain.solar_zenith, dtype=jnp.float64).T,
-        )
+        # get number of steps to look back for accumulation start
+        N_PAST_STEPS = params.new_snow_days * 24
 
         # ================== GLACIERS ==================
 
@@ -223,6 +169,7 @@ class PEBSI():
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 
             # trackers
+            past_snow=jnp.zeros((N_POINTS, N_PAST_STEPS), dtype=jnp.float64),
             delayed_snow=jnp.zeros((N_POINTS,), dtype=jnp.float64),
             annual_firn_converted=jnp.zeros((N_POINTS,), dtype=bool),
             annual_min_albedo=jnp.ones((N_POINTS, N_YEARS), dtype=jnp.float64),
@@ -260,7 +207,71 @@ class PEBSI():
             timezone=jnp.array(self.terrain.tz_n, dtype=jnp.float64),
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
         )
-        return glacier_state, forcings, point_attrs
+        return glacier_state, point_attrs
+    
+    def pack_forcings(self, params, dates, start):
+        """
+        Packs the climate forcings for a temporal
+        chunk into JAX-compatible state.
+        """
+        # initiate the climate class for these dates
+        climate = Climate(dates, params, self.terrain)
+        climate.get_data()
+
+        # process the dataset for elevation, bias, etc.
+        climate.process_climate()
+
+        # adjust elevation-dependent variables
+        climate.adjust_to_elevation()
+        self.climate = climate
+        
+        # define conversion factors 
+        CTOK = self.params.celsius_to_kelvin
+        SPH = self.params.seconds_per_hour
+
+        # slice solar inputs from terrain
+        date_mask = self.dates.isin(dates)
+        shadow_mask = self.terrain.shadow_mask[:, date_mask]
+        solar_azimuth = self.terrain.solar_azimuth[:, date_mask]
+        solar_zenith = self.terrain.solar_zenith[:, date_mask]
+
+        # ================== CLIMATE ==================
+        forcings = ClimateState(
+            time_idx=jnp.array(jnp.arange(start, start + len(dates)), dtype=jnp.int32),
+            year=jnp.array(dates.year, dtype=jnp.int32),
+            month=jnp.array(dates.month, dtype=jnp.int32),
+            day=jnp.array(dates.day, dtype=jnp.int32),
+            hour=jnp.array(dates.hour, dtype=jnp.int32),
+            doy=jnp.array(dates.day_of_year, dtype=jnp.int32),
+
+            # basic climate variables
+            tempC=jnp.array(climate.temp, dtype=jnp.float64).T,
+            tempK=jnp.array(climate.temp, dtype=jnp.float64).T + CTOK,
+            tp=jnp.array(climate.tp, dtype=jnp.float64).T,
+            prec=jnp.array(climate.tp, dtype=jnp.float64).T / SPH,
+            wind=jnp.array(climate.wind, dtype=jnp.float64).T,
+            winddir=jnp.array(climate.winddir, dtype=jnp.float64).T,
+            rh=jnp.array(climate.rh, dtype=jnp.float64).T,
+            sp=jnp.array(climate.sp, dtype=jnp.float64).T,
+            tcc=jnp.array(climate.tcc, dtype=jnp.float64).T,
+
+            # deposition fluxes for light-absorbing particles
+            bcwet=jnp.array(climate.bcwet, dtype=jnp.float64).T,
+            bcdry=jnp.array(climate.bcdry, dtype=jnp.float64).T,
+            ocwet=jnp.array(climate.ocwet, dtype=jnp.float64).T,
+            ocdry=jnp.array(climate.ocdry, dtype=jnp.float64).T,
+            dustwet=jnp.array(climate.dustwet, dtype=jnp.float64).T,
+            dustdry=jnp.array(climate.dustdry, dtype=jnp.float64).T,
+
+            # radiation terms
+            shortwave_in=jnp.array(climate.SWin, dtype=jnp.float64).T,
+            longwave_in=jnp.array(climate.LWin, dtype=jnp.float64).T,
+            shadow_mask=jnp.array(shadow_mask, dtype=bool).T,
+            solar_azimuth=jnp.array(solar_azimuth, dtype=jnp.float64).T,
+            solar_zenith=jnp.array(solar_zenith, dtype=jnp.float64).T,
+        )
+
+        return forcings
     
     def run(self):
         """
@@ -274,31 +285,29 @@ class PEBSI():
         dynamic_args = self.config.dynamic_args 
         params = self.config.params
 
-        # ======== INITIALIZE THE INPUTS ========
-        self.prepare_inputs()
+        # ========== INITIALIZE THE INPUTS ==========
+        self.prepare_spatial_inputs()
         self.prepare_initial_state()
-        initial_state, all_forcings, point_attrs = self.pack_states()
+        initial_state, point_attrs = self.pack_states()
 
-        # ======== INITIALIZE THE OUTPUTS ========
-        dates = self.climate.dates
+        # ========== INITIALIZE THE OUTPUTS ==========
         model_output = Output(params, self.terrain)
-
         self.start_print()
 
-        # ========== RUN ENERGY BALANCE ==========
-        total_steps = len(dates)
+        # ======= LOOP THROUGH TEMPORAL CHUNKS ========
+        total_steps = len(self.dates)
         state = initial_state
         chunk_size = params.temporal_chunks
-
-        # start model timer
         total_chunks = (total_steps + chunk_size - 1) // chunk_size
-        model_timer = ProgressTimer(total_chunks)
 
         for start in range(0, total_steps, chunk_size):
-            # crop forcings to the temporal subset
+            # crop dates to this subset
             end = min(start + chunk_size, total_steps)
-            actual_length = end - start
-            chunk_forcings = jax.tree.map(lambda x: x[start:end], all_forcings)
+            actual_length = end - start 
+            chunk_dates = self.dates[start:end]
+
+            # load the climate data for these dates
+            chunk_forcings = self.pack_forcings(params, chunk_dates, start)
            
            # pad the forcings so the shape matches temporal_chunks
             if actual_length < chunk_size:
@@ -308,23 +317,25 @@ class PEBSI():
                     chunk_forcings
                 )
 
-            # RUN MODEL FOR ONE TIME CHUNK
-            before = time.time()
+            # ===== RUN ENERGY BALANCE MODEL =====
+            chunk_start = time.time() # timer for one chunk
+
             state, chunk_records = main(
                 state, chunk_forcings, point_attrs, static_args, dynamic_args
             )
+
             jax.effects_barrier()
             if params.debug:
-                print(f'. . . chunk {start / chunk_size + 1} /  in {time.time() - before:.1f} s')
-
+                print(f'. . . chunk {int(start / chunk_size + 1)} / {total_chunks} in {time.time() - chunk_start:.1f} s')
+        
             # remove the padded garbage
             if actual_length < chunk_size:
                 chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
 
             # store this chunk (append it onto the zarr)
             if params.store_data:
-                model_output.store_chunk(chunk_records, dates[start:end], start)
-            
+                model_output.store_chunk(chunk_records, chunk_dates, start)
+
             # clear chunk records from RAM
             del chunk_records
 
@@ -341,7 +352,7 @@ class PEBSI():
         return state
     
     def start_print(self):
-
+        """Command-line printout when a simulation is started"""
         # get info about the simulation time
         start = pd.to_datetime(self.params.start_date)
         end = pd.to_datetime(self.params.end_date)
@@ -350,7 +361,7 @@ class PEBSI():
 
         # print starting statement
         if self.terrain.N_POINTS == 1:
-            id = self.params.rgi_id[0]
+            id = self.params.rgi_ids[0]
             elev = self.terrain.elev_n[0]
             print(f'~ Running {id} at {elev} m a.s.l. for {n_months} months starting in {start_fmtd} ~')
         else:

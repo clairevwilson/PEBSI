@@ -25,7 +25,7 @@ def download_tile(url, output_dir):
     except Exception as e:
         print(f"\n[Error] Failed to download {filename}: {e}")
 
-def download_alaska_cop30(output_dir="./alaska_cop30_tiles"):
+def download_alaska_cop30(output_dir="~/local/data/dems/COP30/"):
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Initialize the STAC catalog client with automatic token signing

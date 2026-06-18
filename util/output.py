@@ -128,9 +128,11 @@ class Output():
             })
 
             if chunk_idx == 0:
-                ds_chunk.to_zarr(out_fn, mode='w')
+                # make sure time is chunked in reasonable chunk
+                encoding = {var: {'chunks': (24 * 7, )} for var in ds_chunk.data_vars}
+                ds_chunk.to_zarr(out_fn, mode='w', consolidated=False, encoding=encoding)
             else:
-                ds_chunk.to_zarr(out_fn, append_dim='time')
+                ds_chunk.to_zarr(out_fn, append_dim='time', consolidated=False)
 
     def close_out(self, params, time_elapsed, climate):
         """
@@ -142,6 +144,8 @@ class Output():
         self.add_units()
         self.add_vars()
         self.add_basic_attrs(params, time_elapsed, climate)
+        for out_fn in self.out_files:
+            zarr.consolidate_metadata(out_fn)
         return 
     
     def add_units(self):
@@ -187,7 +191,7 @@ class Output():
         """
         for fn in self.out_files:
             # load dataset and create new dataset for additional vars
-            ds = xr.open_zarr(fn).compute()
+            ds = xr.open_zarr(fn, consolidated=False).compute()
             new_vars = xr.Dataset()
 
             # add surface height change 
@@ -202,18 +206,19 @@ class Output():
                 new_vars['dh'] = (['time'], np.diff(padded_heights),{'units':'m'})
 
             # add summed radiation terms
-            if np.all([f in self.store for f in ['SWin','SWout','LWin','LWout']]):
-                SWnet = ds['SWin'] + ds['SWout']
-                LWnet = ds['LWin'] + ds['LWout']
+            rad_terms = ['shortwave_in','shortwave_ref','longwave_in','longwave_out']
+            if np.all([f in self.store for f in rad_terms]):
+                SWnet = ds['shortwave_in'] + ds['shortwave_ref']
+                LWnet = ds['longwave_in'] + ds['longwave_out']
                 NetRad = SWnet + LWnet
-                new_vars['SWnet'] = (['time'],SWnet.values,{'units':'W m-2'})
-                new_vars['LWnet'] = (['time'],LWnet.values,{'units':'W m-2'})
-                new_vars['NetRad'] = (['time'],NetRad.values,{'units':'W m-2'})
+                new_vars['shortwave_net'] = (['time'],SWnet.values,{'units':'W m-2'})
+                new_vars['longwave_net'] = (['time'],LWnet.values,{'units':'W m-2'})
+                new_vars['net_radiation'] = (['time'],NetRad.values,{'units':'W m-2'})
 
             # add summed mass balance term
-            if np.all([f in self.store for f in ['accum','refreeze','melt']]):
-                MB = ds['accum'] + ds['refreeze'] - ds['melt']
-                ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
+            if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
+                MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
+                ds['mass_balance'] = (['time'],MB.values,{'units':'m w.e.'})
 
             # add snow, firn, and ice depth
             if np.all([f in self.store for f in ['layertype','layerheight']]):
@@ -225,6 +230,7 @@ class Output():
                 new_vars['icedepth'] = (['time'],icedepth.values,{'units':'m'})
             
             new_vars = new_vars.assign_coords(time=ds.time)
+            new_vars.attrs = ds.attrs
             new_vars.to_zarr(fn, mode='a')
         return
     
@@ -350,6 +356,7 @@ class Output():
                     attrs[key] = store
             
             z.attrs.update(attrs)
+            zarr.consolidate_metadata(out_fn)
 
         # success printout
         print(f"~ Successfully saved model outputs across {self.N_POINTS} points in {self.output_fp} ~")

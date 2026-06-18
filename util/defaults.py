@@ -91,7 +91,7 @@ merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of B
 ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of UK-ESM-->MERRA-2 deposition ratio
 ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
-bias_fn = 'shop/preprocessing/quantile_cdfs.nc'             # Bias adjustment file name
+bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment file name
 
 # UTILITY
 compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
@@ -146,7 +146,7 @@ initial_firn_depth = 10                 # default amount of initial firn [m] (on
 initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
-store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','SW','climate']
+store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate']
 
 # METHODS
 method_distribute = 'scatter'           # 'scatter', 'none'

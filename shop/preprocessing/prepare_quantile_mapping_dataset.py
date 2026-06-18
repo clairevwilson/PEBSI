@@ -8,7 +8,6 @@ import os
 import pandas as pd
 import numpy as np
 import xarray as xr
-from netCDF4 import Dataset as ncDataset
 
 # ========= WEATHER STATION INFO =========
 master_dict = {
@@ -44,7 +43,7 @@ benchmark_var_names = {'temp': 'site_temp_USGS',
                        'wind': 'WindSpeed', 
                        'sp': 'Barom'}
 
-merra2_fn = '/Volumes/TOSHIBA EXT/MERRA2/{v}/{v}_reg01.zarr'
+merra2_fn = '/Volumes/TOSHIBA EXT/MERRA2/reg01/{v}_reg01.zarr'
 merra2_var_names = {'temp': 'T2M','rh': 'RH2M',
                     'SWin': 'SWGDN', 'LWin': 'LWGAB',
                     'wind': 'U2M', 'sp': 'PS',}
@@ -142,12 +141,20 @@ for glacier, stations in master_dict.items():
             values_aws = data_aws.loc[common].values
 
             # clip out nans
-            values_merra = values_merra[np.isfinite(values_aws)]
-            values_aws = values_aws[np.isfinite(values_aws)]
+            not_na = np.isfinite(values_aws) & np.isfinite(values_merra)
+            values_merra = values_merra[not_na]
+            values_aws = values_aws[not_na]
 
             # handle units
             values_merra = MERRA2_unit_conversion(values_merra, data_merra.attrs['units'], expected_units[var])
             values_aws = AWS_unit_conversion(values_aws, aws_units, expected_units[var])
+
+            # handle SW data differently: remove zeros 
+            if var == 'SWin':
+                # mask anything that is effectively zero
+                nonzero_mask = ((values_aws > 5) & (values_merra > 5))
+                values_aws = values_aws[nonzero_mask]
+                values_merra = values_merra[nonzero_mask]
 
             # sort the data and store it in the dict
             quantiles_merra = np.quantile(values_merra, quantiles)
@@ -182,4 +189,4 @@ for var in set(r['var'] for r in storage):
 
 # save each variable as a group
 for var, ds in ds_dict.items():
-    ds.to_netcdf('quantile_cdfs.nc', group=var, mode='w' if var == list(ds_dict)[0] else 'a')
+    ds.to_netcdf('~/local/PEBSI/data/quantile_cdfs.nc', group=var, mode='w' if var == list(ds_dict)[0] else 'a')

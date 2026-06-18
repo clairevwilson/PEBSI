@@ -43,6 +43,8 @@ class GlacierState(NamedTuple):
     cum_mass_error: jnp.ndarray         # Mass error accumulator
     basal_reservoir: jnp.ndarray        # Reservoir for accumulated ice mass that
                                         # is pushed out of the layer domain
+    past_snow: jnp.ndarray              # (N_POINTS, N* = (new_snow_days * 24))
+                                        # Snow fallen in the past N* timesteps
 
     # ============================ Layer Attributes ==========================
     # ========================== (N_POINTS, N_LAYERS) ========================
@@ -99,7 +101,6 @@ class ClimateState(NamedTuple):
     sp: jnp.ndarray             # Surface pressure [Pa]
     rh: jnp.ndarray             # 2 meter relative humidity [%]
     tcc: jnp.ndarray            # Total cloud cover [-]
-    upcoming_snow: jnp.ndarray  # Forward-looking snow total [m w.e.]
 
     # --------------------------- Radiation terms ---------------------------
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]

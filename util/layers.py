@@ -23,13 +23,12 @@ class Layers():
 
     All mass terms are stored in kg m-2.
     """
-    def __init__(self, params, climate, terrain):
+    def __init__(self, params, terrain):
         """
         Initialize the layer properties (temperature, 
         density, water content, LAPs, etc.)
         """
         # INPUTS
-        self.climate = climate 
         self.params = params
         self.N_POINTS = N_POINTS = terrain.N_POINTS
         self.N_LAYERS = N_LAYERS = params.max_nlayers

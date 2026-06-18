@@ -68,6 +68,12 @@ def main(
         """
         # initialize mass balance check
         current_mass = fetch_current_mass(current_state)
+        def print_cons(i, doy, hr, cons):
+            if doy == 141 and hr == 8: # jnp.abs(cons[0]) > 1e-6:
+                print(f'at {i}    doy {doy} hr {hr}   cons {cons}')
+        # def print_state(i, doy, hr, lwater, lice, reservoir):
+        #     if doy == 234 and hr == 8:
+        #         print(f'OUTSIDE at {i}    lwater {lwater}   lice {lice}   res {reservoir}')
 
         # 1. get amounts of rain and snow; add dry deposition
         rainfall, snowfall, current_state = mb.run_new_mass(
@@ -75,11 +81,12 @@ def main(
         )
         all_mass_fluxes = ['rainfall','accumulation','deposition','condensation',
                            'sublimation','evaporation','runoff','dead']
-        mf = {'accumulation': snowfall}
+        mf = {'accumulation': snowfall, 'rainfall': rainfall}
         for flux in all_mass_fluxes:
             if flux not in mf:
                 mf[flux] = jnp.zeros_like(rainfall)
-        # jax_print('1. {}', jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf)) > 1e-3)
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        # jax.debug.callback(print_cons, 2, current_forcings.doy, current_forcings.hour, cons)
 
         # 2. surface property updates
         current_state = mb.run_daily_routines(
@@ -89,13 +96,15 @@ def main(
         for flux in all_mass_fluxes:
             if flux not in mf:
                 mf[flux] = jnp.zeros_like(rainfall)
-        # jax_print('2. {}', jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf)))
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        # jax.debug.callback(print_cons, 2, current_forcings.doy, current_forcings.hour, cons)
+        # jax.debug.callback(print_state, 2, current_forcings.doy, cons)
 
         # 3. simultaneously solve energy balance and surface temperature
         current_state, fluxes = eb.solve_energy_balance(
             current_state, current_forcings, point_attrs
         )
-
+        
         # 4. vertical heat and mass exchange
         fluxes_to_vert = {
             'rainfall': rainfall,
@@ -114,7 +123,11 @@ def main(
                     mf[flux] = mass_fluxes[flux]
                 else:
                     mf[flux] = jnp.zeros_like(rainfall)
-        # jax_print('4. {}', mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        # jax.debug.callback(print_cons, 4, current_forcings.doy, current_forcings.hour, cons)
+        # jax.debug.callback(print_state, 4, current_forcings.doy, current_forcings.hour, 
+        #                    jnp.sum(current_state.lwater, axis=1), 
+        #                    jnp.sum(current_state.lice, axis=1), current_state.basal_reservoir)
 
         # 5. state property updates: density, grain size, surface roughness
         current_state, water_squeezed_out = mb.run_state_updates(
@@ -133,7 +146,8 @@ def main(
                     mf[flux] = mass_fluxes[flux]
                 else:
                     mf[flux] = jnp.zeros_like(rainfall)
-        # jax_print('5. {}', mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        # jax.debug.callback(print_cons, 5, current_forcings.doy, current_forcings.hour, cons)
 
         # 6. annual checks and tracker updates 
         current_state = mb.run_annual_routines(current_state, current_forcings)
@@ -144,17 +158,17 @@ def main(
                     mf[flux] = mass_fluxes[flux]
                 else:
                     mf[flux] = jnp.zeros_like(rainfall)
-        # jax_print('6. {}', mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        # jax.debug.callback(print_cons, 6, current_forcings.doy, current_forcings.hour, cons)
 
         # 7. mass conservation check
         next_mass = fetch_current_mass(current_state)
         mass_fluxes['error'] = mass_conservation(
             current_mass, next_mass, mass_fluxes
         )
-        # jax_print('doy {} hour {}    actual error accumulated: {} {}', 
-        #           current_forcings.doy, current_forcings.hour,
-        #           jnp.abs(mass_fluxes['error']) > 1e-3, 
-        #           mass_fluxes['error'])
+
+        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
+        jax.debug.callback(print_cons, 'end', current_forcings.doy, current_forcings.hour, jnp.abs(mass_fluxes['error']))
 
         # define the next state
         next_state = current_state
