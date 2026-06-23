@@ -7,11 +7,11 @@ in the glacier state and returns an updated
 glacier state.
 
 Executed in the following order:
-  1. New mass is added (accumulation; particle deposition)
-  2. Surface updates are done daily (albedo; days since snowfall)
+  1. Adds new mass (accumulation; particle deposition)
+  2. Updates surface updates properties daily (albedo; days since snowfall)
   3. Solves surface energy balance equation for surface temperature
   4. Runs vertical proceses (melting; percolation; refreezing)
-  5. Updates state properties (densification; grain size)
+  5. Updates state properties hourly (densification; grain size)
   6. Runs annual routine to convert snow to firn
   7. Tracks mass error accumulated since previous timestep
 """
@@ -68,27 +68,32 @@ def main(
         """
         # initialize mass balance check
         current_mass = fetch_current_mass(current_state)
-        def print_cons(i, doy, hr, cons):
-            if doy == 141 and hr == 8: # jnp.abs(cons[0]) > 1e-6:
-                print(f'at {i}    doy {doy} hr {hr}   cons {cons}')
+        def print_cons(forcings, error, cons_list):
+            doy = forcings.doy 
+            hr = forcings.hour
+            if jnp.any(jnp.abs(error > 1e-4)):
+                for i, cons in enumerate(cons_list):
+                    print(f'after {i}    doy {doy} hr {hr}   cons {cons}')
+                print(f'at the end: {error}')
         # def print_state(i, doy, hr, lwater, lice, reservoir):
         #     if doy == 234 and hr == 8:
         #         print(f'OUTSIDE at {i}    lwater {lwater}   lice {lice}   res {reservoir}')
 
-        # 1. get amounts of rain and snow; add dry deposition
+        # ===================== STEP 1 =====================
+        # get amounts of rain and snow; add dry deposition
         rainfall, snowfall, current_state = mb.run_new_mass(
             current_state, current_forcings
         )
         all_mass_fluxes = ['rainfall','accumulation','deposition','condensation',
                            'sublimation','evaporation','runoff','dead']
-        mf = {'accumulation': snowfall, 'rainfall': rainfall}
+        mf = {'accumulation': snowfall}
         for flux in all_mass_fluxes:
             if flux not in mf:
                 mf[flux] = jnp.zeros_like(rainfall)
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        # jax.debug.callback(print_cons, 2, current_forcings.doy, current_forcings.hour, cons)
+        cons_1 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
 
-        # 2. surface property updates
+        # ===================== STEP 2 =====================
+        # surface property updates: albedo, surrounding albedo
         current_state = mb.run_daily_routines(
             current_state, current_forcings
         )
@@ -96,16 +101,17 @@ def main(
         for flux in all_mass_fluxes:
             if flux not in mf:
                 mf[flux] = jnp.zeros_like(rainfall)
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        # jax.debug.callback(print_cons, 2, current_forcings.doy, current_forcings.hour, cons)
-        # jax.debug.callback(print_state, 2, current_forcings.doy, cons)
+        cons_2 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
 
-        # 3. simultaneously solve energy balance and surface temperature
+        # ===================== STEP 3 =====================
+        # solve energy balance equation for surface temperature
         current_state, fluxes = eb.solve_energy_balance(
             current_state, current_forcings, point_attrs
         )
+        cons_3 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
         
-        # 4. vertical heat and mass exchange
+        # ===================== STEP 3 =====================
+        #          vertical heat and mass exchange
         fluxes_to_vert = {
             'rainfall': rainfall,
             'latent_heat': fluxes['latent_heat'],
@@ -123,13 +129,10 @@ def main(
                     mf[flux] = mass_fluxes[flux]
                 else:
                     mf[flux] = jnp.zeros_like(rainfall)
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        # jax.debug.callback(print_cons, 4, current_forcings.doy, current_forcings.hour, cons)
-        # jax.debug.callback(print_state, 4, current_forcings.doy, current_forcings.hour, 
-        #                    jnp.sum(current_state.lwater, axis=1), 
-        #                    jnp.sum(current_state.lice, axis=1), current_state.basal_reservoir)
+        cons_4 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
 
-        # 5. state property updates: density, grain size, surface roughness
+        # ===================== STEP 5 =====================
+        #   evolution of density, grain size, and roughness
         current_state, water_squeezed_out = mb.run_state_updates(
             current_state, current_forcings
         )
@@ -146,30 +149,24 @@ def main(
                     mf[flux] = mass_fluxes[flux]
                 else:
                     mf[flux] = jnp.zeros_like(rainfall)
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        # jax.debug.callback(print_cons, 5, current_forcings.doy, current_forcings.hour, cons)
+        cons_5 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
 
-        # 6. annual checks and tracker updates 
+        # ===================== STEP 6 =====================
+        #          annual checks and tracker updates 
         current_state = mb.run_annual_routines(current_state, current_forcings)
+        cons_6 = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
 
-        for flux in all_mass_fluxes:
-            if flux not in mf:
-                if flux in mass_fluxes:
-                    mf[flux] = mass_fluxes[flux]
-                else:
-                    mf[flux] = jnp.zeros_like(rainfall)
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        # jax.debug.callback(print_cons, 6, current_forcings.doy, current_forcings.hour, cons)
-
-        # 7. mass conservation check
+        # ===================== STEP 7 =====================
+        #            mass conservation tracking
         next_mass = fetch_current_mass(current_state)
         mass_fluxes['error'] = mass_conservation(
             current_mass, next_mass, mass_fluxes
         )
 
-        cons = jnp.abs(mass_conservation(current_mass, fetch_current_mass(current_state), mf))
-        jax.debug.callback(print_cons, 'end', current_forcings.doy, current_forcings.hour, jnp.abs(mass_fluxes['error']))
+        jax.debug.callback(print_cons, current_forcings, mass_fluxes['error'], 
+                           [cons_1, cons_2, cons_3, cons_4, cons_5, cons_6])
 
+        # ===================== OUTPUTS =====================
         # define the next state
         next_state = current_state
 

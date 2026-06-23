@@ -52,10 +52,16 @@ class Terrain:
 
         if self.params.method_distribute == 'scatter':
             lats, lons, glaciers = self.scatter_points()
+
+            self.elev_n = None
+            self.slope_n = None 
+            self.aspect_n = None 
+            self.tz_n = None
         elif self.params.method_distribute == 'sites':
             assert len(self.params.rgi_ids) == len(self.params.sites), \
                 'N sites must equal N rgi_ids'
             lats, lons, glaciers = [], [], []
+            elevs, slopes, aspects = [], [], []
 
             metadata_fn = self.params.metadata_fn
             metadata = pd.read_csv(metadata_fn, index_col=0,converters={0: str})
@@ -66,9 +72,18 @@ class Terrain:
                 name = metadata.loc[gid, 'name']
                 site_fp = self.params.glac_fp.format(g=name)
                 df_sites = pd.read_csv(os.path.join(site_fp, self.params.site_fn), index_col=0)
+
                 lats.append(df_sites.loc[site, 'lat'])
                 lons.append(df_sites.loc[site, 'lon'])
+                elevs.append(df_sites.loc[site, 'elevation'])
+                slopes.append(df_sites.loc[site, 'slope'])
+                aspects.append(df_sites.loc[site, 'aspect'])
                 glaciers.append(gid)
+
+            self.elev_n = np.array(elevs)
+            self.slope_n = np.array(slopes)
+            self.aspect_n = np.array(aspects)
+            self.tz_n = None
 
         # store to self
         self.lat_n = np.array(lats)
@@ -214,16 +229,39 @@ class Terrain:
         x_res, y_res = dem.rio.resolution()
         x_res, y_res = abs(x_res), abs(y_res)
 
-        # calculate slope and aspect from gradient
+        # calculate gradient and get the slope
         dy, dx = np.gradient(np.squeeze(dem.values), y_res, x_res)
         slope_vals = np.arctan(np.sqrt(dx**2 + dy**2))
-        aspect_vals = np.arctan2(-dy, -dx)
+        slope_vals = np.rad2deg(slope_vals)
+
+        aspect_vals = np.arctan2(dx, dy)
+        aspect_vals = np.rad2deg(aspect_vals) % 360
 
         # put data into DataArrays for clean indexing
         slope = xr.DataArray(slope_vals, coords=dem.coords, dims=dem.dims)
         aspect = xr.DataArray(aspect_vals, coords=dem.coords, dims=dem.dims)
         lat_xr = xr.DataArray(lats_in , dims='points')
         lon_xr = xr.DataArray(lons_in, dims='points')
+
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+        dem_vals = np.squeeze(dem.values)
+        im0 = axes[0].imshow(dem_vals, cmap='terrain')
+        axes[0].set_title('Elevation')
+        plt.colorbar(im0, ax=axes[0], fraction=0.046)
+
+        im1 = axes[1].imshow(slope_vals, cmap='viridis')
+        axes[1].set_title('Slope (deg)')
+        plt.colorbar(im1, ax=axes[1], fraction=0.046)
+
+        # cyclic colormap so 0/360 don't look like opposite extremes
+        im2 = axes[2].imshow(aspect_vals, cmap='hsv', vmin=0, vmax=360)
+        axes[2].set_title('Aspect (deg, 0=N)')
+        plt.colorbar(im2, ax=axes[2], fraction=0.046, ticks=[0, 90, 180, 270, 360])
+
+        plt.tight_layout()
+        plt.savefig('testtest.png')
 
         # reproject 2D datasets into lat/lon coordinates
         dem = dem.rio.reproject('EPSG:4326')
@@ -470,13 +508,13 @@ class Terrain:
             x_slice = slice(minx - buffer_meters, maxx + buffer_meters)
             cropped_dem_ds = sub_dem_ds.sel(y=y_slice, x=x_slice)
             
-            # Fire up the shading compute engine
+            # initialize shading engine
             shading_model = Shading(cropped_dem_ds, step_size=1.0)
             shading_model.latitude = centroid_geo.y
             shading_model.longitude = centroid_geo.x
             
             datetimes_utc = pd.date_range('2000-01-01 00:00', '2000-12-31 23:00', freq='h', tz='UTC')
-            masks_gpu, sun_az, sun_zen, svf = shading_model.compute_shadow_masks(datetimes_utc)
+            masks_gpu, sun_az_rad, sun_zen_rad, svf = shading_model.compute_shadow_masks(datetimes_utc)
             
             # check size of dataset to avoid crashing RAM
             nt, nx, ny = masks_gpu.shape
@@ -500,10 +538,10 @@ class Terrain:
 
             datetimes_clean = datetimes_utc.tz_localize(None)
             subregion_masks = xr.Dataset(
-                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool)),
-                 'solar_azimuth': (['time'], sun_az),
-                 'solar_zenith': (['time'], sun_zen),
-                 'sky_view_factor': (['y','x'], svf)},
+                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool), {'units':'0=shade, 1=sun'}),
+                 'solar_azimuth': (['time'], sun_az_rad, {'units': 'radians'}),
+                 'solar_zenith': (['time'], sun_zen_rad, {'units': 'radians'}),
+                 'sky_view_factor': (['y','x'], svf, {'units':'-'})},
                 coords={'time': datetimes_clean, 'y': y_coords, 'x':x_coords}
             ).rio.write_crs(cropped_dem_ds.rio.crs)
 
@@ -539,11 +577,17 @@ class Terrain:
             except:
                 pass
 
-        # store compiled inputs to self
-        self.elev_n = compiled_inputs['elev_n']
-        self.slope_n = compiled_inputs['slope_n']
-        self.aspect_n = compiled_inputs['aspect_n']
-        self.tz_n = compiled_inputs['tz_n']
+        # store compiled inputs to self, if they were not already specified
+        print(self.aspect_n, compiled_inputs['aspect_n'])
+        print(self.slope_n, compiled_inputs['slope_n'])
+        if self.elev_n is None:
+            self.elev_n = compiled_inputs['elev_n']
+        if self.aspect_n is None:
+            self.aspect_n = compiled_inputs['aspect_n']
+        if self.slope_n is None:
+            self.slope_n = compiled_inputs['slope_n']
+        if self.tz_n is None:
+            self.tz_n = compiled_inputs['tz_n']
         return
     
     def load_shading(self, dates_local):

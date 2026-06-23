@@ -11,7 +11,7 @@ site_dict = {
     # 'kennicott':['GTL','GTH'], # ,'KC31'],
     # 'lemon_creek':['B','C','D'],
     # 'taku':['NWB1','TKG3'],
-    'gulkana':['AU','B','D']
+    'gulkana':['A','B','D']
 }
 
 translate_rgi = {
@@ -34,7 +34,10 @@ a_ices = []
 
 for glacier in site_dict:
     for site in site_dict[glacier]:
-        wind_factor = float(params[glacier][site])
+        try:
+            wind_factor = float(params[glacier][site])
+        except:
+            wind_factor = 1
 
         df = pd.read_csv(f'data/by_glacier/{glacier}/site_constants.csv', index_col='site')
         kp = float(df.loc[site, 'kp'])
@@ -61,9 +64,10 @@ configs = {
     'albedo_ice': a_ices,
     'wind_factor': wind_factors, 
     'option_accel_grains': True,
+    'option_flat_plates': False,
 
     'debug': True,
-    'store_data': True,
+    'store_data':False, #  True,
     'store_vars': ['MB','EB','layers','climate'],
 
     'output_fp': '../Output/new_sims/',

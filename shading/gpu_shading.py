@@ -93,6 +93,10 @@ class Shading:
             dj = cp.float32(np.sin(np.deg2rad(azimuth_deg)))
             di = -cp.float32(np.cos(np.deg2rad(azimuth_deg)))
 
+            steps_j = int(self.nx / (abs(float(dj)) + 1e-6))
+            steps_i = int(self.ny / (abs(float(di)) + 1e-6))
+            max_steps = cp.int32(min(steps_j, steps_i))
+
             grid_res = self.grid_resolution
             self.grid_res_m = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1])**2)
 
@@ -103,7 +107,7 @@ class Shading:
                 self.grid_size,
                 self.block_size,
                 (max_zenith, max_j, max_i, self.z, dj, di,
-                 self.step_size, nx, ny),
+                 self.step_size, max_steps, nx, ny),
             )
             return max_zenith
         
@@ -136,10 +140,10 @@ class Shading:
 
             return xp.array(max_zenith, dtype=xp.float32)
 
-    def horizon_zenith_deg(self, azimuth_deg):
-        """Terrain horizon zenith angle in degrees. Shape (ny, nx)."""
-        max_zenith = self.run_shadow_kernel(azimuth_deg)
-        return xp.rad2deg(xp.arctan(max_zenith / self.grid_res_m))
+    def horizon_elev_deg(self, azimuth_deg):
+        """Terrain horizon elevation angle in degrees. Shape (ny, nx)."""
+        max_elev = self.run_shadow_kernel(azimuth_deg)
+        return xp.rad2deg(xp.arctan(max_elev / self.grid_res_m))
 
     def solar_position(self, dt):
         """Solar (altitude_deg, azimuth_deg) for a local datetime."""
@@ -163,8 +167,8 @@ class Shading:
         xp.ndarray, shape (ny, nx) dtype int
             0 = shadowed, 1 = sunlit.
         """
-        zenith_deg = self.horizon_zenith_deg(azimuth_deg)
-        return (altitude_deg > zenith_deg).astype(xp.int8)
+        elev_deg = self.horizon_elev_deg(azimuth_deg)
+        return (altitude_deg > elev_deg).astype(xp.int8)
 
     def compute_shadow_masks(self, datetimes):
         """
@@ -216,7 +220,7 @@ class Shading:
         sky_view = self.skyviewfactor()
         return masks_cpu, sun_azimuth, sun_zenith, sky_view
     
-    def skyviewfactor(self, num_azimuths = 16):
+    def skyviewfactor(self, num_azimuths = 64):
         """
         Calculates sky-view factor for each pixel.
         svf = cos^2(horizon angle / 
@@ -232,14 +236,13 @@ class Shading:
         svf : xp.ndarray
             Sky-view factor on the grid (ny, nx)
         """
-        svf = xp.zeros(self.z.shape, dtype=xp.float32)
+        sum_sin2 = xp.zeros(self.z.shape, dtype=xp.float32)
         azimuths = np.linspace(0, 360, num_azimuths, endpoint=False)
+        azimuths += np.random.uniform(0, 360 / num_azimuths)
 
         for az in azimuths:
-            horizon_zenith_deg = self.horizon_zenith_deg(az)
-            horizon_elev_deg = 90 - horizon_zenith_deg
-            horizon_elev_rad = xp.deg2rad(horizon_elev_deg)
-            svf += xp.cos(horizon_elev_rad)**2
+            horizon_elev_rad =  xp.deg2rad(self.horizon_elev_deg(az))
+            sum_sin2 += xp.sin(horizon_elev_rad)**2
 
         # final expression: normalize by n_azimuths
-        return svf / num_azimuths
+        return 1 - sum_sin2 / num_azimuths

@@ -32,7 +32,7 @@ class GlacierState(NamedTuple):
     albedo_surr: jnp.ndarray    # Albedo of off-glacier surroundings [-]
     surftemp: jnp.ndarray       # Surface temperature [C]
     roughness: jnp.ndarray      # Surface roughness [m]
-    last_snow: jnp.ndarray      # Index of last snowfall [-]
+    last_snow: jnp.ndarray      # Time index of last snowfall [-]
 
     # ------------------------------- Trackers -------------------------------
     annual_firn_converted: jnp.ndarray  # True when snow is converted to firn

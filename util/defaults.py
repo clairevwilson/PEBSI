@@ -162,6 +162,7 @@ method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (unte
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
+option_flat_plates = False              # Use flat grain shapes in SNICAR emulator or only spherical?
 option_accel_grains = False             # Accelerate wet grain metamorphosis?
 option_uniform_ice = False              # Uniform size for ice bins?
 option_uniform_snow = False             # Uniform size for snow bins?
@@ -218,7 +219,7 @@ layer_growth = 0.3          # Rate of exponential growth of layer size (smaller 
 max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
-mb_threshold = 0.1          # Threshold to consider not conserving mass [kg m-2 = mm w.e.]
+min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 max_wet_metamorph = 200     # Maximum possible wet grain metamorphosis in a timestep for a single layer [um]

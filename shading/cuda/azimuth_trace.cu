@@ -7,6 +7,7 @@ void azimuth_trace(
     float j_basis,
     float i_basis,
     float step_size,                 // horizontal distance per step (meters)
+    int max_steps,
     int nx, int ny
     ) {
     
@@ -31,7 +32,6 @@ void azimuth_trace(
     int round_j = j;
     int round_i = i;
 
-    int max_steps = nx + ny;
     int step_count = 0;
 
     while (step_count < max_steps) {

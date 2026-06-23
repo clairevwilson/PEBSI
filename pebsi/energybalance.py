@@ -37,7 +37,7 @@ class EnergyBalanceDriver():
         y1, _ = self.compute_fluxes(t1, state, forcings, point_attrs)
 
         # define the internal loop step that JAX will execute
-        def secant_step(carry, _):
+        def secant_step(carry, i):
             # unpack the current state of the root finder
             t_prev, t_curr, y_prev, y_curr = carry
             
@@ -55,7 +55,7 @@ class EnergyBalanceDriver():
 
         # run a strict, fixed-length loop of 10 steps using jax.lax.scan
         initial_carry = (t0, t1, y0, y1)
-        final_carry, _ = jax.lax.scan(secant_step, initial_carry, xs=None, length=8)
+        final_carry, _ = jax.lax.scan(secant_step, initial_carry, xs=jnp.arange(8), length=8)
         surftemp_cooling = final_carry[1]
 
         # 3. extract final results for melting or cooling case
@@ -88,7 +88,7 @@ class EnergyBalanceDriver():
                 self.params.frac_absrad_ice
             )
         else:
-            frac_absrad = 1
+            frac_abs_surf = 1
         SWnet_surf = SWnet * frac_abs_surf 
         SWnet_pen = SWnet * (1 - frac_abs_surf)
                     
@@ -127,16 +127,17 @@ class EnergyBalanceDriver():
         """
         # CONSTANTS
         sky_view = point_attrs.sky_view_factor
-        slope = point_attrs.slope * jnp.pi/180
-        aspect = point_attrs.aspect * jnp.pi/180
+        slope = jnp.deg2rad(point_attrs.slope)
+        aspect = jnp.deg2rad(point_attrs.aspect)
 
         # albedo input
         albedo = state.albedo
         albedo_surr = state.albedo_surr
 
-        # get solar position 
+        # get solar position [rad]
         sun_az = forcings.solar_azimuth
         sun_zen = forcings.solar_zenith
+        # jax.debug.print('{} {} sun az {} sun zen {} slope aspect {} slope slope {}', forcings.doy, forcings.hour, sun_az, sun_zen, aspect, slope)
 
         # shade mask has 0 for shade, 1 for sun
         sunny = forcings.shadow_mask
@@ -155,6 +156,12 @@ class EnergyBalanceDriver():
         f_diff = self.diffuse_fraction(SWin_sky, sun_zen, forcings.doy)
         SWin_direct = SWin_sky * (1-f_diff)
         SWin_diffuse = SWin_sky * f_diff * sky_view
+
+        # def print_notna(doy, hr, sky, terr, dire, diff, slope):
+        #     if doy == 139 and hr == 14:
+        #         # print(sun_zen, sun_az, slope, aspect)
+        #         print(f"doy {doy} hour {hr} sky {sky} terr {terr} dir {dire} diff {diff} slope corr {slope}")
+        # jax.debug.callback(print_notna, forcings.doy, forcings.hour, SWin_sky, SWin_terrain, SWin_direct, SWin_diffuse, slope_correction)
 
         # determine overall incoming flux
         SWin = jnp.where(
@@ -270,8 +277,8 @@ class EnergyBalanceDriver():
         density_air = forcings.sp / R_GAS / forcings.tempK * MM_AIR
 
         # latent heat term depends on direction of heat exchange
-        is_sublimating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
-        Lv = jnp.where(is_sublimating, params.Lv_sub, params.Lv_evap)
+        is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
+        Lv = jnp.where(is_evaporating, params.Lv_evap, params.Lv_sub)
 
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
@@ -294,11 +301,6 @@ class EnergyBalanceDriver():
         # final flux calculation
         Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.tempC - surftemp) * jnp.cos(slope)
         Ql = density_air * Lv * csQ * psi * wind_2m * (qz - q0) * jnp.cos(slope)
-
-        # def print_notna(doy, hr, Qs, temp, wind, surf):
-        #     if str(Qs) != 'nan':
-        #         print(f'doy {doy} hour {hr} Qs {Qs} air temp {temp} wind {wind} surf temp {surf}')
-        # jax.debug.callback(print_notna, forcings.doy, forcings.hour, Qs[0], forcings.tempC[0], forcings.wind[0], surftemp[0])
 
         return Qs, Ql
     

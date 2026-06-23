@@ -86,46 +86,48 @@ class MassBalanceDriver:
         mass_fluxes : dict
             Dictionary containing runoff and melt
         """
-        doy = forcings.doy 
-        hr = forcings.hour 
-        def print_state(i, doy, hr, lwater, lice, reservoir):
-            if doy == 141 and hr == 8:
-                print(f'at {i}    lwater {lwater}   lice {lice}   res {reservoir}')
+        # define state checker for debugging
+        # def _check_state(text, state, forcings):
+        #     lwater = jnp.sum(state.lwater, axis=1)
+        #     lice = jnp.sum(state.lice, axis=1)
+        #     reservoir = state.basal_reservoir 
+        #     doy = forcings.doy 
+        #     hour = forcings.hour
+
+        #     # change this condition to print when you want to troubleshoot
+        #     if False: # doy == 208 and hour == 20:
+        #         print(f'({doy}:{hour}) Function {text:<10}: ice {lice}    lwater {lwater}    reservoir {reservoir}')
 
         # subsurface heating and melting
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
-        jax.debug.callback(print_state, 1, doy, hr, 
-                           jnp.sum(state.lwater, axis=1), 
-                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+        # if self.params.debug:
+        #     jax.debug.callback(_check_state, 'melting', state, forcings)
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
-        jax.debug.callback(print_state, 2, doy, hr, 
-                           jnp.sum(state.lwater, axis=1), 
-                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+
+        # if self.params.debug:
+        #     jax.debug.callback(_check_state, 'percolation', state, forcings)
         
         # refreezing
         state = self.refreezing(state)
-        jax.debug.callback(print_state, 3, doy, hr, 
-                           jnp.sum(state.lwater, axis=1), 
-                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+        # if self.params.debug:
+        #     jax.debug.callback(_check_state, 'refreezing', state, forcings)
 
         # phase changes (e.g., sublimation, condensation)
         state, condensation_runoff, mass_fluxes = self.phase_changes(
             state, fluxes['latent_heat']
         )
-        jax.debug.callback(print_state, 4, doy, hr, 
-                           jnp.sum(state.lwater, axis=1), 
-                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+        # if self.params.debug:
+        #     jax.debug.callback(_check_state, 'phase', state, forcings)
 
         # check layer sizes for numeric stability before running temp profile
         state, dead_mass = layers.check_layer_sizes(state, self.params)
-        jax.debug.callback(print_state, 5, doy, hr, 
-                           jnp.sum(state.lwater, axis=1), 
-                           jnp.sum(state.lice, axis=1), state.basal_reservoir)
+        # if self.params.debug:
+        #     jax.debug.callback(_check_state, 'layers', state, forcings)
         
         # resolve temperature profile
         state = self.resolve_temperature_profile(state)
@@ -202,6 +204,7 @@ class MassBalanceDriver:
         return state
     
     # -------------------- PHYSICS FUNCTIONS --------------------
+    #  These routines are called from the above worker functions
 
     def get_precip_amounts(self, forcings):
         """
@@ -409,7 +412,7 @@ class MassBalanceDriver:
 
         # === days since snowfall ===
         time_idx = jnp.full(state.lice.shape[0], forcings.time_idx)
-        hours_since_snowfall = time_idx - state.days_since_snowfall
+        hours_since_snowfall = time_idx - state.last_snow
         new_days_since_snowfall = jnp.round(hours_since_snowfall / 24).astype(jnp.int32)
 
         # only update the properties requested based on hour of day
@@ -548,15 +551,16 @@ class MassBalanceDriver:
         properties['ltemp'] = jnp.transpose(out_ltemp)
 
         # store the mass in the layers that are about to be deleted
-        fully_melted_mask = properties['lice'] <= 0.001
+        fully_melted_mask = properties['lice'] <= params.min_layer_mass
         mass_to_route = {}
-        mass_to_route['meltwater'] = jnp.where(fully_melted_mask, properties['lwater'], 0)
+        mass_to_route['meltwater'] = jnp.where(fully_melted_mask, properties['lwater'] + properties['lice'], 0)
         mass_to_route['BC'] = jnp.where(fully_melted_mask, properties['lBC'], 0)
         mass_to_route['OC'] = jnp.where(fully_melted_mask, properties['lOC'], 0)
         mass_to_route['dust'] = jnp.where(fully_melted_mask, properties['ldust'], 0)
 
-        # remove the fully melted water from lwater so it isn't double-counted
+        # remove the fully melted mass so it isn't double-counted
         properties['lwater'] = jnp.where(fully_melted_mask, 0.0, properties['lwater'])
+        properties['lice'] = jnp.where(fully_melted_mask, 0.0, properties['lice'])
         
         # store updated properties
         state = state._replace(**properties)
@@ -566,7 +570,8 @@ class MassBalanceDriver:
 
         # collapse grid to purge melted layers
         def remove_one(i, s):
-            fully_melted_mask = s.lice <= 0.001
+            """Removes the top empty layer from each point"""
+            fully_melted_mask = s.lice <= params.min_layer_mass
             melt_point_mask = jnp.any(fully_melted_mask, axis=1)
             melt_layer_idx = jnp.argmax(fully_melted_mask.astype(jnp.int32), axis=1)
             return layers.remove_layer(s, melt_point_mask, melt_layer_idx, params)
@@ -985,7 +990,7 @@ class MassBalanceDriver:
         k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
 
         # define the function to loop over dt_heat
-        def _conduction_step(step_idx, temps):
+        def _conduction_step(i, temps):
             # flux from surface boundary into layer 0 (1D)
             flux_surf = lcond[:, 0] * (surftemp - temps[:, 0]) / (0.5 * safe_lheight[:, 0])
             

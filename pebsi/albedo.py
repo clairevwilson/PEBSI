@@ -72,9 +72,12 @@ def get_albedo(state, params, forcings):
     solar_zenith = forcings.solar_zenith 
     direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
 
-    # spherical grains if there is refreeze or liquid water; else flat hexagons
-    round_grains = (state.lrefreeze > 0) | (state.lwater > 1e-3)
-    lgrainshape = jnp.where(round_grains[:, :4], 0, 2).astype(jnp.float32)
+    if params.option_flat_plates:
+        # spherical grains if there is refreeze or liquid water; else flat hexagons
+        round_grains = (state.lrefreeze > 0) | (state.lwater > 1e-3)
+        lgrainshape = jnp.where(round_grains[:, :4], 0, 2).astype(jnp.float32)
+    else:
+        lgrainshape = jnp.full_like(lheight, 0).astype(jnp.float32)
 
     # calculate concentration from mass of particles and convert to ppb
     cBC = lBC / lheight * 1e6

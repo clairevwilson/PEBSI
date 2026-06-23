@@ -24,7 +24,7 @@ from jax.scipy.interpolate import RegularGridInterpolator
 import util.defaults as defaults
 
 # list fields that must be static
-static_fields = [
+static_fields = ['debug',
     'max_nlayers', 'albedo_TOD', 'bias_vars',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
@@ -35,6 +35,7 @@ static_fields = [
 
     'option_SWpen', 'option_accel_grains', 
     'option_uniform_ice', 'option_uniform_snow',
+    'option_flat_plates',
 
     'constant_snowfall_density','constant_freshgrainsize',
     'constant_drdry','constant_irrwater'
@@ -55,7 +56,7 @@ external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
     'store_vars', 'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
-    'debug', 'testing', 'progress_bar'
+    'testing', 'progress_bar' # , 'debug'
 ]
 
 # anything else is treated as:
