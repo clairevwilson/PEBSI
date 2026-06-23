@@ -15,6 +15,7 @@ climate_fp: '/Volumes/TOSHIBA EXT/' # '/run/media/claire/TOSHIBA EXT/'
 start_date: '2024-04-20 00:00'
 end_date: '2024-05-20 00:00'
 temporal_chunks: 721
+dem_fn: '../data/dems/gulkana_dem.tif'
 
 rgi_ids: ['01.00570'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
 method_snicar: 'emulator'

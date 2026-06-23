@@ -230,11 +230,12 @@ class Terrain:
         x_res, y_res = abs(x_res), abs(y_res)
 
         # calculate gradient and get the slope
-        dy, dx = np.gradient(np.squeeze(dem.values), y_res, x_res)
+        dx, dy = np.gradient(dem, y_res, x_res)
         slope_vals = np.arctan(np.sqrt(dx**2 + dy**2))
         slope_vals = np.rad2deg(slope_vals)
 
-        aspect_vals = np.arctan2(dx, dy)
+        aspect_vals = np.arctan2(-dy, -dx)
+        aspect_vals = (aspect_vals + 2*np.pi) % (2*np.pi)
         aspect_vals = np.rad2deg(aspect_vals) % 360
 
         # put data into DataArrays for clean indexing
@@ -244,21 +245,21 @@ class Terrain:
         lon_xr = xr.DataArray(lons_in, dims='points')
 
         import matplotlib.pyplot as plt
-        fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+        fig, axes = plt.subplots(1, 1, figsize=(5, 5))
 
-        dem_vals = np.squeeze(dem.values)
-        im0 = axes[0].imshow(dem_vals, cmap='terrain')
-        axes[0].set_title('Elevation')
-        plt.colorbar(im0, ax=axes[0], fraction=0.046)
+        # dem_vals = np.squeeze(dem.values)
+        # im0 = axes[0].imshow(dem_vals, cmap='terrain')
+        # axes[0].set_title('Elevation')
+        # plt.colorbar(im0, ax=axes[0], fraction=0.046)
 
-        im1 = axes[1].imshow(slope_vals, cmap='viridis')
-        axes[1].set_title('Slope (deg)')
-        plt.colorbar(im1, ax=axes[1], fraction=0.046)
+        # im1 = axes[1].imshow(slope_vals, cmap='viridis')
+        # axes[1].set_title('Slope (deg)')
+        # plt.colorbar(im1, ax=axes[1], fraction=0.046)
 
         # cyclic colormap so 0/360 don't look like opposite extremes
-        im2 = axes[2].imshow(aspect_vals, cmap='hsv', vmin=0, vmax=360)
-        axes[2].set_title('Aspect (deg, 0=N)')
-        plt.colorbar(im2, ax=axes[2], fraction=0.046, ticks=[0, 90, 180, 270, 360])
+        im2 = axes.imshow(aspect_vals, cmap='hsv', vmin=0, vmax=360)
+        axes.set_title('Aspect (deg, 0=N)')
+        plt.colorbar(im2, ax=axes, fraction=0.046, ticks=[0, 90, 180, 270, 360])
 
         plt.tight_layout()
         plt.savefig('testtest.png')
@@ -558,7 +559,7 @@ class Terrain:
                 glacier_masks = glacier_masks.as_numpy()
                 
                 fn_out = self.shade_fn.format(gid=gid) 
-                glacier_masks.chunk({'time': 8784, 'y': 8, 'x': 8}).to_zarr(fn_out)
+                glacier_masks.chunk({'time': 8784, 'y': 8, 'x': 8}).to_zarr(fn_out, zarr_format=2)
                 print(f'stored {gid} to {fn_out}')
 
             # clear items from memory
