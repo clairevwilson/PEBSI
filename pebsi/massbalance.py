@@ -61,13 +61,13 @@ class MassBalanceDriver:
         """
         albedo_TOD = self.params.albedo_TOD
 
-        # parse time index for daily functions
-        is_day_start = forcings.hour == 0
-        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
+        # parse time index for daily functions (local_hour is per-point)
+        is_day_start = forcings.local_hour == 0
+        is_albedo_step = jnp.any(forcings.local_hour[:, None] == jnp.array(albedo_TOD), axis=-1)
 
         # either run or skip daily routines depending on hour of day
         state = jax.lax.cond(
-            is_day_start | is_albedo_step,
+            jnp.any(is_day_start | is_albedo_step),
             lambda s: self.get_daily_updates(s, forcings),
             lambda s: s,
             state
@@ -151,9 +151,9 @@ class MassBalanceDriver:
             pore space due to densification
         """
         # densification is only run daily
-        is_day_start = forcings.hour == 0
+        is_day_start = forcings.local_hour == 0
         state, water_squeezed_out = jax.lax.cond(
-            is_day_start,
+            jnp.any(is_day_start),
             lambda s: self.densification(s),
             lambda s: (s, jnp.zeros_like(state.albedo)),
             state
@@ -182,7 +182,7 @@ class MassBalanceDriver:
         # are we in the end-of-summer window?
         is_summer_end_window = (forcings.doy >= params.start_end_summer) & \
             (forcings.doy <= params.start_end_summer + 60)
-        is_midnight = forcings.hour == 0 
+        is_midnight = forcings.local_hour == 0
         # does past snowfall surpass the threshold to consider winter?
         weather_trigger = jnp.sum(state.past_snow, axis=1) >= params.new_snow_threshold
         # put temporal triggers together
@@ -197,7 +197,7 @@ class MassBalanceDriver:
         )
 
         # if it is the start of a year, reset firn converted trackers
-        is_year_start = (forcings.doy == 0) & (forcings.hour == 0)
+        is_year_start = (forcings.doy == 0) & (forcings.local_hour == 0)
         new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
         state = state._replace(annual_firn_converted = new_firn_converted)
         return state
@@ -389,8 +389,8 @@ class MassBalanceDriver:
         albedo, days since snowfall).
         """
         albedo_TOD = self.params.albedo_TOD
-        is_day_start = forcings.hour == 0
-        is_albedo_step = jnp.any(forcings.hour == jnp.array(albedo_TOD))
+        is_day_start = forcings.local_hour == 0
+        is_albedo_step = jnp.any(forcings.local_hour[:, None] == jnp.array(albedo_TOD), axis=-1)
 
         # === albedo ===
         new_albedo, new_annual_min_albedo = albedo.get_albedo(

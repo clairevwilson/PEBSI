@@ -57,7 +57,6 @@ class Terrain:
             self.elev_n = None
             self.slope_n = None 
             self.aspect_n = None 
-            self.tz_n = None
 
         elif self.params.method_distribute == 'sites':
             ns = len(self.params.sites)
@@ -86,7 +85,6 @@ class Terrain:
             self.elev_n = np.array(elevs)
             self.slope_n = np.array(slopes)
             self.aspect_n = np.array(aspects)
-            self.tz_n = None
 
         # store to self
         self.lat_n = np.array(lats)
@@ -254,10 +252,7 @@ class Terrain:
         slope_n = slope.sel(y=lat_xr, x=lon_xr, method='nearest').values
         aspect_n = aspect.sel(y=lat_xr, x=lon_xr, method='nearest').values 
 
-        # estimate local timezone from longitude
-        tz_n = np.round(lons_in / 15)
-
-        return elev_n, slope_n, aspect_n, tz_n
+        return elev_n, slope_n, aspect_n
     
     def get_median_elevation(self):
         """
@@ -441,7 +436,6 @@ class Terrain:
             'elev_n': np.full(self.N_POINTS, np.nan),
             'slope_n': np.full(self.N_POINTS, np.nan),
             'aspect_n': np.full(self.N_POINTS, np.nan),
-            'tz_n': np.full(self.N_POINTS, -1, dtype=np.int32),
         }
 
         # loop through DEM chunks and corresponding glacier subsets
@@ -458,13 +452,12 @@ class Terrain:
             # pass the points in this block to the DEM info loader
             lats_in = lat_n[block_mask]
             lons_in = lon_n[block_mask]
-            elev_b, slope_b, aspect_b, tz_b = self.load_dem_info(sub_dem_ds, lats_in, lons_in)
+            elev_b, slope_b, aspect_b = self.load_dem_info(sub_dem_ds, lats_in, lons_in)
 
             # store the outputs
             compiled_inputs['elev_n'][block_mask] = elev_b
             compiled_inputs['slope_n'][block_mask] = slope_b
             compiled_inputs['aspect_n'][block_mask] = aspect_b
-            compiled_inputs['tz_n'][block_mask] = tz_b
 
             # check if any of these glaciers don't have a shading file
             missing_glaciers = []
@@ -519,6 +512,7 @@ class Terrain:
             
             mask_3d_cpu = masks_gpu.get() if hasattr(masks_gpu, 'get') else masks_gpu
 
+            # store shadow mask with UTC datetimes
             datetimes_clean = datetimes_utc.tz_localize(None)
             subregion_masks = xr.Dataset(
                 {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool), {'units':'0=shade, 1=sun'}),
@@ -567,11 +561,9 @@ class Terrain:
             self.aspect_n = compiled_inputs['aspect_n']
         if self.slope_n is None:
             self.slope_n = compiled_inputs['slope_n']
-        if self.tz_n is None:
-            self.tz_n = compiled_inputs['tz_n']
         return
     
-    def load_shading(self, dates_local):
+    def load_shading(self, dates):
         """
         Loads the shading mask for the points in the
         simulation from the preprocessed shading .zarr.
@@ -581,73 +573,52 @@ class Terrain:
         dates_UTC : np.ndarray (N_TIME, ) or (N_POINTS, N_TIME)
             Dates in UTC for the simulation.
         """
-        # handle timezones
-        tz = self.tz_n
-        if len(np.unique(tz)) == 1:
-            # if all glaciers are in the same timezone, dates_UTC can be 1D
-            dates_UTC = (dates_local - pd.to_timedelta(int(tz[0]), unit='h')).to_numpy()
-        else:
-            # else, need dates_UTC to be a 2D array (points, time)
-            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, np.newaxis]
-            dates_UTC = dates_local.to_numpy()[np.newaxis, :] - timedelta_col
-
         # define storage for shading masks
         N_POINTS = self.N_POINTS 
-        N_TIME = len(dates_UTC) if len(dates_UTC.shape)==1 else dates_UTC.shape[1]
+        N_TIME = len(dates) if len(dates.shape)==1 else dates.shape[1]
         masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
         azimuth = np.full((N_POINTS, N_TIME), np.pi)
         zenith = np.zeros((N_POINTS, N_TIME))
         sky_view_factor = np.ones(N_POINTS)
 
-        # find unique timezones from list of all points
-        for tz in np.unique(self.tz_n):
-            tz_idx = np.where(self.tz_n == tz)[0]
+        # loop through glaciers in this simulation
+        for gid in np.unique(self.rgiid_n):
+            # index of these glaciers
+            gid_idx = np.where(self.rgiid_n == gid)[0]
 
-            # build 1D time lookup once for this timezone
-            if dates_UTC.ndim == 1:
-                dates_tz = pd.DatetimeIndex(dates_UTC)
-            else:
-                dates_tz = pd.DatetimeIndex(dates_UTC[tz_idx[0]])
+            # open the shade file and parse the lookup
+            fn = self.shade_fn.format(gid=gid)
 
-            # loop through glaciers in this timezone
-            for gid in np.unique(self.rgiid_n[tz_idx]):
-                # intersect index: glacier and timezone
-                gid_idx = np.where(self.rgiid_n == gid)[0]
-                gid_idx = gid_idx[np.isin(gid_idx, tz_idx)]
+            ds = xr.open_zarr(fn)
+            ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
+            ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
+            ds_doy = ds.time.dt.dayofyear.values
+            ds_hour = ds.time.dt.hour.values
+            lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
 
-                # open the shade file and parse the lookup
-                fn = self.shade_fn.format(gid=gid)
+            # create new dataarray with the target time indices
+            target_indices = [lookup[(d, h)]
+                            for d, h in zip(dates.dayofyear, dates.hour)]
+            target_time_idx = xr.DataArray(target_indices, dims='time')
 
-                ds = xr.open_zarr(fn)
-                ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
-                ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
-                ds_doy = ds.time.dt.dayofyear.values
-                ds_hour = ds.time.dt.hour.values
-                lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
+            # grab lat/lon for each point and convert to a dataarray
+            transformer = Transformer.from_crs("EPSG:4326", ds.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
+            target_x = xr.DataArray(x_pts, dims='points')
+            target_y = xr.DataArray(y_pts, dims='points')
 
-                # create new dataarray with the target time indices
-                target_indices = [lookup[(d, h)]
-                                for d, h in zip(dates_tz.dayofyear, dates_tz.hour)]
-                target_time_idx = xr.DataArray(target_indices, dims='time')
+            # index mask to get points and time for this glacier
+            selected = (ds
+                .sel(y=target_y, x=target_x, method='nearest')
+                .isel(time=target_time_idx)
+                .transpose('points', 'time'))
 
-                # grab lat/lon for each point and convert to a dataarray
-                transformer = Transformer.from_crs("EPSG:4326", ds.rio.crs, always_xy=True)
-                x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
-                target_x = xr.DataArray(x_pts, dims='points')
-                target_y = xr.DataArray(y_pts, dims='points')
+            masks[gid_idx, :] = selected['shadow_mask'].values
+            azimuth[gid_idx, :] = selected['solar_azimuth'].values
+            zenith[gid_idx, :] = selected['solar_zenith'].values
+            sky_view_factor[gid_idx] = selected['sky_view_factor'].values
 
-                # index mask to get points and time for this glacier
-                selected = (ds
-                    .sel(y=target_y, x=target_x, method='nearest')
-                    .isel(time=target_time_idx)
-                    .transpose('points', 'time'))
-
-                masks[gid_idx, :] = selected['shadow_mask'].values
-                azimuth[gid_idx, :] = selected['solar_azimuth'].values
-                zenith[gid_idx, :] = selected['solar_zenith'].values
-                sky_view_factor[gid_idx] = selected['sky_view_factor'].values
-
-                ds.close()
+            ds.close()
 
         self.sky_view_factor = sky_view_factor
         self.solar_zenith = zenith 

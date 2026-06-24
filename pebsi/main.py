@@ -20,7 +20,6 @@ from types import SimpleNamespace
 # External libraries
 import jax 
 import jax.numpy as jnp
-from jax.debug import print as jax_print
 # Local libraries
 from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver

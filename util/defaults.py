@@ -100,19 +100,15 @@ compiled_path = '.compiled_main.pkl'                        # Path to store the 
 #                                            CLIMATE AND TIME INPUTS
 # ====================================================================================================================
 # TEMPORAL
-start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time
-end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time
+start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time in UTC
+end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time in UTC
 temporal_chunks = 8760                      # Number of chunks to split up simulation into
 
 # SPATIAL 
 bin_step = 100                              # Elevation between bins
 n_points = 6                                # Number of points to divide domain into
 
-# WEATHER STATION SITE
-station_elevation = {                       # Elevation of the stations used in temperature quantile mapping [m a.s.l.]
-    'gulkana':1725, 'wolverine':990, 
-    'kahiltna':2377, 'lemon_creek':1280,
-}
+# WEATHER STATION
 aws_elev = None                             # Same as station_elevation but can be overwritten in config
 
 # CLIMATE DATA

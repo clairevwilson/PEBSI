@@ -81,16 +81,18 @@ class ClimateState(NamedTuple):
         - 2D properties: (N_TIME, N_POINTS)
     """
 
-    # ================================= Time =================================
+    # =============================== Time (1D) ===============================
 
     time_idx: jnp.ndarray       # Scalar integer tracking current time index
     year: jnp.ndarray           # Calendar year (e.g. 2026)
     month: jnp.ndarray          # Calendar month (1 to 12)
     day: jnp.ndarray            # Calendar day (1 to 31)
-    hour: jnp.ndarray           # Calendar hour (0 to 23)
+    hour: jnp.ndarray           # Calendar hour (0 to 23), UTC
     doy: jnp.ndarray            # Calendar day of year (0 to 366)
+
+    local_hour: jnp.ndarray     # (2D) Calendar hour in local time (0 to 23)
     
-    # =========================== Climate variables ==========================
+    # ========================= Climate variables (2D) ========================
 
     tempC: jnp.ndarray          # 2 meter air temperature [C]
     tempK: jnp.ndarray          # 2 meter air temperature [K]
@@ -102,14 +104,14 @@ class ClimateState(NamedTuple):
     rh: jnp.ndarray             # 2 meter relative humidity [%]
     tcc: jnp.ndarray            # Total cloud cover [-]
 
-    # --------------------------- Radiation terms ---------------------------
+    # ---------------------------- Radiation terms ----------------------------
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]
     longwave_in: jnp.ndarray    # Incoming longwave radiation [J m-2]
     shadow_mask: jnp.ndarray    # Boolean shadow mask [-]
     solar_azimuth: jnp.ndarray  # Solar azimuth angle [rad]
     solar_zenith: jnp.ndarray   # Solar zenith angle [rad]
 
-    # --------------------------- Deposition terms --------------------------
+    # ---------------------------- Deposition terms ---------------------------
     bcdry: jnp.ndarray          # Dry black carbon deposition [kg m-2 s-1]
     bcwet: jnp.ndarray          # Wet black carbon deposition [kg m-2 s-1]
     ocdry: jnp.ndarray          # Dry organic carbon deposition [kg m-2 s-1]
@@ -123,10 +125,11 @@ class PointAttributes(NamedTuple):
     
     Array dimensions: (N_POINTS,)
     """
+    latitude: jnp.ndarray           # Point latitude [deg]
+    longitude: jnp.ndarray          # Point longitude [deg, -180 to 180]
     elevation: jnp.ndarray          # Point elevation [m a.s.l.]
     slope: jnp.ndarray              # Point slope [deg]
     aspect: jnp.ndarray             # Point aspect [deg, 0=N]
-    timezone: jnp.ndarray           # Timezone [hrs from UTC]
     sky_view_factor: jnp.ndarray    # Sky-view factor [-]
 
 class StepOutputs(NamedTuple):

@@ -14,7 +14,6 @@ import time
 import warnings
 # External libraries
 import jax 
-import zarr
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
@@ -30,11 +29,10 @@ from pebsi.state import *
 from pebsi.main import main
 
 os.umask(0o000) # make sure files are created with universal permissions
-os.environ["JAX_TRACEBACK_FILTERING"] = "off" # show full error statements
-jax.config.update("jax_enable_x64", True) # enable floaf64 storage
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"   # show full error statements
+jax.config.update("jax_enable_x64", True)       # enable floaf64 storage
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
-# warnings.filterwarnings('ignore', category=zarr.errors.ZarrUserWarning)
 
 def get_args(parse=True):
     """
@@ -201,10 +199,11 @@ class PEBSI():
 
         # time-invariant spatial attributes
         point_attrs = PointAttributes(
+            latitude=jnp.array(self.terrain.lat_n, dtype=jnp.float64),
+            longitude=jnp.array(self.terrain.lon_n, dtype=jnp.float64),
             elevation=jnp.array(self.terrain.elev_n, dtype=jnp.float64),
             slope=jnp.array(self.terrain.slope_n, dtype=jnp.float64),
             aspect=jnp.array(self.terrain.aspect_n, dtype=jnp.float64),
-            timezone=jnp.array(self.terrain.tz_n, dtype=jnp.float64),
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
         )
         return glacier_state, point_attrs
@@ -236,12 +235,17 @@ class PEBSI():
         solar_zenith = self.terrain.solar_zenith[:, date_mask]
 
         # ================== CLIMATE ==================
+        # per-point local solar hour: (N_TIME, N_POINTS)
+        tz_offset = np.round(self.terrain.lon_n / 15).astype(int)  # (N_POINTS,)
+        local_hour = (dates.hour.values[:, None] + tz_offset[None, :]) % 24
+
         forcings = ClimateState(
             time_idx=jnp.array(jnp.arange(start, start + len(dates)), dtype=jnp.int32),
             year=jnp.array(dates.year, dtype=jnp.int32),
             month=jnp.array(dates.month, dtype=jnp.int32),
             day=jnp.array(dates.day, dtype=jnp.int32),
             hour=jnp.array(dates.hour, dtype=jnp.int32),
+            local_hour=jnp.array(local_hour, dtype=jnp.int32),
             doy=jnp.array(dates.day_of_year, dtype=jnp.int32),
 
             # basic climate variables
@@ -332,7 +336,7 @@ class PEBSI():
             if actual_length < chunk_size:
                 chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
 
-            # store this chunk (append it onto the zarr)
+            # store this chunk (append it onto the zarr dataset)
             if params.store_data:
                 model_output.store_chunk(chunk_records, chunk_dates, start)
 

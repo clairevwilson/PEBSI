@@ -70,15 +70,8 @@ class Climate():
         """
         self.dates = pd.to_datetime(dates)
 
-        # handle timezones
-        tz = self.terrain.tz_n
-        if len(np.unique(tz)) == 1:
-            # if all glaciers are in the same timezone, dates_UTC can be 1D
-            self.dates_UTC = (self.dates - pd.to_timedelta(int(tz[0]), unit='h')).to_numpy()
-        else:
-            # else, need dates_UTC to be a 2D array (points, time)
-            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, None]
-            self.dates_UTC = self.dates.to_numpy()[None, :] - timedelta_col
+        # input dates are UTC; store directly
+        self.dates_UTC = self.dates.to_numpy()
             
         # specify spatial and temporal information
         self.N_TIME = len(self.dates)
@@ -229,63 +222,53 @@ class Climate():
         da = self.check_units(var, ds[vn])
 
         # slice time to chunk window before spatial sel to minimize data pulled
-        dates_2d = np.atleast_2d(dates)
-        N_TIME = dates_2d.shape[-1]
+        N_TIME = len(dates)
         N_POINTS = len(self.point_lats)
         data_array = np.empty((N_POINTS, N_TIME), dtype=np.float64)
 
-        # loop through unique timezones
-        for tz in np.unique(self.terrain.tz_n):
-            # points in this timezone
-            point_indices = np.where(self.terrain.tz_n == tz)[0]
-            tz_lats = self.point_lats.isel(point=point_indices)
-            tz_lons = self.point_lons.isel(point=point_indices)
+        # time bounds
+        t_start = dates[0]
+        t_end = dates[-1]
 
-            # UTC dates (same for all points in point_indices so grab the first)
-            tz_dates = dates_2d[point_indices[0]]
-            tz_start = tz_dates[0]
-            tz_end = tz_dates[-1]
+        # MERRA-2 data is on the half hour; shift timestamps up
+        if self.params.climate_source == 'MERRA2' and not non_merra_dep_var:
+            t_start = t_start + pd.Timedelta(minutes=30)
+            t_end = t_end + pd.Timedelta(minutes=30)
 
-            # if using MERRA-2, shift our lookup times forward 30 minutes
-            if self.params.climate_source == 'MERRA2' and not non_merra_dep_var:
-                tz_start = tz_start + pd.Timedelta(minutes=30)
-                tz_end = tz_end + pd.Timedelta(minutes=30)
+        # slice by time
+        if non_merra_dep_var:
+            # non-MERRA2 deposition data can be daily; forward fill to hourly
+            # shift timestamps back to midnight
+            shifted = da.assign_coords(time=da['time'] - pd.Timedelta(hours=12))
 
-            # slice by time
-            if non_merra_dep_var:
-                # non-MERRA2 deposition data can be daily; forward fill to hourly
-                # shift timestamps back to midnight
-                shifted = da.assign_coords(time = da['time'] - pd.Timedelta(hours=12))
+            # add a day at the end to make sure all hours are there
+            last = pd.Timestamp(shifted['time'].values[-1]) + pd.Timedelta(hours=23)
+            new_index = pd.date_range(shifted['time'].values[0], last, freq='h')
+            hourly = shifted.reindex(time=new_index, method='ffill')
 
-                # add a day at the end to make sure all hours are there 
-                last = pd.Timestamp(shifted['time'].values[-1]) + pd.Timedelta(hours=23)
-                new_index = pd.date_range(shifted['time'].values[0], last, freq='h')
-                hourly = shifted.reindex(time=new_index, method='ffill')
+            da_sliced = hourly.sel(time=slice(t_start, t_end))
+        else:
+            da_sliced = da.sel(time=slice(t_start, t_end))
 
-                # slice by time
-                tz_da = hourly.sel(time=slice(tz_start, tz_end))
-            else:
-                tz_da = da.sel(time=slice(tz_start, tz_end))
+        # make sure the time is actually there
+        assert t_start in da_sliced.time.values, f'Dates out of range: {t_start}'
+        assert t_end in da_sliced.time.values, f'Dates out of range: {t_end}'
 
-            # make sure the time is actually there
-            assert tz_start in tz_da.time.values, f'Dates out of range: {tz_start}'
-            assert tz_end in tz_da.time.values, f'Dates out of range: {tz_end}'
-
-            # slice by lat and lon points
-            if lat_vn not in tz_da.dims or lon_vn not in tz_da.dims:
-                tz_da = tz_da.expand_dims(point=len(point_indices))
-            else:
-                tz_da = tz_da.sel(
-                    {lat_vn: tz_lats, lon_vn: tz_lons},
+        # slice by lat and lon points
+        if lat_vn not in da_sliced.dims or lon_vn not in da_sliced.dims:
+            da_sliced = da_sliced.expand_dims(point=N_POINTS)
+        else:
+            da_sliced = da_sliced.sel(
+                {lat_vn: self.point_lats, lon_vn: self.point_lons},
                 method='nearest')
-            
-            data_array[point_indices] = tz_da.transpose('point', 'time').values
-            
-            # make sure the correct grid cells were accessed
-            assert np.all(np.abs(tz_da.coords[lat_vn].values - tz_lats.values) <= lat_res), \
-                'Wrong grid cell was accessed: check climate data covers the whole region'
-            assert np.all(np.abs(tz_da.coords[lon_vn].values - tz_lons.values) <= lon_res), \
-                'Wrong grid cell was accessed: check climate data covers the whole region'
+
+        data_array[:] = da_sliced.transpose('point', 'time').values
+
+        # make sure the correct grid cells were accessed
+        assert np.all(np.abs(da_sliced.coords[lat_vn].values - self.point_lats.values) <= lat_res), \
+            'Wrong grid cell was accessed: check climate data covers the whole region'
+        assert np.all(np.abs(da_sliced.coords[lon_vn].values - self.point_lons.values) <= lon_res), \
+            'Wrong grid cell was accessed: check climate data covers the whole region'
 
         # store result
         setattr(self, var, data_array.astype(np.float64))
@@ -490,7 +473,7 @@ class Climate():
 
                 # apply to data
                 data = getattr(self, species+deptype)
-                data *= ratio[:, None]
+                data *= ratio[:, np.newaxis]
                 setattr(self, species+deptype, data)
 
                 # close the dataset
@@ -563,8 +546,8 @@ class Climate():
             temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format temp and point elev as (, n) arrays
-        self.temp_elev = temp_elev[:, None]
-        point_elev = self.terrain.elev_n[:, None]
+        self.temp_elev = temp_elev[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply lapse rate
         new_temp = self.original_temp + lapse_rate*(point_elev - self.temp_elev)
@@ -582,8 +565,8 @@ class Climate():
         prec_grad = self.params.precgrad
 
         # format tp and point elev as (, n) arrays
-        tp_elev = self.terrain.median_elev_n[:, None]
-        point_elev = self.terrain.elev_n[:, None]
+        tp_elev = self.terrain.median_elev_n[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # apply precipitation gradient
         new_tp = self.original_tp*(1+prec_grad*(point_elev-tp_elev))
@@ -607,8 +590,8 @@ class Climate():
         sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format sp and point elev as (, n) arrays
-        sp_elev = sp_elev[:, None]
-        point_elev = self.terrain.elev_n[:, None]
+        sp_elev = sp_elev[:, np.newaxis]
+        point_elev = self.terrain.elev_n[:, np.newaxis]
 
         # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.temp.copy()
@@ -651,7 +634,7 @@ class Climate():
         # get elevation of longwave data
         LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + lapse_rate*(LW_elev - self.terrain.elev_n)[:, None]
+            temp_LW_elev = temp_site + lapse_rate*(LW_elev - self.terrain.elev_n)[:, np.newaxis]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK

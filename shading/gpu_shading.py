@@ -2,8 +2,6 @@ from pathlib import Path
 from pyproj import Transformer
 
 import numpy as np
-import pytz
-import xarray as xr
 from pysolar.solar import get_altitude, get_azimuth
 from tqdm import tqdm
 try:
