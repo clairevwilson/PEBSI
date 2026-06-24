@@ -90,7 +90,7 @@ grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evoluti
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
 ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of UK-ESM-->MERRA-2 deposition ratio
 ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
-ukesn_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
+ukesm_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
 bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment file name
 
 # UTILITY
@@ -158,7 +158,6 @@ method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_cooling = 'minimize'             # 'minimize' (slow), 'iterative' (fast)
 method_ground = 'MolgHardy'             # 'MolgHardy'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
-method_snicar = 'bioSNICAR'             # 'bioSNICAR' (tested), 'SNICARfx' (untested), 'emulator' (beta)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?

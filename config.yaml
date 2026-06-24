@@ -11,16 +11,14 @@
 store_data: false
 debug: true
 output_fp: '../Output/test_simulation/'
-climate_fp: '/Volumes/TOSHIBA EXT/' # '/run/media/claire/TOSHIBA EXT/'
-start_date: '2024-04-20 00:00'
-end_date: '2024-05-20 00:00'
-temporal_chunks: 721
-dem_fn: '../data/dems/gulkana_dem.tif'
+climate_fp: '/Volumes/TOSHIBA EXT/climate_data/' # '/run/media/claire/TOSHIBA EXT/'
+start_date: '2000-04-20 00:00'
+end_date: '2000-04-22 00:00'
+temporal_chunks: 49
+# dem_fn: '../DEMs/gulkana_dem.tif'
 
-rgi_ids: ['01.00570'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
-method_snicar: 'emulator'
-method_distribute: 'sites' # 'none' # 
-sites: ['D']
+rgi_ids: ['01.09162'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
+sites: ['EC']
 # kp: [2.0588, 2.7100, 3.190, 0.9877, 1.1478, 2.0991]
 # wind_factor: [1.5, 2, 2, 1, 1,1]
 # bias_vars: ['temp'] # , 'wind']

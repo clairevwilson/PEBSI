@@ -31,7 +31,7 @@ static_fields = ['debug',
 
     'method_turbulent', 'method_stability', 'method_diffuse',
     'method_heateq', 'method_densification', 'method_cooling',
-    'method_ground', 'method_conductivity', 'method_snicar',
+    'method_ground', 'method_conductivity',
 
     'option_SWpen', 'option_accel_grains', 
     'option_uniform_ice', 'option_uniform_snow',
@@ -155,10 +155,15 @@ class Config():
             all_ids = [f.split('-')[-1] for f in df['RGIId']]
             args.rgi_ids = all_ids
 
+        # set method_distribute to points if specified sites
+        if args.sites is not None:
+            args.method_distribute = 'sites'
+
         # configure last items
         self.args = args
         self.configure_lookups()
         self.args.start_year = pd.to_datetime(self.args.start_date).year
+        
 
         # FINALLY: convert args into a JAX-compatible NamedTuple (immutable)
         self.convert_to_jax_safe(self.args)

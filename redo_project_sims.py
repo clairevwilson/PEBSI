@@ -3,15 +3,15 @@ import pickle
 import pandas as pd
 import simulation as sim
 
-config_fn = 'sim_redo_config.yaml'
+config_fn = 'config_redos.yaml'
 
 site_dict = {
-    # 'wolverine':['N','B','EC'],
-    # 'kahiltna':['K53','K17b'], 
-    # 'kennicott':['GTL','GTH'], # ,'KC31'],
-    # 'lemon_creek':['B','C','D'],
-    # 'taku':['NWB1','TKG3'],
-    'gulkana':['A','B','D']
+    'wolverine':['N','B','EC'],
+    'kahiltna':['K53','K17b'], 
+    'kennicott':['GTL','GTH'], # ,'KC31'],
+    'lemon_creek':['B','C','D'],
+    'taku':['NWB1','TKG3'],
+    'gulkana':['AU','B','D']
 }
 
 translate_rgi = {
@@ -57,7 +57,7 @@ configs = {
     'bias_vars': ['temp'],
 
     'start_date': '2000-04-20',
-    'end_date': '2025-08-20',
+    'end_date': '2015-08-20',
 
     'dust_factor': 20,
     'kp': kps, 
@@ -67,14 +67,13 @@ configs = {
     'option_flat_plates': False,
 
     'debug': True,
-    'store_data':False, #  True,
+    'store_data': True,
     'store_vars': ['MB','EB','layers','climate'],
 
-    'output_fp': '../Output/new_sims/',
-    'climate_fp': '/Volumes/TOSHIBA EXT/', # '/run/media/claire/TOSHIBA EXT/',
+    'output_fp': '../Output/ukesm_sim/',
+    'climate_fp': '/Volumes/TOSHIBA EXT/climate_data/', # '/run/media/claire/TOSHIBA EXT/',
 
-    'method_snicar': 'emulator',
-    'method_distribute': 'sites',
+    'deposition_data': 'UKESM',
 }
 
 with open(config_fn, 'w') as f:

@@ -190,7 +190,7 @@ def main(
         for field in mass_fluxes:
             if field in StepOutputs._fields:
                 # store them in m w.e.
-                out[field] = mass_fluxes[field] / params.density_ice
+                out[field] = mass_fluxes[field] / params.density_water
 
         # get all the layer fields
         for field in StepOutputs._fields:

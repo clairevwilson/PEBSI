@@ -515,7 +515,7 @@ class Albedo():
         # open dataframes
         metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
         glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
-        self.albedo_fp = base_fp + '../../rs/albedo/' # updated/
+        self.albedo_fp = base_fp + '../data/rs/albedo/' # updated/
 
         # find the site location lat/lon
         self.site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')

@@ -18,6 +18,7 @@ import geopandas as gpd
 import numpy as np
 from pyproj import CRS, Transformer
 import shapely.geometry as geom
+from rasterio.enums import Resampling
 # Local libraries
 from shading.gpu_shading import Shading
 
@@ -57,9 +58,11 @@ class Terrain:
             self.slope_n = None 
             self.aspect_n = None 
             self.tz_n = None
+
         elif self.params.method_distribute == 'sites':
-            assert len(self.params.rgi_ids) == len(self.params.sites), \
-                'N sites must equal N rgi_ids'
+            ns = len(self.params.sites)
+            ng = len(self.params.rgi_ids)
+            assert ns == ng, f'N sites (is {ns}) must equal N rgi_ids (is {ng})'
             lats, lons, glaciers = [], [], []
             elevs, slopes, aspects = [], [], []
 
@@ -107,8 +110,6 @@ class Terrain:
         # read in the shapefile
         df = pd.read_csv(os.path.join(self.params.rgi_fp, region_name[0]+'.csv'))
         gdf = gpd.read_file(os.path.join(self.params.rgi_fp, shapefile_fn))
-        if gdf.crs.is_geographic:
-            gdf = gdf.to_crs(epsg=32632) # Force metric project tracking
 
         # store to self 
         self.rgi_df = df 
@@ -227,7 +228,6 @@ class Terrain:
 
         # get the resolution of the dataset in m
         x_res, y_res = dem.rio.resolution()
-        x_res, y_res = abs(x_res), abs(y_res)
 
         # calculate gradient and get the slope
         dx, dy = np.gradient(dem, y_res, x_res)
@@ -241,28 +241,8 @@ class Terrain:
         # put data into DataArrays for clean indexing
         slope = xr.DataArray(slope_vals, coords=dem.coords, dims=dem.dims)
         aspect = xr.DataArray(aspect_vals, coords=dem.coords, dims=dem.dims)
-        lat_xr = xr.DataArray(lats_in , dims='points')
+        lat_xr = xr.DataArray(lats_in, dims='points')
         lon_xr = xr.DataArray(lons_in, dims='points')
-
-        import matplotlib.pyplot as plt
-        fig, axes = plt.subplots(1, 1, figsize=(5, 5))
-
-        # dem_vals = np.squeeze(dem.values)
-        # im0 = axes[0].imshow(dem_vals, cmap='terrain')
-        # axes[0].set_title('Elevation')
-        # plt.colorbar(im0, ax=axes[0], fraction=0.046)
-
-        # im1 = axes[1].imshow(slope_vals, cmap='viridis')
-        # axes[1].set_title('Slope (deg)')
-        # plt.colorbar(im1, ax=axes[1], fraction=0.046)
-
-        # cyclic colormap so 0/360 don't look like opposite extremes
-        im2 = axes.imshow(aspect_vals, cmap='hsv', vmin=0, vmax=360)
-        axes.set_title('Aspect (deg, 0=N)')
-        plt.colorbar(im2, ax=axes, fraction=0.046, ticks=[0, 90, 180, 270, 360])
-
-        plt.tight_layout()
-        plt.savefig('testtest.png')
 
         # reproject 2D datasets into lat/lon coordinates
         dem = dem.rio.reproject('EPSG:4326')
@@ -398,7 +378,9 @@ class Terrain:
         
         # convert the DEM to a good equal-area projection
         metric_crs = self._get_metric_crs(rgi_gdf)
-        master_dem = master_dem.rio.reproject(metric_crs)
+        master_dem = master_dem.rio.reproject(
+            metric_crs, resampling=Resampling.bilinear
+        )
 
         # make sure coordinate systems are consistent
         self.dem_crs = metric_crs 
@@ -579,8 +561,6 @@ class Terrain:
                 pass
 
         # store compiled inputs to self, if they were not already specified
-        print(self.aspect_n, compiled_inputs['aspect_n'])
-        print(self.slope_n, compiled_inputs['slope_n'])
         if self.elev_n is None:
             self.elev_n = compiled_inputs['elev_n']
         if self.aspect_n is None:

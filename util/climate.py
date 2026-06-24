@@ -77,8 +77,8 @@ class Climate():
             self.dates_UTC = (self.dates - pd.to_timedelta(int(tz[0]), unit='h')).to_numpy()
         else:
             # else, need dates_UTC to be a 2D array (points, time)
-            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, np.newaxis]
-            self.dates_UTC = self.dates.to_numpy()[np.newaxis, :] - timedelta_col
+            timedelta_col = pd.to_timedelta(tz, unit='h').to_numpy()[:, None]
+            self.dates_UTC = self.dates.to_numpy()[None, :] - timedelta_col
             
         # specify spatial and temporal information
         self.N_TIME = len(self.dates)
@@ -232,7 +232,7 @@ class Climate():
         dates_2d = np.atleast_2d(dates)
         N_TIME = dates_2d.shape[-1]
         N_POINTS = len(self.point_lats)
-        data_array = np.empty((N_POINTS, N_TIME), dtype=np.float32)
+        data_array = np.empty((N_POINTS, N_TIME), dtype=np.float64)
 
         # loop through unique timezones
         for tz in np.unique(self.terrain.tz_n):
@@ -250,13 +250,22 @@ class Climate():
             if self.params.climate_source == 'MERRA2' and not non_merra_dep_var:
                 tz_start = tz_start + pd.Timedelta(minutes=30)
                 tz_end = tz_end + pd.Timedelta(minutes=30)
-            
-            # slice by time
-            tz_da = da.sel(time=slice(tz_start, tz_end))
 
-            # non-MERRA2 deposition data can be daily; forward fill to hourly
+            # slice by time
             if non_merra_dep_var:
-                tz_da = tz_da.resample(time='h').ffill()
+                # non-MERRA2 deposition data can be daily; forward fill to hourly
+                # shift timestamps back to midnight
+                shifted = da.assign_coords(time = da['time'] - pd.Timedelta(hours=12))
+
+                # add a day at the end to make sure all hours are there 
+                last = pd.Timestamp(shifted['time'].values[-1]) + pd.Timedelta(hours=23)
+                new_index = pd.date_range(shifted['time'].values[0], last, freq='h')
+                hourly = shifted.reindex(time=new_index, method='ffill')
+
+                # slice by time
+                tz_da = hourly.sel(time=slice(tz_start, tz_end))
+            else:
+                tz_da = da.sel(time=slice(tz_start, tz_end))
 
             # make sure the time is actually there
             assert tz_start in tz_da.time.values, f'Dates out of range: {tz_start}'
@@ -279,7 +288,7 @@ class Climate():
                 'Wrong grid cell was accessed: check climate data covers the whole region'
 
         # store result
-        setattr(self, var, data_array.astype(np.float32))
+        setattr(self, var, data_array.astype(np.float64))
         return
     
     def process_climate(self):
@@ -465,12 +474,12 @@ class Climate():
         UK-ESM deposition data to MERRA-2.
         """
         params = self.params
-        reg = self.params.rgi_id[:2]
-        reg_fn = params.ukesm_merra_laps_fn.format(r=reg)
+        reg = str(self.params.rgi_region).zfill(2)
+        lap_fn = params.ukesm_merra_laps_fn
 
         for species in ['bc','oc']:
             for deptype in ['wet','dry']:
-                fn = reg_fn.format(sp=species, t=deptype)
+                fn = lap_fn.format(r=reg, sp=species, t=deptype)
                 
                 # open ratio dataset
                 ds_bc = xr.open_dataarray(params.climate_fp + fn)
@@ -479,8 +488,10 @@ class Climate():
                 ratio = ds_bc.sel(lat=self.point_lats, 
                                   lon=self.point_lons, method='nearest').values
 
-                # apply to climate dataset
-                self.cds[species+deptype] *= ratio 
+                # apply to data
+                data = getattr(self, species+deptype)
+                data *= ratio[:, None]
+                setattr(self, species+deptype, data)
 
                 # close the dataset
                 ds_bc.close()
@@ -552,8 +563,8 @@ class Climate():
             temp_elev = self.aws_elev if 'temp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format temp and point elev as (, n) arrays
-        self.temp_elev = temp_elev[:, np.newaxis]
-        point_elev = self.terrain.elev_n[:, np.newaxis]
+        self.temp_elev = temp_elev[:, None]
+        point_elev = self.terrain.elev_n[:, None]
 
         # apply lapse rate
         new_temp = self.original_temp + lapse_rate*(point_elev - self.temp_elev)
@@ -571,8 +582,8 @@ class Climate():
         prec_grad = self.params.precgrad
 
         # format tp and point elev as (, n) arrays
-        tp_elev = self.terrain.median_elev_n[:, np.newaxis]
-        point_elev = self.terrain.elev_n[:, np.newaxis]
+        tp_elev = self.terrain.median_elev_n[:, None]
+        point_elev = self.terrain.elev_n[:, None]
 
         # apply precipitation gradient
         new_tp = self.original_tp*(1+prec_grad*(point_elev-tp_elev))
@@ -596,8 +607,8 @@ class Climate():
         sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
 
         # format sp and point elev as (, n) arrays
-        sp_elev = sp_elev[:, np.newaxis]
-        point_elev = self.terrain.elev_n[:, np.newaxis]
+        sp_elev = sp_elev[:, None]
+        point_elev = self.terrain.elev_n[:, None]
 
         # adjust temperature from elevation of the site to elevation of the sp data
         new_temp = self.temp.copy()
@@ -640,7 +651,7 @@ class Climate():
         # get elevation of longwave data
         LW_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
         if type(temp_LW_elev) == bool and not temp_LW_elev:
-            temp_LW_elev = temp_site + lapse_rate*(LW_elev - self.terrain.elev_n)[:, np.newaxis]
+            temp_LW_elev = temp_site + lapse_rate*(LW_elev - self.terrain.elev_n)[:, None]
 
         # store temperature in Kelvin
         temp_site_K = temp_site + CTOK

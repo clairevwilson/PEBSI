@@ -8,7 +8,6 @@ refreezing,and percolation.
 # External libraries
 import jax
 import jax.numpy as jnp
-from jax.debug import print as jax_print
 # Local libraries
 import util.layers as layers
 import pebsi.albedo as albedo
@@ -223,13 +222,13 @@ class MassBalanceDriver:
         DENSITY_WATER = self.params.density_water
 
         # define rain vs snow scaling 
-        rain_scale = jnp.linspace(0,1,20)
-        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW,SNOW_THRESHOLD_HIGH,20)
+        rain_scale = jnp.linspace(0, 1, 20)
+        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW, SNOW_THRESHOLD_HIGH, 20)
 
         # calculate fraction of rain
         fraction_rain = jnp.interp(forcings.tempC, temp_scale, rain_scale)
         rain = forcings.tp * fraction_rain * DENSITY_WATER 
-        snow = forcings.tp*(1-fraction_rain)*DENSITY_WATER
+        snow = forcings.tp * (1-fraction_rain) * DENSITY_WATER
 
         # make sure amounts to the boundaries correctly
         rain = jnp.where(forcings.tempC <= SNOW_THRESHOLD_LOW, 0, rain)
@@ -345,7 +344,7 @@ class MassBalanceDriver:
         
         # update layer depth from new layer heights
         state = layers.update_layer_props(state, params.density_ice)     
-
+        
         # return actual snowfall that was added, including any delayed_snow
         return actual_snowfall, state
 
@@ -1232,7 +1231,7 @@ class MassBalanceDriver:
                 [airtemp <= -30, airtemp < 0],
                 [54.5, 54.5 + 5 * (airtemp + 30)],
                 default=204.5
-            )[:, jnp.newaxis]
+            )[:, None]
 
         # define snow, firn and ice masks 
         snow_mask = state.snow_mask 
