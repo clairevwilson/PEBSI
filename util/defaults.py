@@ -105,11 +105,10 @@ end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulati
 temporal_chunks = 8760                      # Number of chunks to split up simulation into
 
 # SPATIAL 
-bin_step = 100                              # Elevation between bins
 n_points = 6                                # Number of points to divide domain into
 
 # WEATHER STATION
-aws_elev = None                             # Same as station_elevation but can be overwritten in config
+aws_elev = None                             # Elevation of the weather station [m a.s.l.]
 
 # CLIMATE DATA
 climate_source = 'MERRA2'                   # 'MERRA2'
@@ -299,6 +298,6 @@ merra_lat_res = 0.5         # Resolution of MERRA-2 latitudinally [deg]
 merra_lon_res = 0.625       # Resolution of MERRA-2 longitudinally [deg]
 # <<<<<< End-of-summer >>>>>
 start_end_summer = 228      # Julian day of year to start checking for end of summer (snow -> firn)
-new_snow_threshold = 0.02   # Threshold for new snow to consider the start of winter [m w.e.]
+new_snow_threshold = 50     # Threshold for new snow to consider the start of winter [kg m-2 = mm w.e.]
 new_snow_days = 10          # Number of days to sum snow over and compare against threshold [d]
 firn_age = 60               # Number of days old a snow layer has to be to turn it into firn [d]

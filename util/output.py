@@ -261,9 +261,8 @@ class Output():
         re_str = ''
         if params.use_aws:
             measured = climate.measured_vars
-            AWS_name = params.glac_name
-            AWS_elev = climate.aws_elev
-            which_AWS = f'{AWS_name} {AWS_elev}'
+            which_AWS = params.aws_fn
+            AWS_elev = f'{params.aws_elev:.1f} m a.s.l.'
             AWS_str = ', '.join(measured)
             re_vars = [e for e in climate.all_vars if e not in measured]
             if 'vwind' in re_vars and not 'uwind' in re_vars:
@@ -274,6 +273,7 @@ class Output():
         else:
             re_str += 'all'
             AWS_str = 'none'
+            AWS_elev = '-'
             which_AWS = 'none'
         
         # get information about bias correction
@@ -301,6 +301,7 @@ class Output():
                 lon=lon,
                 from_AWS=AWS_str,
                 which_AWS=which_AWS,
+                elev_AWS=AWS_elev,
                 from_reanalysis=re_str,
                 which_reanalysis=which_re,
                 bias_corrected=corr_str,

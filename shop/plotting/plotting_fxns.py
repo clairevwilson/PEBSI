@@ -228,7 +228,7 @@ def dh_vs_stake(stake_df,ds_list,time,labels=['Model'],t='Surface Height Change 
         time = pd.date_range(start,end,freq='h')
         days = pd.date_range(start,end,freq='d')
 
-    stake_df = stake_df.loc[days-pd.Timedelta(minutes=30)]
+    stake_df = stake_df.loc[slice(days[0], days[-1])] # -pd.Timedelta(minutes=30)]
     stake_df['CMB'] -= stake_df['CMB'].iloc[0]
     for i,ds in enumerate(ds_list):
         c = plt.cm.Dark2(i)
@@ -1205,8 +1205,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
                 # vardata = vardata / (height * dens_flip)* 100
             if var in ['layerrefreeze']:
                 vardata = vardata / (dens_flip * height) * 100
-            if var in ['layerage']:
-                vardata = (step - pd.to_datetime(vardata)).days
+
             # if plot_ice:
             #     height = np.log(height)
 
@@ -1231,7 +1230,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
                 elif not first:
                     first = step
                 color = get_color(data,bounds,ctype)
-                if 'density' in var and data > 800:
+                if 'density' in var and data > 899:
                     color = '0.1'
                 ax.bar(step,dh, bottom=bottom, width=diff, color=color,linewidth=0.5,edgecolor='none')
                 bottom += dh  # Update bottom for the next set of bars

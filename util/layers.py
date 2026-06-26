@@ -236,7 +236,7 @@ class Layers():
         
         # ===== AGE [days] =====
         firn_mask_int = self.firn_mask.astype(int)
-        lage = np.cumsum(firn_mask_int, axis=1) * -365
+        lage = np.cumsum(firn_mask_int, axis=1) * 365
 
         # firn ages count back in time; snow/ice initialized at 0
         lage = np.where(self.ltype >= 1, lage, 0.0)
@@ -858,21 +858,33 @@ def check_layer_sizes(state, params):
     properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
     state = state._replace(**properties)
 
+    layer_indices = jnp.arange(n_layers)
+    curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
+    min_height_by_depth = jnp.maximum(curve_snow / 2, params.min_dz)
+
     # define function to scan for layers to merge
     def _scan_layers(current_state, idx):
         # always fetch the most up-to-date heights and types from evolving state
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
         next_type = current_state.ltype[:, idx + 1]
+
+        # determine if layer is too thin for its position
+        is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
+        is_thin_any = (dz < params.min_dz)
         
         # determine which spatial columns need a merge at this specific vertical index
-        is_too_thin = dz < params.min_dz
         is_snow = curr_type == 0
         type_matches_below = curr_type == next_type
-        force_small_snow = (curr_type == 0) & (next_type > 0)
+        force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
         
         # build the boolean merge mask (N_POINTS)
-        merge_mask = is_too_thin & (~is_snow | type_matches_below | force_small_snow)
+        # firn / ice layers only merge if they are below min_dz
+        any_merge = is_thin_any & ~is_snow
+        # snow layers merge if there is snow beneath; or if they are very small
+        snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
+
+        merge_mask = any_merge | snow_merge
 
         # merge layers, if there are layers to merge
         next_state = merge_existing_layers(current_state, merge_mask, idx, params)

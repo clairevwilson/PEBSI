@@ -59,8 +59,9 @@ class Climate():
             self.measured_vars = []
             self.need_vars = self.all_vars.copy()
         else:
-            assert ~self.params.use_aws, 'PEBSI is currently not set up to support AWS data'
-            pass
+            self.measured_vars = []
+            self.need_vars = []
+            self.get_aws()
         return
     
     def get_spatial_temporal_info(self, dates):
@@ -68,81 +69,76 @@ class Climate():
         Loads metadata about the points and 
         dates in the simulation.
         """
-        self.dates = pd.to_datetime(dates)
-
-        # input dates are UTC; store directly
-        self.dates_UTC = self.dates.to_numpy()
+        self.dates = pd.to_datetime(dates).to_numpy()
             
         # specify spatial and temporal information
         self.N_TIME = len(self.dates)
         self.shape = (self.terrain.N_POINTS, self.N_TIME)
         return
     
-    # def get_aws(self,fp):
-    #     """
-    #     Loads available AWS data and determines which
-    #     variables need come from reanalysis data.
+    def get_aws(self):
+        """
+        Loads available AWS data and determines which
+        variables need come from reanalysis data.
 
-    #     Parameters
-    #     ==========
-    #     fp : str
-    #         Filepath to the AWS dataset
-    #     """
-    #     # load data
-    #     df = pd.read_csv(fp,index_col=0)
-    #     df = df.set_index(pd.to_datetime(df.index))
+        All variables present in the AWS .csv are broadcast
+        across all simulation points (same value everywhere).
+        AWS variables are then elevation adjusted using
+        self.aws_elev.
+        """
+        # load data
+        df = pd.read_csv(self.params.aws_fn, index_col=0, parse_dates=True)
 
-    #     # check dates of data match input dates
-    #     data_start = pd.to_datetime(df.index.to_numpy()[0])
-    #     data_end = pd.to_datetime(df.index.to_numpy()[-1])
-    #     assert self.dates[0] >= data_start, f'Check input dates: start date before range of AWS data ({data_start})'
-    #     assert self.dates[len(self.dates)-1] <= data_end, f'Check input dates: end date after range of AWS data ({data_end})'
-        
-    #     # reindex in case of MERRA-2 half-hour timesteps
-    #     new_index = pd.DatetimeIndex(self.dates)
-    #     index_joined = df.index.join(new_index, how='outer')
-    #     df = df.reindex(index=index_joined).interpolate().reindex(new_index)
+        # check dates of data match input dates
+        data_start = pd.to_datetime(df.index.to_numpy()[0])
+        data_end = pd.to_datetime(df.index.to_numpy()[-1])
+        assert self.dates[0] >= data_start, \
+            f'Check input dates: start date before range of AWS data ({data_start})'
+        assert self.dates[len(self.dates)-1] <= data_end, \
+            f'Check input dates: end date after range of AWS data ({data_end})'
+        df = df.loc[self.dates]
 
-    #     # get AWS elevation
-    #     if self.params.aws_elev is not None:
-    #         self.aws_elev = self.params.aws_elev
+        # store AWS elevation as a (N_POINTS,) array for elevation adjustment methods
+        assert self.params.aws_elev is not None, 'aws_elev must be set in config when use_aws=True'
+        self.aws_elev = np.full(self.terrain.N_POINTS, self.params.aws_elev)
 
-    #     # get the available variables
-    #     all_aws_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','SWout','albedo',
-    #                     'NR','LWin','LWout','bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
-    #     aws_vars = df.columns
-    #     self.measured_vars = list(set(all_aws_vars) & set(aws_vars))
+        # get the available variables (intersection of data columns and known model vars)
+        all_aws_vars = self.all_vars + self.optional_vars
+        aws_vars = df.columns
+        self.measured_vars = list(set(all_aws_vars) & set(aws_vars))
 
-    #     # check if wind direction can be calculated
-    #     uwind_measured = 'uwind' in aws_vars
-    #     vwind_measured = 'vwind' in aws_vars
-    #     if uwind_measured ^ vwind_measured:
-    #         self.wind_direction = False
-    #         # print('! Wind speed was input as a scalar. Wind shading is not handled')
-    #     else:
-    #         self.wind_direction = True
-        
-    #     # extract and store data
-    #     for var in self.measured_vars:
-    #         self.cds[var].values = df[var].astype(float)
+        # check if wind direction can be calculated from u/v components
+        uwind_measured = 'uwind' in aws_vars
+        vwind_measured = 'vwind' in aws_vars
+        if uwind_measured ^ vwind_measured:
+            self.wind_direction = False
+        else:
+            self.wind_direction = True
 
-    #     # determine which data variables are still needed from reanalysis
-    #     need_vars = [e for e in self.all_vars if e not in aws_vars]
+        # broadcast each AWS time series to (N_POINTS, N_TIME)
+        for var in self.measured_vars:
+            time_series = df[var].astype(float).values               # (N_TIME,)
+            data = np.tile(time_series, (self.terrain.N_POINTS, 1))  # (N_POINTS, N_TIME)
+            setattr(self, var, data)
 
-    #     # if net radiation was measured, don't need LWin
-    #     if 'NR' in self.measured_vars:
-    #         need_vars.remove('LWin')
+        # determine which variables are still needed from reanalysis
+        need_vars = [e for e in self.all_vars if e not in aws_vars]
 
-    #     # if wind was input as a scalar, don't need the other direction of wind
-    #     if not self.wind_direction:
-    #         if uwind_measured:
-    #             self.cds['vwind'].values = np.zeros(self.n_time)
-    #             need_vars.remove('vwind')
-    #         elif vwind_measured:
-    #             self.cds['uwind'].values = np.zeros(self.n_time)
-    #             need_vars.remove('uwind')
-    #     self.need_vars = need_vars
-    #     return need_vars
+        # if net radiation was measured, don't need LWin
+        if 'NR' in self.measured_vars:
+            need_vars.remove('LWin')
+
+        # if wind was input as a scalar, fill the missing component with zeros
+        if not self.wind_direction:
+            if uwind_measured:
+                self.vwind = np.zeros(self.shape)
+                need_vars.remove('vwind')
+            elif vwind_measured:
+                self.uwind = np.zeros(self.shape)
+                need_vars.remove('uwind')
+
+        self.need_vars = need_vars
+        return need_vars
     
     def get_data(self):
         """
@@ -179,7 +175,7 @@ class Climate():
         Loads reanalysis data for a single variable.
         """
         # get dates
-        dates = self.dates_UTC
+        dates = self.dates
         params = self.params
 
         # special check for RH: must be calculated from QV
@@ -265,10 +261,12 @@ class Climate():
         data_array[:] = da_sliced.transpose('point', 'time').values
 
         # make sure the correct grid cells were accessed
-        assert np.all(np.abs(da_sliced.coords[lat_vn].values - self.point_lats.values) <= lat_res), \
-            'Wrong grid cell was accessed: check climate data covers the whole region'
-        assert np.all(np.abs(da_sliced.coords[lon_vn].values - self.point_lons.values) <= lon_res), \
-            'Wrong grid cell was accessed: check climate data covers the whole region'
+        lat_check = np.all(np.abs(da_sliced.coords[lat_vn].values - self.point_lats.values) <= lat_res)
+        lon_check = np.all(np.abs(da_sliced.coords[lon_vn].values - self.point_lons.values) <= lon_res)
+        bbox = (self.point_lats.min().values, self.point_lats.max().values,
+                self.point_lons.min().values, self.point_lons.max().values)
+        assert lat_check & lon_check, \
+            f'Wrong grid cell was accessed: climate data may not cover whole region ({bbox})'
 
         # store result
         setattr(self, var, data_array.astype(np.float64))
@@ -296,14 +294,13 @@ class Climate():
 
         # bias correction
         if params.climate_source == 'MERRA2':
+            # do not adjust variables that were measured
             self.bias_vars = [v for v in self.params.bias_vars if v not in self.measured_vars]
             if self.params.debug and len(self.bias_vars) > 0:
                 print('~ Applying quantile mapping for:',self.bias_vars)
+
             for var in self.bias_vars:
-                # only correct variables loaded from MERRA-2
-                from_MERRA = True if not self.params.use_aws else var in self.need_vars
-                if from_MERRA:
-                    self.bias_adjust_qm(var)
+                self.bias_adjust_qm(var)
         
         # apply coefficients to adjust deposition
         if not params.deposition_data:
@@ -319,15 +316,24 @@ class Climate():
         # apply parameters (precipitation / wind / dust factors)
         self.apply_parameters()
 
-        # check all variables are full
+        # apply elevation correction
+        self.adjust_to_elevation()
+
+        # check all required variables are full
         failed = []
-        for var in self.all_vars + self.optional_vars:
-            if not hasattr(self, var ) and var in self.optional_vars:
-                setattr(self, var, np.full(self.shape, np.nan))
-                continue
+        for var in self.all_vars:
             data = getattr(self, var)
             if np.any(np.isnan(data)) or data.shape != self.shape:
                 failed.append(var)
+
+        # optional variables: fill with NaN if absent or invalid
+        for var in self.optional_vars:
+            if not hasattr(self, var):
+                setattr(self, var, np.full(self.shape, np.nan))
+            else:
+                data = getattr(self, var)
+                if data.shape != self.shape:
+                    setattr(self, var, np.full(self.shape, np.nan))
 
         # can input net radiation instead of incoming LW radiation
         if 'LWin' in failed and 'NR' in self.measured_vars:

@@ -165,10 +165,14 @@ class MassBalanceDriver:
         # update grain sizes
         new_grainsize = self.evolve_grain_size(state, forcings)
 
+        # update age 
+        new_age = state.lage + 1
+
         # store updated properties to state
         state = state._replace(
             lgrainsize = new_grainsize,
-            roughness = new_roughness
+            roughness = new_roughness,
+            lage = new_age
         )
         return state, water_squeezed_out
 
@@ -417,7 +421,7 @@ class MassBalanceDriver:
         # only update the properties requested based on hour of day
         updated_albedo = jnp.where(is_albedo_step, new_albedo, state.albedo)
         updated_min_albedo = jnp.where(
-            is_albedo_step, new_annual_min_albedo, state.annual_min_albedo
+            is_albedo_step[:, None], new_annual_min_albedo, state.annual_min_albedo
         )
         new_albedo_surr = jnp.where(
             is_day_start, new_albedo_surr, state.albedo_surr
@@ -548,6 +552,10 @@ class MassBalanceDriver:
         properties['lice'] = jnp.transpose(out_lice)
         properties['lwater'] = jnp.transpose(out_lwater)
         properties['ltemp'] = jnp.transpose(out_ltemp)
+
+        # shrink layer height to reflect lost ice mass
+        safe_density = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+        properties['lheight'] = properties['lice'] / safe_density
 
         # store the mass in the layers that are about to be deleted
         fully_melted_mask = properties['lice'] <= params.min_layer_mass

@@ -217,11 +217,8 @@ class PEBSI():
         climate = Climate(dates, params, self.terrain)
         climate.get_data()
 
-        # process the dataset for elevation, bias, etc.
+        # process the dataset for bias, elevation, etc.
         climate.process_climate()
-
-        # adjust elevation-dependent variables
-        climate.adjust_to_elevation()
         self.climate = climate
         
         # define conversion factors 
@@ -281,9 +278,8 @@ class PEBSI():
         """
         Executes model functions and stores the
         output data. The main() function is run in
-        chunks so JAX only has to recompile at most
-        two times (once for the main temporal_chunks
-        size, and once for the remainder.)
+        chunks so JAX only has to compile once and
+        to use an appropriate amount of RAM/VRAM.
         """
         static_args = self.config.static_args
         dynamic_args = self.config.dynamic_args 
