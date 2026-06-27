@@ -621,9 +621,10 @@ class Terrain:
             ds.close()
 
         self.sky_view_factor = sky_view_factor
-        self.solar_zenith = zenith 
+        self.solar_zenith = zenith
         self.solar_azimuth = azimuth
         self.shadow_mask = masks.astype(bool)
+        self.shading_dates = dates
         return
 
     def validate_terrain_data(self):

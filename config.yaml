@@ -9,7 +9,7 @@
 #               SIMULATION METADATA
 # ================================================
 store_data: false
-debug: true
+debug: false 
 output_fp: '../Output/test_simulation/'
 climate_fp: '/Volumes/TOSHIBA EXT/climate_data/' # '/run/media/claire/TOSHIBA EXT/'
 start_date: '2024-04-24 00:00'

@@ -10,14 +10,17 @@ and runs the main() function.
 # Built-in libraries
 import os
 import argparse
+import itertools
+import threading
 import time
 import warnings
 # External libraries
-import jax 
+import jax
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 import netCDF4
+from tqdm import tqdm
 # Internal libraries
 import util.defaults as defaults
 from util.config import *
@@ -106,8 +109,8 @@ class PEBSI():
         inputs to the model.
         """
         params = self.params
-        all_dates_local = pd.date_range(params.start_date, params.end_date, freq='h')
-        self.dates = all_dates_local
+        all_dates_UTC = pd.date_range(params.start_date, params.end_date, freq='h')
+        self.dates = all_dates_UTC
 
         # =========== SPATIAL DATA HANDLING ===========
         terrain = Terrain(params)
@@ -119,9 +122,13 @@ class PEBSI():
         terrain.validate_terrain_data()
 
         # ================== SHADING ==================
-        terrain.load_shading(all_dates_local)
+        # grab one full year of shading data for indexing
+        year_end = self.dates[0] + pd.Timedelta(days=366)
+        terrain.load_shading(
+            pd.date_range(self.dates[0], year_end, freq='h')
+        )
 
-        self.terrain = terrain 
+        self.terrain = terrain
         return
     
     def prepare_initial_state(self):
@@ -225,8 +232,8 @@ class PEBSI():
         CTOK = self.params.celsius_to_kelvin
         SPH = self.params.seconds_per_hour
 
-        # slice solar inputs from terrain
-        date_mask = self.dates.isin(dates)
+        # slice solar inputs from terrain by matching (dayofyear, hour)
+        date_mask = self.terrain.shading_dates.isin(dates)
         shadow_mask = self.terrain.shadow_mask[:, date_mask]
         solar_azimuth = self.terrain.solar_azimuth[:, date_mask]
         solar_zenith = self.terrain.solar_zenith[:, date_mask]
@@ -274,77 +281,105 @@ class PEBSI():
 
         return forcings
     
+    def _run_chunk(self, state, point_attrs, static_args, dynamic_args, chunk_dates, start):
+        """
+        Packs forcings for one temporal chunk, runs main(), and returns
+        the updated state and trimmed output records.
+        """
+        chunk_size = self.params.temporal_chunks
+        actual_length = len(chunk_dates)
+
+        chunk_forcings = self.pack_forcings(self.params, chunk_dates, start)
+
+        if actual_length < chunk_size:
+            pad_amt = chunk_size - actual_length
+            chunk_forcings = jax.tree.map(
+                lambda x: jnp.pad(x, ((0, pad_amt),) + ((0, 0),) * (x.ndim - 1)),
+                chunk_forcings
+            )
+
+        state, chunk_records = main(state, chunk_forcings, point_attrs, static_args, dynamic_args)
+        jax.effects_barrier()
+
+        if actual_length < chunk_size:
+            chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
+
+        return state, chunk_records
+
     def run(self):
         """
-        Executes model functions and stores the
-        output data. The main() function is run in
-        chunks so JAX only has to compile once and
-        to use an appropriate amount of RAM/VRAM.
+        Executes model functions and stores the output data.
+        Runs a one-year spin-up before the main loop to allow
+        initialization to stabilize; spin-up output is discarded.
+        The main() function is chunked so JAX compiles once and
+        memory use stays bounded.
         """
         static_args = self.config.static_args
-        dynamic_args = self.config.dynamic_args 
+        dynamic_args = self.config.dynamic_args
         params = self.config.params
 
-        # ========== INITIALIZE THE INPUTS ==========
         self.prepare_spatial_inputs()
         self.prepare_initial_state()
         initial_state, point_attrs = self.pack_states()
 
-        # ========== INITIALIZE THE OUTPUTS ==========
         model_output = Output(params, self.terrain)
         self.start_print()
 
-        # ======= LOOP THROUGH TEMPORAL CHUNKS ========
-        total_steps = len(self.dates)
-        state = initial_state
         chunk_size = params.temporal_chunks
+
+        # ========== SPIN-UP ==========
+        spinup_dates = pd.date_range(
+            self.dates[0], self.dates[0] + pd.Timedelta(days=365), freq='h'
+        )
+        spinup_steps = range(0, len(spinup_dates), chunk_size)
+        dots = ['.  ', '.. ', '...', '   ']
+
+        state = initial_state
+        print('~ Spinning up ', end='', flush=True)
+        for i, start in enumerate(spinup_steps):
+            chunk_dates = spinup_dates[start:start + chunk_size]
+            state, _ = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
+            print(f'\r~ Spinning up {dots[i % len(dots)]}', end='', flush=True)
+        print(f'\r~ Spin-up complete ({time.time() - self.start_time:.0f} s elapsed)   ')
+
+        # reset annual trackers: spin-up and year 0 are the same calendar year
+        state = state._replace(
+            annual_min_albedo=jnp.ones_like(state.annual_min_albedo),
+            annual_firn_converted=jnp.zeros_like(state.annual_firn_converted),
+        )
+
+        # ========== MAIN LOOP ==========
+        total_steps = len(self.dates)
         total_chunks = (total_steps + chunk_size - 1) // chunk_size
+        chunk_iter = tqdm(
+            range(0, total_steps, chunk_size),
+            desc='~ Simulating',
+            unit='chunk',
+            disable=not params.progress_bar,
+        )
 
-        for start in range(0, total_steps, chunk_size):
-            # crop dates to this subset
-            end = min(start + chunk_size, total_steps)
-            actual_length = end - start 
-            chunk_dates = self.dates[start:end]
+        for start in chunk_iter:
+            chunk_dates = self.dates[start:start + chunk_size]
+            chunk_start = time.time()
 
-            # load the climate data for these dates
-            chunk_forcings = self.pack_forcings(params, chunk_dates, start)
-           
-           # pad the forcings so the shape matches temporal_chunks
-            if actual_length < chunk_size:
-                pad_amt = chunk_size - actual_length
-                chunk_forcings = jax.tree.map(
-                    lambda x: jnp.pad(x, ((0, pad_amt),) + ((0, 0),) * (x.ndim - 1)), 
-                    chunk_forcings
-                )
+            state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
 
-            # ===== RUN ENERGY BALANCE MODEL =====
-            chunk_start = time.time() # timer for one chunk
+            elapsed = time.time() - chunk_start
+            if params.progress_bar:
+                chunk_iter.set_postfix(chunk_t=f'{elapsed:.1f}s')
+            elif params.debug:
+                chunk_num = start // chunk_size + 1
+                print(f'. . . chunk {chunk_num}/{total_chunks} in {elapsed:.1f}s')
 
-            state, chunk_records = main(
-                state, chunk_forcings, point_attrs, static_args, dynamic_args
-            )
-
-            jax.effects_barrier()
-            if params.debug:
-                print(f'. . . chunk {int(start / chunk_size + 1)} / {total_chunks} in {time.time() - chunk_start:.1f} s')
-        
-            # remove the padded garbage
-            if actual_length < chunk_size:
-                chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
-
-            # store this chunk (append it onto the zarr dataset)
             if params.store_data:
                 model_output.store_chunk(chunk_records, chunk_dates, start)
 
-            # clear chunk records from RAM
             del chunk_records
 
-        # ============== END TIMER ===============
         time_elapsed = time.time() - self.start_time
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
         print(f'~ Simulation completed in {time_elapsed:.2f} seconds ~')
 
-        # ============ STORE OUTPUT ==============
         if self.params.store_data:
             model_output.close_out(params, time_elapsed, self.climate)
         else:
