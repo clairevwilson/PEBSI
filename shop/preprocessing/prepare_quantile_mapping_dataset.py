@@ -8,13 +8,18 @@ import os
 import pandas as pd
 import numpy as np
 import xarray as xr
+import matplotlib.pyplot as plt
+
+plot_quantiles = True
 
 # ========= WEATHER STATION INFO =========
 master_dict = {
+    # WESTERN ALASKA
     'kahiltna': {
         1: {'lat': 62.94225, 'lon':-151.29205, 'elev':2380, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
             'variables': {'wind': 'm s-1', 'temp':'C'}},
     },
+    # EASTERN ALASKA
     'gulkana': {
         1: {'lat':63.28180, 'lon':-145.42631, 'elev':1725, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
             'variables': {'SWin': 'W m-2','LWin': 'W m-2','temp':'C','rh':'%'}},
@@ -22,15 +27,40 @@ master_dict = {
             'fn': '../../../climate_data/AWS/Processed/gulkana/gulkana2024.csv'},
         # 3: {'lat':63.26137, 'lon':-145.41021, 'elev':1480, 'time_col':'UTC_time', 'timezone':0, 'variables': {'temp': 'C','wind': 'm s-1'}}, 
     },
+    # KENAI
     'wolverine': {
         1: {'lat':60.38192, 'lon':-148.93966, 'elev':990, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
-            'variables': {'temp': 'C','wind': 'm s-1','rh': '%','sp': 'hPa'}},
+            'variables': {'temp': 'C','wind': 'm s-1','rh': '%','sp': 'kPa'}},
         2: {'lat':60.39486, 'lon':-148.94524, 'elev':1420, 'time_col':'local_time', 'timezone':-8, 'type': 'benchmark',
             'variables': {'SWin': 'W m-2'}},
     },
+    # COASTAL
     'lemon_creek':{
         1: {'lat':58.36756, 'lon':-134.36627, 'elev':1280, 'time_col':'local_time', 'timezone':-8, 'type': 'benchmark',
-            'variables': {'temp': 'C','rh': '%','sp': 'hPa'}},
+            'variables': {'temp': 'C','rh': '%','sp': 'kPa'}},
+    },
+    # ST ELIAS
+    'kaskawulsh':{
+        1: {'lat': 60.7421, 'lon': -139.1659, 'elev': 1800, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '-', 
+            'variables': {'temp': 'C', 'wind': 'm s-1', 'SWin': 'W m-2', 'LWin': 'W m-2', 'rh': '%', 'sp': 'mbar'},
+            'fn': '../../../climate_data/AWS/Raw/kaskawulsh/preprocessed_2019.csv'},
+    },
+    'lowell':{
+        1: {'lat': 60.30271, 'lon': -138.57565, 'elev': 1419, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '', 
+            'variables': {'temp': 'C', 'rh': '%'},
+            'fn': '../../../climate_data/AWS/Raw/lowell/preprocessed_all.csv'}
+    },
+    # WRANGELLS
+    'gates':{
+        1: {'lat': 61.6029, 'lon': -143.0132, 'elev': 1237, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '', 
+            'variables': {'temp': 'C', 'wind': 'm s-1', 'rh': '%', 'SWin': 'W m-2'},
+            'fn': '../../../climate_data/AWS/Raw/gates/preprocessed_all.csv'}
+    },
+    # BROOKS (McCALL)
+    # TALKEETNA (? - don't think there's nay here, but there ARE high elevation stations))
+
+    'dummy':{
+        1: {'lat': 0, 'lon': 0, 'elev': 0, 'time_col':'', 'timezone':0, 'type': '', 'variables': {'temp': 'C'}}
     }
 }
 
@@ -43,12 +73,12 @@ benchmark_var_names = {'temp': 'site_temp_USGS',
                        'wind': 'WindSpeed', 
                        'sp': 'Barom'}
 
-merra2_fn = '/Volumes/TOSHIBA EXT/MERRA2/reg01/{v}_reg01.zarr'
+merra2_fn = '/Volumes/TOSHIBA EXT/climate_data/MERRA2/reg01/{v}_reg01.zarr'
 merra2_var_names = {'temp': 'T2M','rh': 'RH2M',
                     'SWin': 'SWGDN', 'LWin': 'LWGAB',
                     'wind': 'U2M', 'sp': 'PS',}
 
-general_var_names = {'temp': 'temp', 'wind': 'uwind'}
+general_var_names = {'temp': 'Temperature', 'sp': 'Pressure', 'wind': 'uwind'}
 
 expected_units = {'temp':'C', 'wind': 'm s-1', 'SWin': 'J m-2', 'LWin': 'J m-2', 'rh': '%', 'sp': 'Pa'}
 
@@ -65,8 +95,10 @@ def MERRA2_unit_conversion(data, units_in, units_out):
 def AWS_unit_conversion(data, units_in, units_out):
     if units_in == 'W m-2':
         return data * 3600
-    elif units_in == 'hPa':
+    elif units_in in ['hPa', 'mbar']:
         return data * 100
+    elif units_in == 'kPa':
+        return data * 1000
     elif units_in != units_out:
         print(f'Warning! Units of AWS data may not be consistent. Input was {units_in}')
     return data
@@ -75,6 +107,7 @@ storage = []
 quantiles = np.linspace(0, 1, 1000) # break data into 1000 quantiles 
 
 for glacier, stations in master_dict.items():
+    if glacier == 'dummy': continue
     for _, data in stations.items():
         lat = data['lat']
         lon = data['lon']
@@ -112,6 +145,12 @@ for glacier, stations in master_dict.items():
             var_merra = merra2_var_names[var]
             if station_type == 'benchmark':
                 var_aws = benchmark_var_names[var]
+            elif var in df.columns:
+                var_aws = var 
+            elif var.capitalize() in df.columns:
+                var_aws = var.capitalize()
+            elif var.upper() in df.columns:
+                var_aws = var.upper()
             else:
                 var_aws = general_var_names[var]
 
@@ -152,13 +191,30 @@ for glacier, stations in master_dict.items():
             # handle SW data differently: remove zeros 
             if var == 'SWin':
                 # mask anything that is effectively zero
-                nonzero_mask = ((values_aws > 5) & (values_merra > 5))
+                nonzero_mask = ((values_aws > 100) & (values_merra > 100))
                 values_aws = values_aws[nonzero_mask]
                 values_merra = values_merra[nonzero_mask]
 
             # sort the data and store it in the dict
             quantiles_merra = np.quantile(values_merra, quantiles)
             quantiles_aws = np.quantile(values_aws, quantiles)
+
+            if plot_quantiles:
+                plt.figure(figsize=(3, 3))
+                min_val = np.min([values_merra, values_aws])
+                max_val = np.max([values_merra, values_aws])
+
+                plt.hist(quantiles_merra, bins=np.linspace(min_val, max_val, 50),
+                         histtype='step', edgecolor='r', label='MERRA-2')
+                plt.hist(quantiles_aws, bins=np.linspace(min_val, max_val, 50),
+                         histtype='step', edgecolor='k', label='AWS')
+                plt.legend()
+
+                plt.title(f"{glacier.replace('_', ' ').capitalize()} {var}")
+
+                os.makedirs('../../../figs/qm/', exist_ok=True)
+                plt.savefig(f'../../../figs/qm/{var}_{glacier}_hist.png', dpi=300, bbox_inches='tight')
+                plt.close()
 
             storage.append({
                 'glacier': glacier, 'elev': elevation, 'var': var,
@@ -189,4 +245,4 @@ for var in set(r['var'] for r in storage):
 
 # save each variable as a group
 for var, ds in ds_dict.items():
-    ds.to_netcdf('~/local/PEBSI/data/quantile_cdfs.nc', group=var, mode='w' if var == list(ds_dict)[0] else 'a')
+    ds.to_netcdf('../../data/quantile_cdfs.nc', group=var, mode='w' if var == list(ds_dict)[0] else 'a')
