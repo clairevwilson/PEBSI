@@ -62,15 +62,14 @@ shading_fn = '{gid}_shadows.zarr'                           # Shading data filen
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
-merra2_eg_fn = 'data/MERRA2constants.nc4'                   # Global file of MERRA-2 geopotential
 cds_input_fn = '{g}{s}_climate.nc'                          # Climate dataset filepath to load ++
 aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename
 
 # INITIAL CONDITIONS
-initial_temp_fn = 'data/sample_initial_temp.csv'            # Initial temperature profile filepath
-initial_density_fn = 'data/sample_initial_density.csv'      # Initial density profile filepath
-initial_grains_fn = 'data/sample_initial_grains.csv'        # Initial grain size profile filepath
-initial_LAP_fn = 'data/sample_initial_laps.csv'             # Initial LAP content
+initial_temp_fn = 'data/initial_temp_profile.csv'           # Initial temperature profile filepath
+initial_density_fn = 'data/initial_density_profile.csv'     # Initial density profile filepath
+initial_grains_fn = 'data/initial_grainsize_profile.csv'    # Initial grain size profile filepath
+initial_LAP_fn = 'data/initial_laps_profile.csv'            # Initial LAP content
 
 # SNICAR EMULATOR
 emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator filename
@@ -80,11 +79,10 @@ emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator fi
 #                            Don't edit these unless you have good reason to.
 # ====================================================================================================================
 
-# GLACIER
-metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename
-glac_fp = 'data/by_glacier/{g}/'                            # Generalized glacier filepath
-site_fn = 'site_constants.csv'                              # Name for site constants file
+# UTILITY
+metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
+compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
 
 # CLIMATE
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
@@ -93,9 +91,6 @@ ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition 
 ukesm_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
 bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment file name
 
-# UTILITY
-compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
-
 # ====================================================================================================================
 #                                            CLIMATE AND TIME INPUTS
 # ====================================================================================================================
@@ -103,6 +98,8 @@ compiled_path = '.compiled_main.pkl'                        # Path to store the 
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time in UTC
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time in UTC
 temporal_chunks = 8760                      # Number of chunks to split up simulation into
+                                            # chunk size should be close to divisible by 8760 for clean spin-up
+n_spinup_years = 1                          # Number of years to repeat forcings to spin-up the model
 
 # SPATIAL 
 n_points = 6                                # Number of points to divide domain into

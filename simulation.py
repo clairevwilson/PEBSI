@@ -89,6 +89,41 @@ def get_args(parse=True):
     else:
         return parser
 
+class _ChunkProgress:
+    """Interpolating tqdm progress bar for long JAX chunks.
+
+    Since JAX blocks Python for the entire chunk, a background thread
+    linearly extrapolates progress using the previous chunk's wall-clock
+    duration, snapping to the true value when each chunk completes.
+    """
+    def __init__(self, total, enabled, seed_duration):
+        self._enabled = enabled
+        self._done = threading.Event()
+        self._info = {'t0': time.time(), 'step0': 0, 'size': 1, 'duration': seed_duration}
+        self.pbar = tqdm(total=total, desc='~ Simulating', unit='step',
+                         miniters=0, mininterval=0, disable=not enabled)
+        if enabled:
+            threading.Thread(target=self._refresh, daemon=True).start()
+
+    def _refresh(self):
+        while not self._done.is_set():
+            frac = min((time.time() - self._info['t0']) / self._info['duration'], 0.99)
+            self.pbar.n = self._info['step0'] + int(frac * self._info['size'])
+            self.pbar.refresh()
+            self._done.wait(0.1)
+
+    def start_chunk(self, step0, size, duration):
+        self._info.update(t0=time.time(), step0=step0, size=size, duration=duration)
+
+    def finish_chunk(self, step0, actual_size):
+        self.pbar.n = step0 + actual_size
+        self.pbar.refresh()
+
+    def close(self):
+        self._done.set()
+        self.pbar.close()
+
+
 class PEBSI():
     def __init__(self, args):
         """
@@ -122,11 +157,7 @@ class PEBSI():
         terrain.validate_terrain_data()
 
         # ================== SHADING ==================
-        # grab one full year of shading data for indexing
-        year_end = self.dates[0] + pd.Timedelta(days=366)
-        terrain.load_shading(
-            pd.date_range(self.dates[0], year_end, freq='h')
-        )
+        terrain.load_shading()
 
         self.terrain = terrain
         return
@@ -232,11 +263,12 @@ class PEBSI():
         CTOK = self.params.celsius_to_kelvin
         SPH = self.params.seconds_per_hour
 
-        # slice solar inputs from terrain by matching (dayofyear, hour)
-        date_mask = self.terrain.shading_dates.isin(dates)
-        shadow_mask = self.terrain.shadow_mask[:, date_mask]
-        solar_azimuth = self.terrain.solar_azimuth[:, date_mask]
-        solar_zenith = self.terrain.solar_zenith[:, date_mask]
+        # slice solar inputs from terrain by (dayofyear, hour) — year-agnostic
+        shading_idx = [self.terrain.shading_lookup[(d, h)]
+                       for d, h in zip(dates.dayofyear, dates.hour)]
+        shadow_mask = self.terrain.shadow_mask[:, shading_idx]
+        solar_azimuth = self.terrain.solar_azimuth[:, shading_idx]
+        solar_zenith = self.terrain.solar_zenith[:, shading_idx]
 
         # ================== CLIMATE ==================
         # per-point local solar hour: (N_TIME, N_POINTS)
@@ -305,6 +337,64 @@ class PEBSI():
             chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
 
         return state, chunk_records
+    
+    def spinup(self, state, point_attrs):
+        """
+        Spins up the model for the user-prescribed duration
+        by repeating forcings beginning on the simulation 
+        start date. This minimizes the error from prescribed
+        initial conditions and if a long enough period is 
+        defined, can initialize firnpack in accumulation areas.
+        """
+        params = self.params
+        chunk_size = params.temporal_chunks
+
+        # round spin-up to nearest chunk_size multiple of n_spinup_years * 8760 hours
+        n_spinup_years = params.n_spinup_years
+        n_spinup_steps = max(chunk_size, round(n_spinup_years * 8760 / chunk_size) * chunk_size)
+        spinup_dates = pd.date_range(self.dates[0], periods=n_spinup_steps, freq='h')
+
+        # initialize spinup animation variables
+        n_spinup_chunks = n_spinup_steps // chunk_size
+        spinup_start = time.time()
+        spinup_done = threading.Event()
+        spinup_chunk = [0]  # list so the animation thread can read updates
+
+        def _spinup_animate():
+            """Spinner to indicate spinning-up in progress"""
+            frames = itertools.cycle(['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'])
+            while not spinup_done.is_set():
+                print(f'\r~ Spinning up {next(frames)} '
+                      f'({spinup_chunk[0]}/{n_spinup_chunks} chunks)',
+                      end='', flush=True)
+                spinup_done.wait(0.1)
+
+        # use threading to drive the animation
+        spinup_thread = threading.Thread(target=_spinup_animate, daemon=True)
+        spinup_thread.start()
+
+        # loop through temporal chunks for first year
+        for i, start in enumerate(range(0, len(spinup_dates), chunk_size)):
+            chunk_dates = spinup_dates[start:start + chunk_size]
+            state, _ = self._run_chunk(state, point_attrs, 
+                                       self.config.static_args, self.config.dynamic_args, 
+                                       chunk_dates, start)
+            spinup_chunk[0] = i + 1
+
+        # print final spinup timer
+        spinup_done.set()
+        spinup_thread.join()
+        self.spinup_time = time.time() - spinup_start
+        msg = f'~ Spun up and compiled in ({self.spinup_time:.1f} s) ~'
+        print(f'\r{msg:<70}')
+
+        # reset annual trackers: spin-up and year 0 are the same calendar year
+        state = state._replace(
+            annual_min_albedo=jnp.ones_like(state.annual_min_albedo),
+            annual_firn_converted=jnp.zeros_like(state.annual_firn_converted),
+        )
+         
+        return state
 
     def run(self):
         """
@@ -325,60 +415,37 @@ class PEBSI():
         model_output = Output(params, self.terrain)
         self.start_print()
 
-        chunk_size = params.temporal_chunks
-
         # ========== SPIN-UP ==========
-        spinup_dates = pd.date_range(
-            self.dates[0], self.dates[0] + pd.Timedelta(days=365), freq='h'
-        )
-        spinup_steps = range(0, len(spinup_dates), chunk_size)
-        dots = ['.  ', '.. ', '...', '   ']
-
-        state = initial_state
-        print('~ Spinning up ', end='', flush=True)
-        for i, start in enumerate(spinup_steps):
-            chunk_dates = spinup_dates[start:start + chunk_size]
-            state, _ = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
-            print(f'\r~ Spinning up {dots[i % len(dots)]}', end='', flush=True)
-        print(f'\r~ Spin-up complete ({time.time() - self.start_time:.0f} s elapsed)   ')
-
-        # reset annual trackers: spin-up and year 0 are the same calendar year
-        state = state._replace(
-            annual_min_albedo=jnp.ones_like(state.annual_min_albedo),
-            annual_firn_converted=jnp.zeros_like(state.annual_firn_converted),
-        )
+        state = self.spinup(initial_state, point_attrs)
 
         # ========== MAIN LOOP ==========
         total_steps = len(self.dates)
-        total_chunks = (total_steps + chunk_size - 1) // chunk_size
-        chunk_iter = tqdm(
-            range(0, total_steps, chunk_size),
-            desc='~ Simulating',
-            unit='chunk',
-            disable=not params.progress_bar,
-        )
+        chunk_size = params.temporal_chunks
 
-        for start in chunk_iter:
+        # seed duration estimate from spin-up (faster now because compiled)
+        prev_duration = self.spinup_time * 0.7
+        progress = _ChunkProgress(total_steps, params.progress_bar, prev_duration)
+
+        for start in range(0, total_steps, chunk_size):
             chunk_dates = self.dates[start:start + chunk_size]
+            actual_size = len(chunk_dates)
+
+            progress.start_chunk(start, actual_size, prev_duration)
             chunk_start = time.time()
 
             state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
 
-            elapsed = time.time() - chunk_start
-            if params.progress_bar:
-                chunk_iter.set_postfix(chunk_t=f'{elapsed:.1f}s')
-            elif params.debug:
-                chunk_num = start // chunk_size + 1
-                print(f'. . . chunk {chunk_num}/{total_chunks} in {elapsed:.1f}s')
-
+            prev_duration = time.time() - chunk_start
+            progress.finish_chunk(start, actual_size)
             if params.store_data:
                 model_output.store_chunk(chunk_records, chunk_dates, start)
-
             del chunk_records
+
+        progress.close()
 
         time_elapsed = time.time() - self.start_time
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print(f'~ Simulation completed in {time_elapsed:.2f} seconds ~')
+        print(f'~ Simulation completed in {time_elapsed:.1f} seconds ~')
 
         if self.params.store_data:
             model_output.close_out(params, time_elapsed, self.climate)

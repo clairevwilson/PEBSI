@@ -66,20 +66,19 @@ class Terrain:
             elevs, slopes, aspects = [], [], []
 
             metadata_fn = self.params.metadata_fn
-            metadata = pd.read_csv(metadata_fn, index_col=0,converters={0: str})
+            metadata = pd.read_csv(metadata_fn, dtype=str, index_col='rgiid')
             for gid, site in zip(self.params.rgi_ids, self.params.sites):
                 assert gid in metadata.index, \
-                    f'To index by site, glacier ID must be associated with name in glacier_metadata {gid}'
+                    f'To index by site, glacier ID must be associated with name in glacier_metadata ({gid})'
 
-                name = metadata.loc[gid, 'name']
-                site_fp = self.params.glac_fp.format(g=name)
-                df_sites = pd.read_csv(os.path.join(site_fp, self.params.site_fn), index_col=0)
+                gid_df = metadata.loc[gid]
+                gid_df = gid_df.set_index('site')
 
-                lats.append(df_sites.loc[site, 'lat'])
-                lons.append(df_sites.loc[site, 'lon'])
-                elevs.append(df_sites.loc[site, 'elevation'])
-                slopes.append(df_sites.loc[site, 'slope'])
-                aspects.append(df_sites.loc[site, 'aspect'])
+                lats.append(float(gid_df.loc[site, 'lat']))
+                lons.append(float(gid_df.loc[site, 'lon']))
+                elevs.append(float(gid_df.loc[site, 'elevation']))
+                slopes.append(float(gid_df.loc[site, 'slope']))
+                aspects.append(float(gid_df.loc[site, 'aspect']))
                 glaciers.append(gid)
 
             self.elev_n = np.array(elevs)
@@ -563,54 +562,46 @@ class Terrain:
             self.slope_n = compiled_inputs['slope_n']
         return
     
-    def load_shading(self, dates):
+    def load_shading(self):
         """
-        Loads the shading mask for the points in the
+        Loads the full shading mask for the points in the
         simulation from the preprocessed shading .zarr.
-
-        Parameters
-        ==========
-        dates_UTC : np.ndarray (N_TIME, ) or (N_POINTS, N_TIME)
-            Dates in UTC for the simulation.
+        Stores all (dayofyear, hour) entries from the file so
+        pack_forcings can index by DOY+hour for any calendar year.
         """
-        # define storage for shading masks
-        N_POINTS = self.N_POINTS 
-        N_TIME = len(dates) if len(dates.shape)==1 else dates.shape[1]
-        masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
-        azimuth = np.full((N_POINTS, N_TIME), np.pi)
-        zenith = np.zeros((N_POINTS, N_TIME))
+        N_POINTS = self.N_POINTS
+        shading_lookup = {}
+        N_TIME = None
+        masks = azimuth = zenith = None
         sky_view_factor = np.ones(N_POINTS)
 
-        # loop through glaciers in this simulation
         for gid in np.unique(self.rgiid_n):
-            # index of these glaciers
             gid_idx = np.where(self.rgiid_n == gid)[0]
 
-            # open the shade file and parse the lookup
             fn = self.shade_fn.format(gid=gid)
-
             ds = xr.open_zarr(fn)
             ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
             ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
+
             ds_doy = ds.time.dt.dayofyear.values
             ds_hour = ds.time.dt.hour.values
-            lookup = {(doy, hour): i for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
 
-            # create new dataarray with the target time indices
-            target_indices = [lookup[(d, h)]
-                            for d, h in zip(dates.dayofyear, dates.hour)]
-            target_time_idx = xr.DataArray(target_indices, dims='time')
+            # build lookup from the file's own time axis — covers all DOY+hours in the data
+            if not shading_lookup:
+                N_TIME = len(ds.time)
+                shading_lookup = {(int(doy), int(hour)): i
+                                  for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
+                masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
+                azimuth = np.full((N_POINTS, N_TIME), np.pi)
+                zenith = np.zeros((N_POINTS, N_TIME))
 
-            # grab lat/lon for each point and convert to a dataarray
             transformer = Transformer.from_crs("EPSG:4326", ds.rio.crs, always_xy=True)
             x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
             target_x = xr.DataArray(x_pts, dims='points')
             target_y = xr.DataArray(y_pts, dims='points')
 
-            # index mask to get points and time for this glacier
             selected = (ds
                 .sel(y=target_y, x=target_x, method='nearest')
-                .isel(time=target_time_idx)
                 .transpose('points', 'time'))
 
             masks[gid_idx, :] = selected['shadow_mask'].values
@@ -624,7 +615,7 @@ class Terrain:
         self.solar_zenith = zenith
         self.solar_azimuth = azimuth
         self.shadow_mask = masks.astype(bool)
-        self.shading_dates = dates
+        self.shading_lookup = shading_lookup
         return
 
     def validate_terrain_data(self):

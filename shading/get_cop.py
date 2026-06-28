@@ -6,6 +6,8 @@ import pystac_client
 import planetary_computer
 from tqdm import tqdm
 
+output_dir = "~/local/data/dems/COP30/"
+
 def download_tile(url, output_dir):
     """Downloads a signed STAC asset URL using its true native filename."""
     # Cleanly strip away the secure SAS token parameters (?st=...&sig=...)
@@ -25,7 +27,7 @@ def download_tile(url, output_dir):
     except Exception as e:
         print(f"\n[Error] Failed to download {filename}: {e}")
 
-def download_alaska_cop30(output_dir="~/local/data/dems/COP30/"):
+def download_alaska_cop30(output_dir=output_dir):
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Initialize the STAC catalog client with automatic token signing
