@@ -23,8 +23,11 @@ from jax.scipy.interpolate import RegularGridInterpolator
 # Local lbiraries
 import util.defaults as defaults
 
-# list fields that must be static
-static_fields = ['debug',
+# Fields must be broken into static and dynamic for JAX. 
+# Statics args are needed to initialize the model and
+# make choices in the compilation (e.g., options / methods)
+
+static_fields = [
     'max_nlayers', 'albedo_TOD', 'bias_vars',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
@@ -38,10 +41,12 @@ static_fields = ['debug',
     'option_flat_plates',
 
     'constant_snowfall_density','constant_freshgrainsize',
-    'constant_drdry','constant_irrwater'
+    'constant_drdry','constant_irrwater',
 ]
 
-# list fields that must be dynamic (i.e., can be arrays of len N_POINTS)
+# Dynamic args are parameters / constants which are 
+# allowed to be passed as scalars or as (N_POINTS, ) arrays.
+
 dynamic_fields = ['kp','wind_factor','precgrad',            
                 'dust_factor','lapse_rate',
                 'albedo_ice','albedo_firn','albedo_fresh_snow',
@@ -51,17 +56,20 @@ dynamic_fields = ['kp','wind_factor','precgrad',
                 'ksp_BC', 'ksp_OC', 'ksp_dust',
                 'initial_snow_depth', 'initial_firn_depth']
 
-# list fields that don't need to be in static OR dynamic args
+# External args are those which are only needed in the
+# CPU intiialization / output functions but are not used 
+# within the model itself.
+
 external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
     'store_vars', 'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
-    'testing', 'progress_bar' # , 'debug'
+    'testing', 'progress_bar', 'debug'
 ]
 
-# anything else is treated as:
-# - strings get tossed into static args
-# - non-strings get tossed into dynamic args
+# Any other parameters from defaults.py not listed here:
+# - strings go to static args
+# - non-strings go to dynamic args
 
 class ConfigError(Exception):
     """Raised when an expected crash
@@ -163,7 +171,9 @@ class Config():
         self.args = args
         self.configure_lookups()
         self.args.start_year = pd.to_datetime(self.args.start_date).year
-        
+
+        # validate
+        self.validate_config()
 
         # FINALLY: convert args into a JAX-compatible NamedTuple (immutable)
         self.convert_to_jax_safe(self.args)
@@ -194,6 +204,46 @@ class Config():
             grain_size_dims, ds.dr0mat.values, method='linear')
 
         self.args = args
+        return
+    
+    def validate_config(self):
+        """
+        Checks that all configurations are valid.
+        """
+        # MODEL OPTIONS 
+        # make sure temporal chunks is a fairly even multiplier of 1 year
+        temporal_chunks = getattr(self.args, 'temporal_chunks')
+        threshold_hours = 10 * 24 
+        hours_in_year = 365 * 24
+        remainder = hours_in_year % temporal_chunks 
+        to_next = temporal_chunks - remainder if remainder != 0 else 0
+        assert min(remainder, to_next) <= threshold_hours, \
+            f'Temporal chunks should be an ~ even multiplier of 8760'
+
+        # PHYSICAL CONSTANTS
+        # parameters that must be positive
+        must_be_positive = ['kp','wind_factor','dust_factor',
+                            'initial_snow_depth','roughness_aging_rate']
+        for var in must_be_positive:
+            var_data = getattr(self.args, var)
+            assert np.all(var_data > 0), f'{var} must be positive'
+        
+        must_be_negative = ['lapse_rate']
+        for var in must_be_negative:
+            var_data = getattr(self.args, var)
+            assert np.all(var_data < 0), f'{var} must be negative'
+        
+        must_be_0_or_positive = ['initial_firn_depth', 'precgrad']
+        for var in must_be_0_or_positive:
+            var_data = getattr(self.args, var)
+            assert np.all(var_data >= 0), f'{var} must be 0 or positive'
+
+        # make sure albedo terms are between 0 and 1
+        must_be_0_1 = ['albedo_ice','albedo_firn','albedo_fresh_snow']
+        for var in must_be_0_1:
+            var_data = getattr(self.args, var)
+            assert np.all(0 < var_data < 1)
+
         return
     
     def convert_to_jax_safe(self, args):

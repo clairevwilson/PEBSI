@@ -354,6 +354,10 @@ class PEBSI():
         n_spinup_steps = max(chunk_size, round(n_spinup_years * 8760 / chunk_size) * chunk_size)
         spinup_dates = pd.date_range(self.dates[0], periods=n_spinup_steps, freq='h')
 
+        if n_spinup_years == 0:
+            # skip if the user specified no spin-up
+            return state
+
         # initialize spinup animation variables
         n_spinup_chunks = n_spinup_steps // chunk_size
         spinup_start = time.time()
@@ -427,16 +431,22 @@ class PEBSI():
         progress = _ChunkProgress(total_steps, params.progress_bar, prev_duration)
 
         for start in range(0, total_steps, chunk_size):
+            # get dates in this chunk
             chunk_dates = self.dates[start:start + chunk_size]
             actual_size = len(chunk_dates)
 
+            # start timer / progress bar
             progress.start_chunk(start, actual_size, prev_duration)
             chunk_start = time.time()
 
+            # simulate one chunk
             state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
 
+            # update progress bar
             prev_duration = time.time() - chunk_start
             progress.finish_chunk(start, actual_size)
+
+            # store data and clear from memory
             if params.store_data:
                 model_output.store_chunk(chunk_records, chunk_dates, start)
             del chunk_records
