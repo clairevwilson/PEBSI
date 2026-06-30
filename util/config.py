@@ -12,7 +12,9 @@ import os
 from collections import namedtuple 
 import types
 import time
+import threading
 # External libraries
+from tqdm import tqdm
 import yaml
 import xarray as xr
 import numpy as np
@@ -225,24 +227,27 @@ class Config():
         must_be_positive = ['kp','wind_factor','dust_factor',
                             'initial_snow_depth','roughness_aging_rate']
         for var in must_be_positive:
-            var_data = getattr(self.args, var)
+            var_data = np.array(getattr(self.args, var))
             assert np.all(var_data > 0), f'{var} must be positive'
         
         must_be_negative = ['lapse_rate']
         for var in must_be_negative:
-            var_data = getattr(self.args, var)
+            var_data = np.array(getattr(self.args, var))
             assert np.all(var_data < 0), f'{var} must be negative'
         
         must_be_0_or_positive = ['initial_firn_depth', 'precgrad']
         for var in must_be_0_or_positive:
-            var_data = getattr(self.args, var)
+            var_data = np.array(getattr(self.args, var))
             assert np.all(var_data >= 0), f'{var} must be 0 or positive'
 
         # make sure albedo terms are between 0 and 1
         must_be_0_1 = ['albedo_ice','albedo_firn','albedo_fresh_snow']
         for var in must_be_0_1:
-            var_data = getattr(self.args, var)
-            assert np.all(0 < var_data < 1)
+            var_data = np.array(getattr(self.args, var))
+            assert np.all((0 < var_data) & (var_data < 1))
+
+        if self.args.debug and len(self.args.bias_vars) > 0:
+            print('~ Applying quantile mapping for:',self.args.bias_vars)
 
         return
     
@@ -318,41 +323,38 @@ class Config():
         self.params.dynamic_args = self.dynamic_args
         return
     
-class ProgressTimer():
+class ChunkProgress:
     """
-    Keeps track of time elapsed and 
-    estimates time remaining based on
-    the number of timesteps.
+    Interpolating tqdm progress bar for long chunks.
+
+    Since JAX blocks Python for the entire chunk, a background thread
+    linearly extrapolates progress using the previous chunk's wall-clock
+    duration, snapping to the true value when each chunk completes.
     """
-    def __init__(self, total_steps):
-        self.total_steps = total_steps
-        self.start = time.perf_counter()
-        self.elapsed = 0
-        self.remaining = float("inf")
-        self.step = -1
 
-    def update(self):
-        """
-        Steps counter and estimates remaining time.
-        """
-        now = time.perf_counter()
-        elapsed = now - self.start
-        self.step += 1
+    def __init__(self, total, enabled, seed_duration):
+        self._enabled = enabled
+        self._done = threading.Event()
+        self._info = {'t0': time.time(), 'step0': 0, 'size': 1, 'duration': seed_duration}
+        self.pbar = tqdm(total=total, desc='~ Simulating', unit='step',
+                         miniters=0, mininterval=0, disable=not enabled)
+        if enabled:
+            threading.Thread(target=self._refresh, daemon=True).start()
 
-        frac = self.step / self.total_steps
-        est_total = elapsed / frac if frac > 0 else float("inf")
-        remaining = est_total - elapsed
+    def _refresh(self):
+        while not self._done.is_set():
+            frac = min((time.time() - self._info['t0']) / self._info['duration'], 0.99)
+            self.pbar.n = self._info['step0'] + int(frac * self._info['size'])
+            self.pbar.refresh()
+            self._done.wait(0.1)
 
-        self.remaining = remaining 
-        self.elapsed = elapsed
+    def start_chunk(self, step0, size, duration):
+        self._info.update(t0=time.time(), step0=step0, size=size, duration=duration)
 
-    def printout(self):
-        percent_done = self.step / self.total_steps * 100
-        blocks_total = 48
-        n_blocks_filled = int(percent_done / 100 * blocks_total)
-        n_blocks_empty = blocks_total - n_blocks_filled
-        print(''.join(['█']*n_blocks_filled) + ''.join(['-']*n_blocks_empty))
-        print(
-            f"{percent_done:.0f}%  "
-            f"[ Elapsed: {self.elapsed/60:.2f} min | Remaining: {self.remaining/60:.2f} min ]"
-        )
+    def finish_chunk(self, step0, actual_size):
+        self.pbar.n = step0 + actual_size
+        self.pbar.refresh()
+
+    def close(self):
+        self._done.set()
+        self.pbar.close()

@@ -56,7 +56,7 @@ configs = {
     'n_points': len(sites),
     'bias_vars': ['temp'],
 
-    'start_date': '2024-04-20',
+    'start_date': '2000-04-20',
     'end_date': '2025-08-20',
 
     'dust_factor': 20,

@@ -9,7 +9,6 @@ import warnings, sys
 warnings.simplefilter('error', RuntimeWarning)
 # External libraries
 import jax
-from jax.debug import print as jax_print
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -863,7 +862,7 @@ def check_layer_sizes(state, params):
     min_height_by_depth = jnp.maximum(curve_snow / 2, params.min_dz)
 
     # define function to scan for layers to merge
-    def _scan_layers(current_state, idx):
+    def _scan_merge(current_state, idx):
         # always fetch the most up-to-date heights and types from evolving state
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
@@ -892,7 +891,16 @@ def check_layer_sizes(state, params):
         return next_state, None 
     
     layers_idx = jnp.arange(n_layers - 1) # don't include bottom layer
-    state, _ = jax.lax.scan(_scan_layers, state, layers_idx)
+    state, _ = jax.lax.scan(_scan_merge, state, layers_idx)
+
+    # split snow layers that have grown beyond twice their target size for their position
+    def _scan_splits(current_state, idx):
+        dz = current_state.lheight[:, idx]
+        curr_type = current_state.ltype[:, idx]
+        should_split = (curr_type == 0) & (dz > curve_snow[idx] * 2)
+        return split_layer(current_state, should_split, idx, params), None
+
+    state, _ = jax.lax.scan(_scan_splits, state, layers_idx)
 
     return state, dead_mass
 

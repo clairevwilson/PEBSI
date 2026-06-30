@@ -296,8 +296,6 @@ class Climate():
         if params.climate_source == 'MERRA2':
             # do not adjust variables that were measured
             self.bias_vars = [v for v in self.params.bias_vars if v not in self.measured_vars]
-            if self.params.debug and len(self.bias_vars) > 0:
-                print('~ Applying quantile mapping for:',self.bias_vars)
 
             for var in self.bias_vars:
                 self.bias_adjust_qm(var)
@@ -344,13 +342,8 @@ class Climate():
             failed_str = ', '.join(failed)
             for var in failed:
                 data = getattr(self, var)
-                print(np.where(np.isnan(data)))
             raise ConfigError(f'Climate is missing data from {failed_str}')
         
-        # print out the time taken to process climate data
-        time_elapsed = time.time()-self.start_time
-        if self.params.debug:
-            print(f'~ Loaded climate data in {time_elapsed:.1f} seconds ~')
         return
     
     def check_units(self,var,ds):

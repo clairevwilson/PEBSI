@@ -20,13 +20,14 @@ class Output():
     simulation and saves it to a .zarr file upon
     run completion.
     """
-    def __init__(self, params, terrain):
+    def __init__(self, params, terrain, resume_fp=None):
         """
         Creates list of filenames and variable names
         to store throughout the simulation.
         """
         self.params = params
         self.terrain = terrain
+        self.resume_fp = resume_fp
 
         self.N_LAYERS = params.max_nlayers
         self.N_POINTS = terrain.N_POINTS
@@ -77,6 +78,11 @@ class Output():
         # specify individual file output name format
         self.output_fn = params.output_fn
 
+        # when resuming, reuse the original output directory without incrementing
+        if self.resume_fp is not None:
+            self.output_fp = self.resume_fp
+            return
+
         # crop the trailing /
         if str(params.output_fp).endswith('/'):
             output_fp_compare = params.output_fp[:-1]
@@ -92,7 +98,7 @@ class Output():
         if output_fp_compare is None:
             model_run_date = str(pd.Timestamp.today()).replace('-','_')[0:10]
             self.output_fp = f'RGI{params.rgi_region}_{model_run_date}_'
-        
+
         # make file name unique by adding an indexer
         i = 0
         while os.path.exists(output_fp_compare+ str(i)):

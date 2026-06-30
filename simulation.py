@@ -9,6 +9,7 @@ and runs the main() function.
 """
 # Built-in libraries
 import os
+import shutil
 import argparse
 import itertools
 import threading
@@ -20,7 +21,6 @@ import numpy as np
 import pandas as pd
 import jax.numpy as jnp
 import netCDF4
-from tqdm import tqdm
 # Internal libraries
 import util.defaults as defaults
 from util.config import *
@@ -79,6 +79,10 @@ def get_args(parse=True):
     parser.add_argument('-out','--output_fn',type=str,default=None,
                         help='output file name excluding extension')
     
+    # RESUME
+    parser.add_argument('-resume_from', type=str, default=None,
+                        help='output directory of a crashed run to resume from')
+
     # CLIMATE OPTOINS
     parser.add_argument('-use_aws', action='store_true',
                         help='use AWS or just reanalysis?')
@@ -89,42 +93,14 @@ def get_args(parse=True):
     else:
         return parser
 
-class _ChunkProgress:
-    """Interpolating tqdm progress bar for long JAX chunks.
-
-    Since JAX blocks Python for the entire chunk, a background thread
-    linearly extrapolates progress using the previous chunk's wall-clock
-    duration, snapping to the true value when each chunk completes.
-    """
-    def __init__(self, total, enabled, seed_duration):
-        self._enabled = enabled
-        self._done = threading.Event()
-        self._info = {'t0': time.time(), 'step0': 0, 'size': 1, 'duration': seed_duration}
-        self.pbar = tqdm(total=total, desc='~ Simulating', unit='step',
-                         miniters=0, mininterval=0, disable=not enabled)
-        if enabled:
-            threading.Thread(target=self._refresh, daemon=True).start()
-
-    def _refresh(self):
-        while not self._done.is_set():
-            frac = min((time.time() - self._info['t0']) / self._info['duration'], 0.99)
-            self.pbar.n = self._info['step0'] + int(frac * self._info['size'])
-            self.pbar.refresh()
-            self._done.wait(0.1)
-
-    def start_chunk(self, step0, size, duration):
-        self._info.update(t0=time.time(), step0=step0, size=size, duration=duration)
-
-    def finish_chunk(self, step0, actual_size):
-        self.pbar.n = step0 + actual_size
-        self.pbar.refresh()
-
-    def close(self):
-        self._done.set()
-        self.pbar.close()
-
-
 class PEBSI():
+    """
+    Functions which prepare the inputs, execute the model,
+    and store the outputs. 
+    """
+    # ----------------------------------------------------------------- #
+    #                        INITIALIZATION
+    # ----------------------------------------------------------------- #
     def __init__(self, args):
         """
         Initializes the configuration for a simulation.
@@ -175,6 +151,10 @@ class PEBSI():
 
         self.layers = layers
         return
+    
+    # ----------------------------------------------------------------- #
+    #                       PACKING JAX ARRAYS
+    # ----------------------------------------------------------------- #
     
     def pack_states(self):
         """
@@ -246,7 +226,7 @@ class PEBSI():
         )
         return glacier_state, point_attrs
     
-    def pack_forcings(self, params, dates, start):
+    def pack_forcings(self, params, dates, start, spinup=False):
         """
         Packs the climate forcings for a temporal
         chunk into JAX-compatible state.
@@ -311,9 +291,57 @@ class PEBSI():
             solar_zenith=jnp.array(solar_zenith, dtype=jnp.float64).T,
         )
 
+        # print out the time taken to process climate data
+        time_elapsed = time.time() - climate.start_time
+        if params.debug and not params.progress_bar and not spinup:
+            print(f'~ Loaded climate data in {time_elapsed:.1f} seconds ~')
         return forcings
     
-    def _run_chunk(self, state, point_attrs, static_args, dynamic_args, chunk_dates, start):
+    # ----------------------------------------------------------------- #
+    #                        CHECKPOINTS
+    # ----------------------------------------------------------------- #
+    
+    def save_checkpoint(self, state, next_start, output_fp):
+        """
+        Saves GlacierState and loop position inside the 
+        output directory, atomically.
+        """
+        path = os.path.join(output_fp, 'checkpoint.npz')
+        tmp_path = os.path.join(output_fp, 'checkpoint.tmp.npz')
+
+        # convert data to numpy arrays and store as .npz
+        arrays = {field: np.array(getattr(state, field)) for field in state._fields}
+        arrays['_next_start'] = np.array(next_start)
+        np.savez(tmp_path, **arrays)
+        os.replace(tmp_path, path)
+
+    def load_checkpoint(self, resume_from):
+        """
+        Loads checkpoint.npz from the given output directory.
+        Returns (GlacierState, next_start) or raises if not found.
+        """
+        path = os.path.join(resume_from, 'checkpoint.npz')
+        if not os.path.exists(path):
+            raise FileNotFoundError(f'No checkpoint found in {resume_from}')
+        
+        # load the data and re-build glacier state
+        data = np.load(path)
+        next_start = int(data['_next_start'])
+        state = GlacierState(**{
+            field: jnp.array(data[field])
+            for field in GlacierState._fields
+        })
+
+        print(f'~ Resuming from step {next_start} in {resume_from} ~')
+        return state, next_start
+    
+    # ----------------------------------------------------------------- #
+    #                      SPIN-UP AND SIMULATION
+    # ----------------------------------------------------------------- #
+
+    def _run_chunk(self, state, point_attrs, 
+                   static_args, dynamic_args, 
+                   chunk_dates, start, spinup=False):
         """
         Packs forcings for one temporal chunk, runs main(), and returns
         the updated state and trimmed output records.
@@ -356,6 +384,7 @@ class PEBSI():
 
         if n_spinup_years == 0:
             # skip if the user specified no spin-up
+            self.spinup_time = 30.0
             return state
 
         # initialize spinup animation variables
@@ -382,14 +411,14 @@ class PEBSI():
             chunk_dates = spinup_dates[start:start + chunk_size]
             state, _ = self._run_chunk(state, point_attrs, 
                                        self.config.static_args, self.config.dynamic_args, 
-                                       chunk_dates, start)
+                                       chunk_dates, start, spinup=True)
             spinup_chunk[0] = i + 1
 
         # print final spinup timer
         spinup_done.set()
         spinup_thread.join()
         self.spinup_time = time.time() - spinup_start
-        msg = f'~ Spun up and compiled in ({self.spinup_time:.1f} s) ~'
+        msg = f'~ Spun up and compiled in {self.spinup_time:.1f} s ~'
         print(f'\r{msg:<70}')
 
         # reset annual trackers: spin-up and year 0 are the same calendar year
@@ -416,21 +445,35 @@ class PEBSI():
         self.prepare_initial_state()
         initial_state, point_attrs = self.pack_states()
 
-        model_output = Output(params, self.terrain)
         self.start_print()
 
-        # ========== SPIN-UP ==========
-        state = self.spinup(initial_state, point_attrs)
+        # ========== CHECKPOINT / SPIN-UP ==========
+        resume_from = getattr(params, 'resume_from', None)
+        if resume_from:
+            state, start_from = self.load_checkpoint(resume_from)
+            resume_fp = resume_from
+            self.spinup_time = 30.0  # fallback seed for progress bar
+        else:
+            state = self.spinup(initial_state, point_attrs)
+            start_from = 0
+            resume_fp = None
 
-        # ========== MAIN LOOP ==========
+        # initialize output after the checkpoint check so resume_fp is known
+        model_output = Output(params, self.terrain, resume_fp=resume_fp)
+
+        # copy config to the output directory so a resumed run uses the same settings
+        if params.store_data and params.use_config and resume_fp is None:
+            shutil.copy2(params.config_fn, model_output.output_fp)
+
+        # ========== MAIN SIMULATION ==========
         total_steps = len(self.dates)
         chunk_size = params.temporal_chunks
 
         # seed duration estimate from spin-up (faster now because compiled)
         prev_duration = self.spinup_time * 0.7
-        progress = _ChunkProgress(total_steps, params.progress_bar, prev_duration)
+        progress = ChunkProgress(total_steps, params.progress_bar, prev_duration)
 
-        for start in range(0, total_steps, chunk_size):
+        for start in range(start_from, total_steps, chunk_size):
             # get dates in this chunk
             chunk_dates = self.dates[start:start + chunk_size]
             actual_size = len(chunk_dates)
@@ -443,12 +486,20 @@ class PEBSI():
             state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
 
             # update progress bar
-            prev_duration = time.time() - chunk_start
+            chunk_end = time.time()
+            prev_duration = chunk_end - chunk_start
             progress.finish_chunk(start, actual_size)
+            if not self.params.progress_bar:
+                print(f'~ Chunk complete in {prev_duration:.1f} seconds ~')
 
-            # store data and clear from memory
+            # store data before checkpointing so the two are always in sync
             if params.store_data:
                 model_output.store_chunk(chunk_records, chunk_dates, start)
+                self.save_checkpoint(state, start + actual_size, model_output.output_fp)
+
+                if not self.params.progress_bar:
+                    output_duration = time.time() - chunk_end
+                    print(f'~ Chunk stored in {output_duration:.1f} seconds ~')
             del chunk_records
 
         progress.close()

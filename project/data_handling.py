@@ -47,10 +47,8 @@ class MassBalance():
             Dataset to use from ['WGMS','benchmark']
         """
         # open dataframes
-        metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
         wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
         benchmark_fp = home_fp + 'MB_data/'
-        glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
 
         # store input attributes
         self.name = name
@@ -513,12 +511,13 @@ class Albedo():
             self.glac_no = '01.06469'
 
         # open dataframes
-        metadata_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', index_col='name')
-        glacier_fp = home_fp + 'PEBSI/data/by_glacier/'
         self.albedo_fp = base_fp + '../data/rs/albedo/' # updated/
 
         # find the site location lat/lon
-        self.site_df = pd.read_csv(glacier_fp + f'{self.name}/site_constants.csv', index_col='site')
+        glac_no_6 = translate_rgi[name]['6']
+        self.site_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', dtype=str)
+        self.site_df = self.site_df.loc[self.site_df['rgiid'] == glac_no_6]
+        self.site_df = self.site_df.set_index('site')
         self.lat = self.site_df.loc[site, 'lat']
         self.lon = self.site_df.loc[site, 'lon']
 

@@ -273,7 +273,7 @@ class MassBalanceDriver:
             new_density = params.constant_snowfall_density
         else:
             # CROCUS formulation of density (Vionnet et al. 2012)
-            new_density = jnp.maximum(109+6*(tempC-0.)+26*wind**0.5,50)
+            new_density = jnp.maximum(109 + 6 * (tempC - 0.) + 26 * wind ** 0.5, 50)
         
         # check if using constant grain size for new snow
         if params.constant_freshgrainsize:
