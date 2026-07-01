@@ -162,9 +162,11 @@ class Climate():
             self.terrain.gcm_elev_n = zds.isel(time=0).values
         
         # loop through vars
+        print('! hard coded gulkana')
         for var in self.need_vars:
             # gather data for each var and add to all_data
             region = 'reg' + str(self.params.rgi_region).zfill(2)
+            region = 'gulkana'
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
             
             self.get_var_data(fn, var)
@@ -856,15 +858,16 @@ class Climate():
             self.GCM_fp += 'MERRA2/'
 
             merra2_vn = {
-                'temp': 'T2M',     'rh': 'RH2M',      'sp': 'PS',
+                'temp': 'T2M', 'rh': 'RH2M', 'sp': 'PS',
                 'tp': 'PRECTOTCORR', 'tcc': 'CLDTOT',
-                'SWin': 'SWGDN',   'LWin': 'LWGAB',
-                'uwind': 'U2M',    'vwind': 'V2M',
+                'SWin': 'SWGDN', 'LWin': 'LWGAB',
+                'uwind': 'U2M', 'vwind': 'V2M',
                 'bcwet': 'BCWT002', 'bcdry': 'BCDP002',
                 'ocwet': 'OCWT002', 'ocdry': 'OCDP002',
                 'dustwet': 'DUWT003', 'dustdry': 'DUDP003',
             }
             for var, vn in merra2_vn.items():
+                r = 'gulkana'
                 self.var_dict[var] = {'vn': vn, 'fn': f'{{r}}/{vn}_{{r}}.zarr'}
             self.var_dict['elev'] = {'vn': 'PHIS', 'fn': 'MERRA2_constants.nc'}
 
