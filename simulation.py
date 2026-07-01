@@ -349,7 +349,7 @@ class PEBSI():
         chunk_size = self.params.temporal_chunks
         actual_length = len(chunk_dates)
 
-        chunk_forcings = self.pack_forcings(self.params, chunk_dates, start)
+        chunk_forcings = self.pack_forcings(self.params, chunk_dates, start, spinup)
 
         if actual_length < chunk_size:
             pad_amt = chunk_size - actual_length

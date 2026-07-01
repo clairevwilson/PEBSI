@@ -298,7 +298,7 @@ class Climate():
             self.bias_vars = [v for v in self.params.bias_vars if v not in self.measured_vars]
 
             for var in self.bias_vars:
-                self.bias_adjust_qm(var)
+                self.bias_correct_qm(var)
         
         # apply coefficients to adjust deposition
         if not params.deposition_data:
@@ -477,6 +477,7 @@ class Climate():
 
                 # close the dataset
                 ds_bc.close()
+
         return
     
     def apply_perturbations(self):
@@ -655,7 +656,7 @@ class Climate():
         self.LWin = new_LWin
         return
     
-    def bias_adjust_qm(self,var):
+    def bias_correct_qm(self,var):
         """
         Applies preprocessed quantile mapping to
         reanalysis climate data for a single variable.

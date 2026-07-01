@@ -113,6 +113,7 @@ def main(
         #          vertical heat and mass exchange
         fluxes_to_vert = {
             'rainfall': rainfall,
+            'snowfall': snowfall,
             'latent_heat': fluxes['latent_heat'],
             'melt_energy': fluxes['melt_energy'],
             'SWnet_penetrating': fluxes['SWnet_penetrating']
@@ -199,7 +200,7 @@ def main(
 
                 if field in ['layerBC','layerOC','layerdust']:
                     lheight = next_state.lheight
-                    safe_height = jnp.where(lheight>0, lheight, 1e-6)
+                    safe_height = jnp.where(lheight > 0, lheight, 1e-6)
                     concentration = values / safe_height
 
                     # put into interpretable units (ppb / ppm)

@@ -43,13 +43,13 @@ class SNICAREmulator(eqx.Module):
 
 # load the model weights and create the template from custom SNICAR class
 model = eqx.tree_deserialise_leaves(
-    'snicar_emulator.eqx',
+    'snicar_emulator/emulator.eqx',
     eqx.tree_at(lambda m: m, SNICAREmulator(30, jax.random.PRNGKey(0)), 
                 replace_fn=lambda x: x.astype(jnp.float32) if eqx.is_array(x) else x)
 )
 
 # load the normalization weights
-norm  = np.load('snicar_norm.npz')
+norm = np.load('snicar_emulator/normalization.npz')
 mu, sigma = jnp.array(norm['mu']), jnp.array(norm['sigma'])
 
 def get_albedo(state, params, forcings):
@@ -69,7 +69,7 @@ def get_albedo(state, params, forcings):
     ldust = state.ldust[:, :4]
 
     # grab 1D inputs
-    solar_zenith = forcings.solar_zenith 
+    solar_zenith = jnp.rad2deg(forcings.solar_zenith)
     direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
 
     if params.option_flat_plates:

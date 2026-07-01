@@ -281,9 +281,9 @@ class Layers():
 
         if params.initialize_LAPs in ['clean']:
             # snowpack is clean; initialize as constant values
-            lBC = BC_FRESH*lheight
-            lOC = OC_FRESH*lheight
-            ldust = DUST_FRESH*lheight 
+            lBC = BC_FRESH * lheight
+            lOC = OC_FRESH * lheight
+            ldust = DUST_FRESH * lheight 
         elif params.initialize_LAPs in ['interpolate']:
             # read in LAP data
             lap_data = pd.read_csv(params.initial_LAP_fn,index_col=0)

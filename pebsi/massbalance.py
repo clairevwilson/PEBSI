@@ -39,7 +39,7 @@ class MassBalanceDriver:
 
         # add new snow to layers
         snowfall, state = self.add_accumulation(
-            snowfall, state, forcings
+            snowfall, rainfall, state, forcings
         )
 
         # append accumulation to past_snow
@@ -240,7 +240,7 @@ class MassBalanceDriver:
         
         return rain,snow # kg m-2
 
-    def add_accumulation(self, snowfall, state, forcings):
+    def add_accumulation(self, snowfall, rainfall, state, forcings):
         """
         Adds snowfall to the layers either as a new layer
         or merges new snow with the top layer.
@@ -291,10 +291,12 @@ class MassBalanceDriver:
         new_height = total_snowfall/new_density
         new_age = jnp.zeros_like(total_snowfall)
 
-        # wet deposition occurs in snowfall
-        new_BC = bcwet * params.dt
-        new_OC = ocwet * params.dt
-        new_dust = dustwet * params.dt
+        # wet deposition: scale by snow share of precip (all in kg m-2)
+        total_precip = total_snowfall + rainfall
+        snow_fraction = jnp.clip(total_snowfall / (total_precip + 1e-12), 0.0, 1.0)
+        new_BC = bcwet * params.dt * snow_fraction
+        new_OC = ocwet * params.dt * snow_fraction
+        new_dust = dustwet * params.dt * snow_fraction
 
         # pack properties of new layer into a namespace
         new_layer = {
@@ -697,24 +699,33 @@ class MassBalanceDriver:
         scan_lmass = scan_lwater + scan_lice
         safe_mass = jnp.where(scan_lmass > 0.0, scan_lmass, 1.0)
 
-        # inject wet-deposited particles into water flowing in
-        BC_wet_flux = forcings.bcwet * dt 
-        OC_wet_flux = forcings.ocwet * dt 
-        dust_wet_flux = forcings.dustwet * dt
+        # inject wet-deposited particles into water flowing in (all in kg m-2)
+        total_precip = fluxes['rainfall'] + fluxes['snowfall']
+        rain_fraction = jnp.clip(fluxes['rainfall'] / (total_precip + 1e-12), 0.0, 1.0)
+        BC_wet_flux = forcings.bcwet * rain_fraction * dt
+        OC_wet_flux = forcings.ocwet * rain_fraction * dt
+        dust_wet_flux = forcings.dustwet * rain_fraction * dt
+
+        scan_ice_mask = jnp.transpose(properties['ice_mask'])
 
         # pack all the inputs
-        layer_inputs = (safe_mass, scan_mBC, scan_mOC, scan_mdust, 
-                        scan_q_out, (layers_idx[0, :] == 0))
-        
+        layer_inputs = (safe_mass, scan_mBC, scan_mOC, scan_mdust,
+                        scan_q_out, scan_ice_mask, (layers_idx[0, :] == 0))
+
         # define cascade function
         def _particle_cascade(carry, inputs):
             BCin, OCin, dustin = carry
-            mass, mBC, mOC, mdust, q_out, is_surface = inputs 
+            mass, mBC, mOC, mdust, q_out, is_barrier, is_surface = inputs
 
             # add wet deposition if this is the top layer
             BCin = jnp.where(is_surface, BCin + BC_wet_flux, BCin)
             OCin = jnp.where(is_surface, OCin + OC_wet_flux, OCin)
             dustin = jnp.where(is_surface, dustin + dust_wet_flux, dustin)
+
+            # ice layers block particle flow (same as water barrier) — pass BC to runoff
+            BCin = jnp.where(is_barrier, 0.0, BCin)
+            OCin = jnp.where(is_barrier, 0.0, OCin)
+            dustin = jnp.where(is_barrier, 0.0, dustin)
 
             # instantly mix new particles into this layer
             cBC = jnp.where(mass > 0.0, mBC / mass, 0.0)
@@ -722,16 +733,16 @@ class MassBalanceDriver:
             cdust = jnp.where(mass > 0.0, mdust / mass, 0.0)
 
             # compute partition leaving the layer
-            BCout_pot = self.params.ksp_BC * q_out * cBC 
-            OCout_pot = self.params.ksp_OC * q_out * cOC 
-            dustout_pot = self.params.ksp_dust * q_out * cdust 
+            BCout_pot = self.params.ksp_BC * q_out * cBC
+            OCout_pot = self.params.ksp_OC * q_out * cOC
+            dustout_pot = self.params.ksp_dust * q_out * cdust
 
             # cap mass at amount previously in the layer
             BCout = jnp.minimum(BCout_pot, mBC)
             OCout = jnp.minimum(OCout_pot, mOC)
             dustout = jnp.minimum(dustout_pot, mdust)
 
-            # update mass of particles 
+            # update mass of particles
             updated_mBC = mBC + (BCin - BCout)
             updated_mOC = mOC + (OCin - OCout)
             updated_mdust = mdust + (dustin - dustout)
