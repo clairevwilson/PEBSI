@@ -1,126 +1,130 @@
 """
-Albedo class for PEBSI
+Albedo module for PEBSI
 
-Contains functions to load and apply the 
-emulator for SNICAR (the Snow, Ice and Aerosol
-Radiative model)
+Wraps the BioSNICAR neural-network emulator (.npz format) in a
+pure-JAX forward pass so it runs on GPU inside jit/vmap without
+any host-side numpy calls at inference time.
 """
-# External libraries
-import equinox as eqx
+import json
 import numpy as np
-import jax 
 import jax.numpy as jnp
+import jax
 
-class SNICAREmulator(eqx.Module):
-    """
-    Small MLP emulator for SNICAR broadband albedo.
+# ── Load emulator weights once at import time ──────────────────────────────
 
-    Architecture: Linear -> LayerNorm -> GELU x3
-                  then Linear -> Sigmoid
+_NPZ_PATH = 'snicar_emulator/emulator.npz'
 
-    Takes in a flat vector of snowpack properties and
-    returns broadband albedo bounded to [0, 1].
-    """
-    layers: list
- 
-    def __init__(self, in_dim, key):
-        # generate random key and split it into 4 independent subkeys for layers
-        keys = jax.random.split(key, 4)
+def _load_emulator(path):
+    data = np.load(path, allow_pickle=False)
+    meta = json.loads(str(data['metadata']))
 
-        # build sequential training layers
-        self.layers = [
-            eqx.nn.Linear(in_dim, 128, key=keys[0]), eqx.nn.LayerNorm((128,)),
-            eqx.nn.Linear(128, 128, key=keys[1]), eqx.nn.LayerNorm((128,)),
-            eqx.nn.Linear(128, 64, key=keys[2]), eqx.nn.LayerNorm((64,)),
-            eqx.nn.Linear(64, 1, key=keys[3]),
-        ]
- 
-    def __call__(self, x):
-        # wrap Linear layers in GELU activation; apply LayerNorm without activation
-        for layer in self.layers[:-1]:
-            x = jax.nn.gelu(layer(x)) if isinstance(layer, eqx.nn.Linear) else layer(x)
-        return jax.nn.sigmoid(self.layers[-1](x)).squeeze()
+    weights, biases = [], []
+    i = 0
+    while f'weights_{i}' in data:
+        weights.append(jnp.array(data[f'weights_{i}'], dtype=jnp.float32))
+        biases.append(jnp.array(data[f'biases_{i}'], dtype=jnp.float32))
+        i += 1
 
-# load the model weights and create the template from custom SNICAR class
-model = eqx.tree_deserialise_leaves(
-    'snicar_emulator/emulator.eqx',
-    eqx.tree_at(lambda m: m, SNICAREmulator(30, jax.random.PRNGKey(0)), 
-                replace_fn=lambda x: x.astype(jnp.float32) if eqx.is_array(x) else x)
-)
+    return {
+        'weights':        weights,
+        'biases':         biases,
+        'pca_components': jnp.array(data['pca_components'], dtype=jnp.float32),
+        'pca_mean':       jnp.array(data['pca_mean'],       dtype=jnp.float32),
+        'input_min':      jnp.array(data['input_min'],      dtype=jnp.float32),
+        'input_max':      jnp.array(data['input_max'],      dtype=jnp.float32),
+        'flx_slr':        jnp.array(data['flx_slr'],        dtype=jnp.float32),
+        'param_names':    meta['param_names'],
+    }
 
-# load the normalization weights
-norm = np.load('snicar_emulator/normalization.npz')
-mu, sigma = jnp.array(norm['mu']), jnp.array(norm['sigma'])
+_emu = _load_emulator(_NPZ_PATH)
+_flx_slr_norm = _emu['flx_slr'] / _emu['flx_slr'].sum()  # normalized for BBA
+
+
+def _forward(x):
+    """Pure-JAX MLP + PCA reconstruction for a single input vector (n_params,)."""
+    for i, (W, b) in enumerate(zip(_emu['weights'], _emu['biases'])):
+        x = x @ W + b
+        if i < len(_emu['weights']) - 1:
+            x = jnp.maximum(x, 0.0)  # ReLU
+    spectral = x @ _emu['pca_components'] + _emu['pca_mean']
+    return jnp.clip(spectral, 0.0, 1.0)  # (480,)
+
 
 def get_albedo(state, params, forcings):
     """
-    Calculates albedo using the emulator and tracks
-    annual minimum albedo. When firn layers are 
-    exposed, the surface uses the minimum albedo from 
-    the year the firn was created. Ice has a constant
-    albedo.
-    """
-    # grab the top four layers
-    lheight = state.lheight[:, :4]
-    ldensity = state.ldensity[:, :4]
-    lgrainsize = state.lgrainsize[:, :4]
-    lBC = state.lBC[:, :4]
-    lOC = state.lOC[:, :4]
-    ldust = state.ldust[:, :4]
+    Calculates albedo using the BioSNICAR emulator and tracks
+    annual minimum albedo. When firn layers are exposed, the surface
+    uses the minimum albedo from the year the firn was created.
+    Ice has a constant albedo.
 
-    # grab 1D inputs
-    solar_zenith = jnp.rad2deg(forcings.solar_zenith)
+    Emulator parameters (top layer only), in trained order:
+      rds               grain radius [um]
+      rho               density [kg m-3]
+      black_carbon      BC concentration [ppb by mass]
+      brown_carbon      OC concentration [ppb by mass]
+      dust_balkanski_1  dust size bin 1 [ppb] (total dust split evenly across 5 bins)
+      dust_balkanski_2  dust size bin 2 [ppb]
+      dust_balkanski_3  dust size bin 3 [ppb]
+      dust_balkanski_4  dust size bin 4 [ppb]
+      dust_balkanski_5  dust size bin 5 [ppb]
+      solzen            solar zenith angle [degrees]
+      direct            1 if direct illumination, 0 if diffuse
+      shp               grain shape: 0=sphere, 1=spheroid, 2=hex plate
+    """
+    top = 0  # index of the surface layer
+
+    rds  = state.lgrainsize[:, top]
+    rho  = state.ldensity[:, top]
+    lh   = state.lheight[:, top]
+
+    # concentrations in ppb (mass of impurity / mass of snow)
+    cBC   = state.lBC[:, top]  / lh * 1e6
+    cOC   = state.lOC[:, top]  / lh * 1e6
+    cdust_total = state.ldust[:, top] / lh * 1e6
+    cdust1 = cdust_total * params.ratio_DU_bin1
+    cdust2 = cdust_total * params.ratio_DU_bin2
+    cdust3 = cdust_total * params.ratio_DU_bin3
+    cdust4 = cdust_total * params.ratio_DU_bin4
+    cdust5 = cdust_total * params.ratio_DU_bin5
+
+    solzen = jnp.rad2deg(forcings.solar_zenith)
     direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
 
-    if params.option_flat_plates:
-        # spherical grains if there is refreeze or liquid water; else flat hexagons
-        round_grains = (state.lrefreeze > 0) | (state.lwater > 1e-3)
-        lgrainshape = jnp.where(round_grains[:, :4], 0, 2).astype(jnp.float32)
-    else:
-        lgrainshape = jnp.full_like(lheight, 0).astype(jnp.float32)
+    # hex plates for dry snow with no refreeze; spheres otherwise
+    dry = (state.lrefreeze[:, top] == 0) & (state.lwater[:, top] <= 1e-3)
+    shp = jnp.where(dry, 2.0, 0.0)
 
-    # calculate concentration from mass of particles and convert to ppb
-    cBC = lBC / lheight * 1e6
-    cOC = lOC / lheight * 1e6
-    cdust = ldust / lheight * 1e6
+    # assemble input in the order the emulator was trained on
+    X = jnp.stack([rds, rho, cBC, cOC,
+                   cdust1, cdust2, cdust3, cdust4, cdust5,
+                   solzen, direct, shp], axis=1)  # (N, 12)
 
-    # truncate layer height so it doesn't exceed the 1.0 m the emulator was trained on
-    cumulative_height = jnp.cumsum(lheight, axis=1)
-    overshoot = jnp.maximum(0.0, cumulative_height - 1.0)
-    lheight = jnp.maximum(0.0, lheight - overshoot)
+    # min-max scale to [0, 1]
+    X = (X - _emu['input_min']) / (_emu['input_max'] - _emu['input_min'] + 1e-30)
+    X = jnp.clip(X, 0.0, 1.0)
 
-    # stack inputs
-    X = jnp.concatenate([
-        jnp.stack([lgrainsize[:, i], ldensity[:, i], lheight[:, i],
-                   cBC[:, i], cOC[:, i], cdust[:, i], lgrainshape[:, i]], axis=1)
-        for i in range(4)] + [solar_zenith[:, None], direct[:, None]], axis=1)
-    
-    # apply weights to the input
-    X_weighted = (X - mu) / sigma
+    # run emulator for each grid point → spectral albedo (N, 480)
+    spectral = jax.vmap(_forward)(X)
 
-    # calculate albedo using emulator
-    albedo = jax.vmap(model)(X_weighted)
+    # broadband albedo weighted by solar spectrum
+    albedo = jnp.sum(spectral * _flx_slr_norm, axis=1)
 
-    # check if this is lower than the current year albedo
+    # track annual minimum albedo
     year_idx = (forcings.year - params.start_year)
     new_annual_min_albedo = state.annual_min_albedo.at[:, year_idx].set(
         jnp.minimum(state.annual_min_albedo[:, year_idx], albedo)
     )
 
-    # for exposed firn, get the minimum albedo from the year exposed
+    # for exposed firn, use the minimum albedo from the year it was exposed
     exposed_year = (state.lage[:, 0] / 365.25).astype(int)
     exposed_idx = exposed_year - params.start_year
     albedo_firn = new_annual_min_albedo[jnp.arange(state.lage.shape[0]), exposed_idx]
 
-    # fill initialized 1 values with our constant albedo_firn
-    albedo_firn = jnp.where(
-        albedo_firn < 1, albedo_firn, params.albedo_firn
-    )
+    albedo_firn = jnp.where(albedo_firn < 1, albedo_firn, params.albedo_firn)
 
     final_albedo = jnp.where(
-        state.ltype[:, 0] == 0,
+        state.ltype[:, top] == 0,
         albedo,
-        jnp.where(state.ltype[:, 0] == 1,
-                  albedo_firn, params.albedo_ice)
+        jnp.where(state.ltype[:, top] == 1, albedo_firn, params.albedo_ice)
     )
     return final_albedo, new_annual_min_albedo
