@@ -1,7 +1,8 @@
 """
 Step 2 of PEBSI MERRA-2 preprocessing: aggregates daily MERRA-2 files into per-variable
 zarr stores (one per dataset in dataset_variables), then saves QC plots for each variable.
-Files are batched by year and read in parallel via open_mfdataset for speed.
+Files are batched by year and read in parallel via open_mfdataset for speed. Stores are
+written pre-chunked (see TIME_CHUNK/LAT_CHUNK/LON_CHUNK) so no rewrite is needed after.
 """
 import os
 import glob
@@ -33,6 +34,10 @@ dataset_variables = {
     'flx': ['PRECTOTCORR'],
 }
 
+# target on-disk zarr chunking, set explicitly on first write so appends land pre-chunked
+# and no full-store rewrite is needed later
+TIME_CHUNK, LAT_CHUNK, LON_CHUNK = 8760, 20, 16
+
 
 def _file_time(f):
     assert 'Nx.' in f, 'File name is in an unexpected format: manually specify how to pull timestamp from the filename'
@@ -55,65 +60,71 @@ def process_files(dataset, data_fp, filetype='.nc4'):
     # only bother opening files that are missing from at least one var
     file_times = {f: _file_time(f) for f in daily_files}
     new_files = [f for f in daily_files if any(file_times[f] not in times_var[var] for var in variables)]
-    if not new_files:
+
+    if new_files:
+        # batch by year: one open_mfdataset + one to_zarr write per var per year, instead of
+        # one to_zarr call per file (which gets dramatically slower as the store grows).
+        # this also bounds how much work is lost if the run gets interrupted.
+        files_by_year = defaultdict(list)
+        for f in new_files:
+            files_by_year[file_times[f].year].append(f)
+
+        n_added = 0
+        for year in tqdm(sorted(files_by_year), desc=f'Processing {dataset}', unit='year'):
+            year_files = files_by_year[year]
+            ds = xr.open_mfdataset(year_files, combine='nested', concat_dim='time', parallel=True, chunks={'time': 24})
+            ds = ds.sel(lat=slice(lat_min, lat_max), lon=slice(lon_min, lon_max)).load()
+            n_added += len(year_files)
+
+            for var in variables:
+                da = ds[var]
+                mask = np.array([t not in times_var[var] for t in pd.to_datetime(da.time.values)])
+                if not mask.any():
+                    continue
+                da = da.isel(time=mask)
+                times_var[var].update(pd.to_datetime(da.time.values))
+
+                fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
+                if os.path.exists(fn_zarr_var):
+                    da.to_dataset(name=var).to_zarr(fn_zarr_var, mode='a', append_dim='time', consolidated=False)
+                else:
+                    da.to_zarr(fn_zarr_var, mode='w', consolidated=False, zarr_format=2,
+                               encoding={var: {'chunks': (TIME_CHUNK, LAT_CHUNK, LON_CHUNK)}})
+            ds.close()
+
+        print(f'Concatenated {n_added} files to {dataset}_{roi}')
+    else:
         print(f'{dataset}: nothing new to add')
-        return
 
-    # batch by year: one open_mfdataset + one to_zarr write per var per year, instead of
-    # one to_zarr call per file (which gets dramatically slower as the store grows).
-    # this also bounds how much work is lost if the run gets interrupted.
-    files_by_year = defaultdict(list)
-    for f in new_files:
-        files_by_year[file_times[f].year].append(f)
+    # always check chunking + consolidate, even if nothing new was added this run
+    for var in variables:
+        finalize_store(var)
 
-    n_added = 0
-    for year in tqdm(sorted(files_by_year), desc=f'Processing {dataset}', unit='year'):
-        year_files = files_by_year[year]
-        ds = xr.open_mfdataset(year_files, combine='nested', concat_dim='time', parallel=True, chunks={'time': 24})
-        ds = ds.sel(lat=slice(lat_min, lat_max), lon=slice(lon_min, lon_max)).load()
-        n_added += len(year_files)
 
-        for var in variables:
-            da = ds[var]
-            mask = np.array([t not in times_var[var] for t in pd.to_datetime(da.time.values)])
-            if not mask.any():
-                continue
-            da = da.isel(time=mask)
-            times_var[var].update(pd.to_datetime(da.time.values))
+def finalize_store(var):
+    """Rechunk to (TIME_CHUNK, LAT_CHUNK, LON_CHUNK) if needed (no-op for stores already
+    written with that chunking), then consolidate metadata. No sort/dedupe: process_files
+    builds each store in chronological order already, so re-sorting is unnecessary."""
+    fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
+    target_chunks = (TIME_CHUNK, LAT_CHUNK, LON_CHUNK)
+    current_chunks = tuple(zarr.open_group(fn_zarr_var, mode='r')[var].chunks)
 
-            fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
-            if os.path.exists(fn_zarr_var):
-                da.to_dataset(name=var).to_zarr(fn_zarr_var, mode='a', append_dim='time', consolidated=False)
-            else:
-                da.to_zarr(fn_zarr_var, mode='w', consolidated=False)
-        ds.close()
-
-    print(f'Concatenated {n_added} files to {dataset}_{roi}')
-
-    # resort and dedupe each var, since files can be appended out of order
-    for var in dataset_variables[dataset]:
-        fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
-        fn_zarr_unsorted = os.path.join(fp_zarr_store, var, f'{var}_{roi}_unsorted.zarr')
-
-        # rename the existing unsorted zarr store to a temporary name
+    if current_chunks != target_chunks:
+        fn_zarr_old = os.path.join(fp_zarr_store, var, f'{var}_{roi}_unchunked.zarr')
         ii = 0
-        while os.path.exists(fn_zarr_unsorted.replace('unsorted', f'unsorted_{ii}')):
+        while os.path.exists(fn_zarr_old.replace('unchunked', f'unchunked_{ii}')):
             ii += 1
-        fn_zarr_unsorted = fn_zarr_unsorted.replace('unsorted', f'unsorted_{ii}')
-        os.rename(fn_zarr_var, fn_zarr_unsorted)
+        fn_zarr_old = fn_zarr_old.replace('unchunked', f'unchunked_{ii}')
+        os.rename(fn_zarr_var, fn_zarr_old)
 
-        # sort and chunk the new dataset
-        ds_sorted = xr.open_zarr(fn_zarr_unsorted).sortby('time')
-        ds_sorted = ds_sorted.sel(time=~ds_sorted.time.to_index().duplicated())
-        ds_sorted = ds_sorted.chunk({'time': 8760, 'lat': 20, 'lon': 16})
-        for v in ds_sorted.variables:
-            ds_sorted[v].encoding.clear()
+        ds = xr.open_zarr(fn_zarr_old, consolidated=False)
+        ds = ds.chunk({'time': TIME_CHUNK, 'lat': LAT_CHUNK, 'lon': LON_CHUNK})
+        for v in ds.variables:
+            ds[v].encoding.clear()
+        ds.to_zarr(fn_zarr_var, mode='w', consolidated=False, zarr_format=2)
 
-        # store sorted zarr and consolidate metadata
-        ds_sorted.to_zarr(fn_zarr_var, mode='w', consolidated=False)
-        zarr.consolidate_metadata(zarr.DirectoryStore(fn_zarr_var))
+    zarr.consolidate_metadata(fn_zarr_var)
 
-    print(f'Resorted and reconsolidated all vars in {dataset}')
 
 # quality control figure: missing data percentage
 def plot_qc(var):
