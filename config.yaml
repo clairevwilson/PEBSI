@@ -8,7 +8,7 @@
 # ================================================
 #               SIMULATION METADATA
 # ================================================
-store_data: true
+# store_data: true
 debug: false 
 output_fp: '../Output/big_gulkana/'
 # climate_fp: '/Volumes/TOSHIBA EXT/climate_data/' # '/run/media/claire/TOSHIBA EXT/'

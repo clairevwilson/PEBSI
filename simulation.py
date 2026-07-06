@@ -135,6 +135,16 @@ class PEBSI():
         # ================== SHADING ==================
         terrain.load_shading()
 
+        # ============= CLIMATE DATA GRID =============
+        # build a lightweight Climate object to get cell mapping
+        _cl = Climate.__new__(Climate)
+        _cl.params = self.params
+        _cl.terrain = terrain
+        _cl.get_vardict()
+        _cl.get_unique_cells()
+
+        # save to self
+        self._cl = _cl
         self.terrain = terrain
         return
     
@@ -216,14 +226,29 @@ class PEBSI():
         )
 
         # time-invariant spatial attributes
+        # per-cell elevation arrays are zero here; filled in pack_forcings()
+
+        N_UNIQUE = self._cl.N_UNIQUE
         point_attrs = PointAttributes(
+            # per-point (N_POINTS,)
             latitude=jnp.array(self.terrain.lat_n, dtype=jnp.float64),
             longitude=jnp.array(self.terrain.lon_n, dtype=jnp.float64),
             elevation=jnp.array(self.terrain.elev_n, dtype=jnp.float64),
             slope=jnp.array(self.terrain.slope_n, dtype=jnp.float64),
             aspect=jnp.array(self.terrain.aspect_n, dtype=jnp.float64),
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
+            median_elev=jnp.array(self.terrain.median_elev_n, dtype=jnp.float64),
+            cell_idx=jnp.array(self._cl.point_to_cell_idx, dtype=jnp.int32),
+
+            # per-cell (N_UNIQUE,) dummy arrays
+            gcm_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
+            temp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
+            sp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
+            LWin_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
         )
+
+        # store point_attrs to self since they are invariant
+        self.point_attrs = point_attrs
         return glacier_state, point_attrs
     
     def pack_forcings(self, params, dates, start, spinup=False):
@@ -242,12 +267,22 @@ class PEBSI():
         # process the dataset for bias, elevation, etc.
         climate.process_climate()
         self.climate = climate
-        
-        # define conversion factors 
+
+        # update self.point_attrs with the real per-cell elevation
+        if not getattr(self, '_cell_elevs_set', False):
+            self.point_attrs = self.point_attrs._replace(
+                gcm_elev=jnp.array(climate.terrain.gcm_elev_n, dtype=jnp.float64),
+                temp_elev=jnp.array(climate.temp_elev, dtype=jnp.float64),
+                sp_elev=jnp.array(climate.sp_elev, dtype=jnp.float64),
+                LWin_elev=jnp.array(climate.LWin_elev, dtype=jnp.float64),
+            )
+            self._cell_elevs_set = True
+
+        # define conversion factors
         CTOK = self.params.celsius_to_kelvin
         SPH = self.params.seconds_per_hour
 
-        # slice solar inputs from terrain by (dayofyear, hour) — year-agnostic
+        # slice solar inputs from terrain by (day of year, hour)
         shading_idx = [self.terrain.shading_lookup[(d, h)]
                        for d, h in zip(dates.dayofyear, dates.hour)]
         shadow_mask = self.terrain.shadow_mask[:, shading_idx]
@@ -255,10 +290,12 @@ class PEBSI():
         solar_zenith = self.terrain.solar_zenith[:, shading_idx]
 
         # ================== CLIMATE ==================
-        # per-point local solar hour: (N_TIME, N_POINTS)
-        tz_offset = np.round(self.terrain.lon_n / 15).astype(int)  # (N_POINTS,)
+        # per-cell local solar hour: (N_TIME, N_UNIQUE)
+        tz_offset = np.round(climate.unique_lons / 15).astype(int)  # (N_UNIQUE,)
         local_hour = (dates.hour.values[:, None] + tz_offset[None, :]) % 24
 
+        # climate variables are (N_UNIQUE, N_TIME) in climate object;
+        # transpose to (N_TIME, N_UNIQUE) for JAX scan
         forcings = ClimateState(
             time_idx=jnp.array(jnp.arange(start, start + len(dates)), dtype=jnp.int32),
             year=jnp.array(dates.year, dtype=jnp.int32),
@@ -341,8 +378,8 @@ class PEBSI():
     #                      SPIN-UP AND SIMULATION
     # ----------------------------------------------------------------- #
 
-    def _run_chunk(self, state, point_attrs, 
-                   static_args, dynamic_args, 
+    def _run_chunk(self, state,
+                   static_args, dynamic_args,
                    chunk_dates, start, spinup=False):
         """
         Packs forcings for one temporal chunk, runs main(), and returns
@@ -351,12 +388,14 @@ class PEBSI():
         chunk_size = self.params.temporal_chunks
         actual_length = len(chunk_dates)
 
+        # pack the forcings for this temporal chunk
         chunk_forcings = self.pack_forcings(self.params, chunk_dates, start, spinup)
 
         if not spinup and not self.params.progress_bar and hasattr(self, '_chunk_label'):
             ci, cn = self._chunk_label
             print(f'\033[2K\r~ Running chunk    [{ci}/{cn}] ~', end='', flush=True)
 
+        # check if we need to pad forcings with NaNs
         if actual_length < chunk_size:
             pad_amt = chunk_size - actual_length
             chunk_forcings = jax.tree.map(
@@ -364,15 +403,18 @@ class PEBSI():
                 chunk_forcings
             )
 
-        state, chunk_records = main(state, chunk_forcings, point_attrs, static_args, dynamic_args)
+        # run main for this temporal chunk
+        state, chunk_records = main(state, chunk_forcings, self.point_attrs, 
+                                    static_args, dynamic_args)
         jax.effects_barrier()
 
+        # crop the output records to the actual chunk size
         if actual_length < chunk_size:
             chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
 
         return state, chunk_records
     
-    def spinup(self, state, point_attrs):
+    def spinup(self, state):
         """
         Spins up the model for the user-prescribed duration
         by repeating forcings beginning on the simulation 
@@ -415,8 +457,8 @@ class PEBSI():
         # loop through temporal chunks for first year
         for i, start in enumerate(range(0, len(spinup_dates), chunk_size)):
             chunk_dates = spinup_dates[start:start + chunk_size]
-            state, _ = self._run_chunk(state, point_attrs, 
-                                       self.config.static_args, self.config.dynamic_args, 
+            state, _ = self._run_chunk(state,
+                                       self.config.static_args, self.config.dynamic_args,
                                        chunk_dates, start, spinup=True)
             spinup_chunk[0] = i + 1
 
@@ -447,6 +489,7 @@ class PEBSI():
         dynamic_args = self.config.dynamic_args
         params = self.config.params
 
+        # prepare all the inputs
         self.prepare_spatial_inputs()
         self.prepare_initial_state()
         initial_state, point_attrs = self.pack_states()
@@ -460,7 +503,7 @@ class PEBSI():
             resume_fp = resume_from
             self.spinup_time = 30.0  # fallback seed for progress bar
         else:
-            state = self.spinup(initial_state, point_attrs)
+            state = self.spinup(initial_state)
             start_from = 0
             resume_fp = None
 
@@ -494,7 +537,7 @@ class PEBSI():
             chunk_start = time.time()
 
             # simulate one chunk
-            state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
+            state, chunk_records = self._run_chunk(state, static_args, dynamic_args, chunk_dates, start)
 
             # update progress bar
             chunk_end = time.time()

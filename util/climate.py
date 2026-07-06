@@ -44,7 +44,6 @@ class Climate():
         # load params and simulation information
         self.params = params
         self.terrain = terrain
-        self.get_spatial_temporal_info(dates)
 
         # list all required variables
         self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
@@ -54,6 +53,13 @@ class Climate():
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()
+
+        # snap simulation points to MERRA-2 grid; sets N_UNIQUE, unique_lats/lons, point_to_cell_idx
+        self.get_unique_cells()
+
+        # set temporal metadata and shape = (N_UNIQUE, N_TIME)
+        self.get_spatial_temporal_info(dates)
+
         self.bias_vars = []
         if not self.params.use_aws:
             self.measured_vars = []
@@ -64,16 +70,57 @@ class Climate():
             self.get_aws()
         return
     
+    def get_unique_cells(self):
+        """
+        Snaps each simulation point to its nearest MERRA-2 grid cell
+        using coordinates from the constants file, then identifies the
+        unique set of cells needed. Many points can share one cell, so
+        loading (N_UNIQUE, N_TIME) instead of (N_POINTS, N_TIME) gives
+        large memory savings when N_POINTS >> N_UNIQUE.
+
+        When use_aws=True, every point shares the same single AWS
+        forcing, so N_UNIQUE is set to 1 directly.
+
+        Sets:
+            self.unique_lats / unique_lons  (N_UNIQUE,)
+            self.point_to_cell_idx          (N_POINTS,) int
+            self.N_UNIQUE
+        """
+        if self.params.use_aws:
+            # one cell: all points get the same AWS forcing
+            self.N_UNIQUE = 1
+            self.unique_lats = np.array([np.mean(self.terrain.lat_n)])
+            self.unique_lons = np.array([np.mean(self.terrain.lon_n)])
+            self.point_to_cell_idx = np.zeros(self.terrain.N_POINTS, dtype=int)
+            return
+
+        z_fp = self.GCM_fp + self.var_dict['elev']['fn']
+        with xr.open_dataset(z_fp) as ds:
+            merra_lats = ds[self.lat_vn].values
+            merra_lons = ds[self.lon_vn].values
+
+        lat_n = self.terrain.lat_n
+        lon_n = self.terrain.lon_n
+
+        # nearest MERRA-2 grid lat/lon for each point
+        snapped_lats = merra_lats[np.argmin(np.abs(merra_lats[:, None] - lat_n[None, :]), axis=0)]
+        snapped_lons = merra_lons[np.argmin(np.abs(merra_lons[:, None] - lon_n[None, :]), axis=0)]
+
+        pairs = np.stack([snapped_lats, snapped_lons], axis=1)
+        unique_pairs, self.point_to_cell_idx = np.unique(pairs, axis=0, return_inverse=True)
+        self.unique_lats = unique_pairs[:, 0]
+        self.unique_lons = unique_pairs[:, 1]
+        self.N_UNIQUE = len(self.unique_lats)
+        return
+
     def get_spatial_temporal_info(self, dates):
         """
-        Loads metadata about the points and 
+        Loads metadata about the points and
         dates in the simulation.
         """
         self.dates = pd.to_datetime(dates).to_numpy()
-            
-        # specify spatial and temporal information
         self.N_TIME = len(self.dates)
-        self.shape = (self.terrain.N_POINTS, self.N_TIME)
+        self.shape = (self.N_UNIQUE, self.N_TIME)
         return
     
     def get_aws(self):
@@ -98,9 +145,9 @@ class Climate():
             f'Check input dates: end date after range of AWS data ({data_end})'
         df = df.loc[self.dates]
 
-        # store AWS elevation as a (N_POINTS,) array for elevation adjustment methods
+        # store AWS elevation as a (N_UNIQUE,) = (1,) array for elevation adjustment methods
         assert self.params.aws_elev is not None, 'aws_elev must be set in config when use_aws=True'
-        self.aws_elev = np.full(self.terrain.N_POINTS, self.params.aws_elev)
+        self.aws_elev = np.full(self.N_UNIQUE, self.params.aws_elev)
 
         # get the available variables (intersection of data columns and known model vars)
         all_aws_vars = self.all_vars + self.optional_vars
@@ -115,10 +162,10 @@ class Climate():
         else:
             self.wind_direction = True
 
-        # broadcast each AWS time series to (N_POINTS, N_TIME)
+        # broadcast each AWS time series to (N_UNIQUE, N_TIME) = (1, N_TIME)
         for var in self.measured_vars:
-            time_series = df[var].astype(float).values               # (N_TIME,)
-            data = np.tile(time_series, (self.terrain.N_POINTS, 1))  # (N_POINTS, N_TIME)
+            time_series = df[var].astype(float).values          # (N_TIME,)
+            data = np.tile(time_series, (self.N_UNIQUE, 1))     # (N_UNIQUE, N_TIME)
             setattr(self, var, data)
 
         # determine which variables are still needed from reanalysis
@@ -142,24 +189,21 @@ class Climate():
     
     def get_data(self):
         """
-        Loads all the raw climate data.
+        Loads all the raw climate data at unique MERRA-2 grid cells.
+        Arrays are (N_UNIQUE, N_TIME); expansion to (N_POINTS, N_TIME)
+        happens on the fly inside the JAX step function.
         """
-        # load time and point data
-        terrain = self.terrain
-        
-        # get lat/lon DataArrays for indexing spatial data
-        lat_n = terrain.lat_n
-        lon_n = terrain.lon_n
-        self.point_lats = xr.DataArray(lat_n, dims='point')
-        self.point_lons = xr.DataArray(lon_n, dims='point')
-        
-        # get GCM data geopotential
+        # DataArrays over unique cells for xarray .sel()
+        self.point_lats = xr.DataArray(self.unique_lats, dims='point')
+        self.point_lons = xr.DataArray(self.unique_lons, dims='point')
+
+        # get GCM geopotential elevation at each unique cell
         z_fp = self.GCM_fp + self.var_dict['elev']['fn']
         with xr.open_dataarray(z_fp) as zds:
-            zds = zds.sel({self.lat_vn: self.point_lats, 
-                           self.lon_vn: self.point_lons},method='nearest')
-            zds = self.check_units('elev',zds)
-            self.terrain.gcm_elev_n = zds.isel(time=0).values
+            zds = zds.sel({self.lat_vn: self.point_lats,
+                           self.lon_vn: self.point_lons}, method='nearest')
+            zds = self.check_units('elev', zds)
+            self.terrain.gcm_elev_n = zds.isel(time=0).values  # (N_UNIQUE,)
         
         # loop through vars
         for var in self.need_vars:
@@ -219,8 +263,8 @@ class Climate():
 
         # slice time to chunk window before spatial sel to minimize data pulled
         N_TIME = len(dates)
-        N_POINTS = len(self.point_lats)
-        data_array = np.empty((N_POINTS, N_TIME), dtype=np.float64)
+        N_UNIQUE = len(self.point_lats)
+        data_array = np.empty((N_UNIQUE, N_TIME), dtype=np.float64)
 
         # time bounds
         t_start = dates[0]
@@ -252,7 +296,7 @@ class Climate():
 
         # slice by lat and lon points
         if lat_vn not in da_sliced.dims or lon_vn not in da_sliced.dims:
-            da_sliced = da_sliced.expand_dims(point=N_POINTS)
+            da_sliced = da_sliced.expand_dims(point=N_UNIQUE)
         else:
             da_sliced = da_sliced.sel(
                 {lat_vn: self.point_lats, lon_vn: self.point_lons},
@@ -311,11 +355,21 @@ class Climate():
         # apply climatic perturbations
         self.apply_perturbations()
 
-        # apply parameters (precipitation / wind / dust factors)
-        self.apply_parameters()
+        # ensure temp_elev is set: station elevation if bias-corrected, else GCM elevation
+        if not hasattr(self, 'temp_elev'):
+            self.temp_elev = self.terrain.gcm_elev_n  # (N_UNIQUE,)
 
-        # apply elevation correction
-        self.adjust_to_elevation()
+        # ensure sp_elev and LWin_elev are set: AWS elevation if measured, else GCM elevation
+        if not hasattr(self, 'aws_elev'):
+            self.sp_elev = self.terrain.gcm_elev_n
+            self.LWin_elev = self.terrain.gcm_elev_n
+        else:
+            self.sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
+            self.LWin_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
+
+        # NOTE: apply_parameters (kp, wind_factor, dust_factor) and
+        # adjust_to_elevation are now applied per-point inside the JAX
+        # step function, after expanding (N_UNIQUE) → (N_POINTS).
 
         # check all required variables are full
         failed = []
@@ -664,23 +718,23 @@ class Climate():
         # open the dataset for this group
         ds = xr.open_dataset(self.params.bias_fn, group=var)
 
-        # load lats/lons from quantile mapping data and simulation points
+        # load lats/lons from quantile mapping data and unique MERRA-2 cells
         data_lat = ds.lat.values[None, :]
-        glacier_lat = self.terrain.lat_n[:, None]
+        glacier_lat = self.unique_lats[:, None]
         data_lon = ds.lon.values[None, :]
-        glacier_lon = self.terrain.lon_n[:, None]
+        glacier_lon = self.unique_lons[:, None]
 
-        # find nearest station to each grid cell
+        # find nearest station to each unique cell
         coslat = np.cos(np.deg2rad(glacier_lat))
         dist = ((data_lat - glacier_lat))**2 + ((data_lon - glacier_lon) * coslat)**2
-        station_idx = dist.argmin(axis=1)          # (N_POINTS,) which station each cell uses
+        station_idx = dist.argmin(axis=1)          # (N_UNIQUE,) which station each cell uses
 
         # load data
         to_correct = getattr(self, var)
         corrected = np.empty_like(to_correct, dtype=float)
 
         # storage for elevation (needed for temp)
-        temp_elev = np.empty(self.terrain.N_POINTS)
+        temp_elev = np.empty(self.N_UNIQUE)
 
         # load CDF from the pre-processed quantile mapping data
         merra_cdf = ds.merra_cdf.values     # (N_STATIONS, N_QUANTILES)

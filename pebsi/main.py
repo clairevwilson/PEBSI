@@ -23,6 +23,7 @@ import jax.numpy as jnp
 # Local libraries
 from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver
+from pebsi.forcing import expand_and_adjust
 from util.layers import *
 from pebsi.state import StepOutputs
 
@@ -65,6 +66,8 @@ def main(
         Runs all processes for a single timestep and
         updates the records.
         """
+        current_forcings = expand_and_adjust(current_forcings, point_attrs, params)
+
         # initialize mass balance check
         current_mass = fetch_current_mass(current_state)
         def print_cons(forcings, error, cons_list):

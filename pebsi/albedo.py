@@ -9,10 +9,9 @@ import json
 import numpy as np
 import jax.numpy as jnp
 import jax
+from util.defaults import emulator_fn as _NPZ_PATH
 
 # ── Load emulator weights once at import time ──────────────────────────────
-
-_NPZ_PATH = 'snicar_emulator/emulator.npz'
 
 def _load_emulator(path):
     data = np.load(path, allow_pickle=False)

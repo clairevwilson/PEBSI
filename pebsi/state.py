@@ -121,16 +121,26 @@ class ClimateState(NamedTuple):
 
 class PointAttributes(NamedTuple):
     """
-    Time-invariant spatial attributes for each point
-    
-    Array dimensions: (N_POINTS,)
+    Time-invariant spatial attributes for each point.
+
+    Per-point arrays: (N_POINTS,)
+    Per-cell arrays:  (N_UNIQUE,)  — one entry per unique MERRA-2 grid cell
     """
+    # ========================= Per-point (N_POINTS,) =========================
     latitude: jnp.ndarray           # Point latitude [deg]
     longitude: jnp.ndarray          # Point longitude [deg, -180 to 180]
     elevation: jnp.ndarray          # Point elevation [m a.s.l.]
     slope: jnp.ndarray              # Point slope [deg]
     aspect: jnp.ndarray             # Point aspect [deg, 0=N]
     sky_view_factor: jnp.ndarray    # Sky-view factor [-]
+    median_elev: jnp.ndarray        # Glacier median elevation for precip gradient [m]
+    cell_idx: jnp.ndarray           # Index into (N_UNIQUE,) cell arrays for this point
+
+    # ========================= Per-cell (N_UNIQUE,) ==========================
+    gcm_elev: jnp.ndarray           # GCM grid cell elevation [m]
+    temp_elev: jnp.ndarray          # Reference elevation for temp lapse rate [m]
+    sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
+    LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
 
 class StepOutputs(NamedTuple):
     """

@@ -66,13 +66,10 @@ cds_input_fn = '{g}{s}_climate.nc'                          # Climate dataset fi
 aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename
 
 # INITIAL CONDITIONS
-initial_temp_fn = 'data/initial_temp_profile.csv'           # Initial temperature profile filepath
-initial_density_fn = 'data/initial_density_profile.csv'     # Initial density profile filepath
-initial_grains_fn = 'data/initial_grainsize_profile.csv'    # Initial grain size profile filepath
-initial_LAP_fn = 'data/initial_laps_profile.csv'            # Initial LAP content
-
-# SNICAR EMULATOR
-emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator filename
+initial_temp_fn = 'data/init/initial_temp_profile.csv'      # Initial temperature profile filepath
+initial_density_fn = 'data/init/initial_density_profile.csv' # Initial density profile filepath
+initial_grains_fn = 'data/init/initial_grainsize_profile.csv' # Initial grain size profile filepath
+initial_LAP_fn = 'data/init/initial_laps_profile.csv'       # Initial LAP content
 
 # =============================================== INTERNAL ===========================================================
 #       The following filepaths are internal to the model and should be relative to the current directory.
@@ -83,6 +80,7 @@ emulator_fn = 'data/albedo_emulator.joblib'                 # SNICAR emulator fi
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
 compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
+emulator_fn = 'data/snicar_emulator.npz'                    # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
 
 # CLIMATE
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
