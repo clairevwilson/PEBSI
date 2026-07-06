@@ -231,6 +231,10 @@ class PEBSI():
         Packs the climate forcings for a temporal
         chunk into JAX-compatible state.
         """
+        if not spinup and not params.progress_bar and hasattr(self, '_chunk_label'):
+            ci, cn = self._chunk_label
+            print(f'\033[2K\r~ Loading climate  [{ci}/{cn}] ~', end='', flush=True)
+
         # initiate the climate class for these dates
         climate = Climate(dates, params, self.terrain)
         climate.get_data()
@@ -348,6 +352,10 @@ class PEBSI():
         actual_length = len(chunk_dates)
 
         chunk_forcings = self.pack_forcings(self.params, chunk_dates, start, spinup)
+
+        if not spinup and not self.params.progress_bar and hasattr(self, '_chunk_label'):
+            ci, cn = self._chunk_label
+            print(f'\033[2K\r~ Running chunk    [{ci}/{cn}] ~', end='', flush=True)
 
         if actual_length < chunk_size:
             pad_amt = chunk_size - actual_length
@@ -473,8 +481,10 @@ class PEBSI():
         progress = ChunkProgress(total_steps, params.progress_bar, prev_duration)
 
         chunk_i = 0
+        self._chunk_label = (0, n_chunks)  # (current, total) for use in sub-methods
         for start in range(start_from, total_steps, chunk_size):
             chunk_i += 1
+            self._chunk_label = (chunk_i, n_chunks)
             # get dates in this chunk
             chunk_dates = self.dates[start:start + chunk_size]
             actual_size = len(chunk_dates)
@@ -483,9 +493,6 @@ class PEBSI():
             progress.start_chunk(start, actual_size, prev_duration)
             chunk_start = time.time()
 
-            if not self.params.progress_bar:
-                print(f'\033[2K\r~ Loading climate  [{chunk_i}/{n_chunks}] ~', end='', flush=True)
-
             # simulate one chunk
             state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
 
@@ -493,19 +500,13 @@ class PEBSI():
             chunk_end = time.time()
             prev_duration = chunk_end - chunk_start
             progress.finish_chunk(start, actual_size)
-            if not self.params.progress_bar:
-                print(f'\033[2K\r~ Chunk complete   [{chunk_i}/{n_chunks}] — {prev_duration:.1f}s ~', end='', flush=True)
 
             # store data before checkpointing so the two are always in sync
             if params.store_data:
                 if not self.params.progress_bar:
-                    print(f'\033[2K\r~ Storing chunk    [{chunk_i}/{n_chunks}] ~', end='', flush=True)
+                    print(f'\033[2K\r~ Storing output   [{chunk_i}/{n_chunks}] ~', end='', flush=True)
                 model_output.store_chunk(chunk_records, chunk_dates, start)
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
-
-                if not self.params.progress_bar:
-                    output_duration = time.time() - chunk_end
-                    print(f'\033[2K\r~ Chunk stored     [{chunk_i}/{n_chunks}] — {output_duration:.1f}s ~', end='', flush=True)
             del chunk_records
 
         progress.close()
