@@ -15,12 +15,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 # ============================== USER CONFIG ==============================
-data_fp = '/run/media/claire/TOSHIBA EXT/MERRA2/'
-fp_zarr_store = data_fp + 'zarr_store/'
-fp_figs = data_fp + 'Figs/'
-
 # name for the RGI region downloaded
 roi = 'reg01'
+
+data_fp = '/Volumes/TOSHIBA EXT/MERRA2/'
+fp_zarr_store = f'/Users/cvw/local/climate_data/{roi}/'
+fp_figs = data_fp + 'Figs/'
 
 # bounding box, copied from 1_download_MERRA2.py, used to trim files to a common grid
 lat_min, lat_max = 50, 72
@@ -51,7 +51,7 @@ def process_files(dataset, data_fp, filetype='.nc4'):
     # check which times already exist for each var
     times_var = {}
     for var in variables:
-        fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
+        fn_zarr_var = os.path.join(fp_zarr_store, f'{var}_{roi}.zarr')
         if os.path.exists(fn_zarr_var):
             times_var[var] = set(pd.to_datetime(xr.open_zarr(fn_zarr_var).time.values))
         else:
@@ -84,7 +84,7 @@ def process_files(dataset, data_fp, filetype='.nc4'):
                 da = da.isel(time=mask)
                 times_var[var].update(pd.to_datetime(da.time.values))
 
-                fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
+                fn_zarr_var = os.path.join(fp_zarr_store, f'{var}_{roi}.zarr')
                 if os.path.exists(fn_zarr_var):
                     da.to_dataset(name=var).to_zarr(fn_zarr_var, mode='a', append_dim='time', consolidated=False)
                 else:
@@ -105,12 +105,12 @@ def finalize_store(var):
     """Rechunk to (TIME_CHUNK, LAT_CHUNK, LON_CHUNK) if needed (no-op for stores already
     written with that chunking), then consolidate metadata. No sort/dedupe: process_files
     builds each store in chronological order already, so re-sorting is unnecessary."""
-    fn_zarr_var = os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr')
+    fn_zarr_var = os.path.join(fp_zarr_store, f'{var}_{roi}.zarr')
     target_chunks = (TIME_CHUNK, LAT_CHUNK, LON_CHUNK)
     current_chunks = tuple(zarr.open_group(fn_zarr_var, mode='r')[var].chunks)
 
     if current_chunks != target_chunks:
-        fn_zarr_old = os.path.join(fp_zarr_store, var, f'{var}_{roi}_unchunked.zarr')
+        fn_zarr_old = os.path.join(fp_zarr_store, f'{var}_{roi}_unchunked.zarr')
         ii = 0
         while os.path.exists(fn_zarr_old.replace('unchunked', f'unchunked_{ii}')):
             ii += 1
@@ -124,11 +124,12 @@ def finalize_store(var):
         ds.to_zarr(fn_zarr_var, mode='w', consolidated=False, zarr_format=2)
 
     zarr.consolidate_metadata(fn_zarr_var)
+    print('consolidated')
 
 
 # quality control figure: missing data percentage
 def plot_qc(var):
-    ds = xr.open_zarr(os.path.join(fp_zarr_store, var, f'{var}_{roi}.zarr'))
+    ds = xr.open_zarr(os.path.join(fp_zarr_store, f'{var}_{roi}.zarr'))
     da = ds[var]
     n_time = da.sizes['time']
 

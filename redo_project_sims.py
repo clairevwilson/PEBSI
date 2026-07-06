@@ -56,10 +56,12 @@ configs = {
     'n_points': len(sites),
     'bias_vars': ['temp'],
 
-    'start_date': '2024-04-20',
-    'end_date': '2025-08-20',
+    'start_date': '2000-04-01',
+    'end_date': '2025-09-01',
 
     'dust_factor': 20,
+    'ksp_BC': 1,
+    'ksp_OC': 1,
     'kp': kps, 
     'albedo_ice': a_ices,
     'wind_factor': wind_factors, 
@@ -68,11 +70,11 @@ configs = {
     'constant_freshgrainsize': 54.5, 
 
     'debug': True,
-    'store_data': True,
+    # 'progress_bar': True,
+    # 'store_data': True,
     'store_vars': ['MB','EB','layers','climate'],
 
     'output_fp': '../Output/check/',
-    'climate_fp': '/Volumes/TOSHIBA EXT/climate_data/', # '/run/media/claire/TOSHIBA EXT/',
 
     # 'deposition_data': 'UKESM',
 }

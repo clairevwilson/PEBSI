@@ -62,11 +62,8 @@ def get_albedo(state, params, forcings):
       rho               density [kg m-3]
       black_carbon      BC concentration [ppb by mass]
       brown_carbon      OC concentration [ppb by mass]
-      dust_balkanski_1  dust size bin 1 [ppb] (total dust split evenly across 5 bins)
-      dust_balkanski_2  dust size bin 2 [ppb]
-      dust_balkanski_3  dust size bin 3 [ppb]
-      dust_balkanski_4  dust size bin 4 [ppb]
-      dust_balkanski_5  dust size bin 5 [ppb]
+      dust_total        total dust concentration [ppb] — split into 5 bins internally
+                        using PEBSI bin ratios (same as defaults.py)
       solzen            solar zenith angle [degrees]
       direct            1 if direct illumination, 0 if diffuse
       shp               grain shape: 0=sphere, 1=spheroid, 2=hex plate
@@ -78,14 +75,9 @@ def get_albedo(state, params, forcings):
     lh   = state.lheight[:, top]
 
     # concentrations in ppb (mass of impurity / mass of snow)
-    cBC   = state.lBC[:, top]  / lh * 1e6
-    cOC   = state.lOC[:, top]  / lh * 1e6
-    cdust_total = state.ldust[:, top] / lh * 1e6
-    cdust1 = cdust_total * params.ratio_DU_bin1
-    cdust2 = cdust_total * params.ratio_DU_bin2
-    cdust3 = cdust_total * params.ratio_DU_bin3
-    cdust4 = cdust_total * params.ratio_DU_bin4
-    cdust5 = cdust_total * params.ratio_DU_bin5
+    cBC = state.lBC[:, top]  / lh * 1e6
+    cOC = state.lOC[:, top]  / lh * 1e6
+    cdust = state.ldust[:, top] / lh * 1e6
 
     solzen = jnp.rad2deg(forcings.solar_zenith)
     direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
@@ -95,9 +87,8 @@ def get_albedo(state, params, forcings):
     shp = jnp.where(dry, 2.0, 0.0)
 
     # assemble input in the order the emulator was trained on
-    X = jnp.stack([rds, rho, cBC, cOC,
-                   cdust1, cdust2, cdust3, cdust4, cdust5,
-                   solzen, direct, shp], axis=1)  # (N, 12)
+    X = jnp.stack([rds, rho, cBC, cOC, cdust,
+                   solzen, direct, shp], axis=1)  # (N, 8)
 
     # min-max scale to [0, 1]
     X = (X - _emu['input_min']) / (_emu['input_max'] - _emu['input_min'] + 1e-30)

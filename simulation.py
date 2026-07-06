@@ -293,8 +293,6 @@ class PEBSI():
 
         # print out the time taken to process climate data
         time_elapsed = time.time() - climate.start_time
-        if params.debug and not params.progress_bar and not spinup:
-            print(f'~ Loaded climate data in {time_elapsed:.1f} seconds ~')
         return forcings
     
     # ----------------------------------------------------------------- #
@@ -468,12 +466,15 @@ class PEBSI():
         # ========== MAIN SIMULATION ==========
         total_steps = len(self.dates)
         chunk_size = params.temporal_chunks
+        n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
 
         # seed duration estimate from spin-up (faster now because compiled)
         prev_duration = self.spinup_time * 0.7
         progress = ChunkProgress(total_steps, params.progress_bar, prev_duration)
 
+        chunk_i = 0
         for start in range(start_from, total_steps, chunk_size):
+            chunk_i += 1
             # get dates in this chunk
             chunk_dates = self.dates[start:start + chunk_size]
             actual_size = len(chunk_dates)
@@ -481,6 +482,9 @@ class PEBSI():
             # start timer / progress bar
             progress.start_chunk(start, actual_size, prev_duration)
             chunk_start = time.time()
+
+            if not self.params.progress_bar:
+                print(f'\033[2K\r~ Loading climate  [{chunk_i}/{n_chunks}] ~', end='', flush=True)
 
             # simulate one chunk
             state, chunk_records = self._run_chunk(state, point_attrs, static_args, dynamic_args, chunk_dates, start)
@@ -490,19 +494,23 @@ class PEBSI():
             prev_duration = chunk_end - chunk_start
             progress.finish_chunk(start, actual_size)
             if not self.params.progress_bar:
-                print(f'~ Chunk complete in {prev_duration:.1f} seconds ~')
+                print(f'\033[2K\r~ Chunk complete   [{chunk_i}/{n_chunks}] — {prev_duration:.1f}s ~', end='', flush=True)
 
             # store data before checkpointing so the two are always in sync
             if params.store_data:
+                if not self.params.progress_bar:
+                    print(f'\033[2K\r~ Storing chunk    [{chunk_i}/{n_chunks}] ~', end='', flush=True)
                 model_output.store_chunk(chunk_records, chunk_dates, start)
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
 
                 if not self.params.progress_bar:
                     output_duration = time.time() - chunk_end
-                    print(f'~ Chunk stored in {output_duration:.1f} seconds ~')
+                    print(f'\033[2K\r~ Chunk stored     [{chunk_i}/{n_chunks}] — {output_duration:.1f}s ~', end='', flush=True)
             del chunk_records
 
         progress.close()
+        if not self.params.progress_bar:
+            print()  # end the overwriting line before the summary
 
         time_elapsed = time.time() - self.start_time
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
