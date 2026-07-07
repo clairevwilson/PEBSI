@@ -90,7 +90,7 @@ def apply_parameters(forcings, params):
         dustdry=forcings.dustdry * params.dust_factor,
     )
 
-def expand_and_adjust(forcings, point_attrs, params):
+def domain_expansion(forcings, point_attrs, params):
     """
     Full pipeline: expand cell → point, then apply all elevation
     corrections and per-point parameters.

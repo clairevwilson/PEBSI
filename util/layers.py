@@ -855,6 +855,9 @@ def check_layer_sizes(state, params):
     properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
     properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
     properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
+    properties['lBC'] = jnp.where(dead_mask, 0.0, properties['lBC'])
+    properties['lOC'] = jnp.where(dead_mask, 0.0, properties['lOC'])
+    properties['ldust'] = jnp.where(dead_mask, 0.0, properties['ldust'])
     state = state._replace(**properties)
 
     layer_indices = jnp.arange(n_layers)

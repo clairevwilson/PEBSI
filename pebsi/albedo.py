@@ -67,23 +67,28 @@ def get_albedo(state, params, forcings):
       direct            1 if direct illumination, 0 if diffuse
       shp               grain shape: 0=sphere, 1=spheroid, 2=hex plate
     """
-    top = 0  # index of the surface layer
 
-    rds  = state.lgrainsize[:, top]
-    rho  = state.ldensity[:, top]
-    lh   = state.lheight[:, top]
+    rds = state.lgrainsize[:, 0]
+    rho = state.ldensity[:, 0]
+    lh = state.lheight[:, 0]
 
     # concentrations in ppb (mass of impurity / mass of snow)
-    cBC = state.lBC[:, top]  / lh * 1e6
-    cOC = state.lOC[:, top]  / lh * 1e6
-    cdust = state.ldust[:, top] / lh * 1e6
+    cBC = state.lBC[:, 0] / lh * 1e6
+    cOC = state.lOC[:, 0] / lh * 1e6
+    cdust = state.ldust[:, 0] / lh * 1e6
+
+    has_refreeze = state.lrefreeze[:, 0] > 1e-3
+    has_water = state.lwater[:, 0] > 1e-3
 
     solzen = jnp.rad2deg(forcings.solar_zenith)
     direct = (forcings.tcc <= params.diffuse_cloud_limit).astype(jnp.float32)
 
     # hex plates for dry snow with no refreeze; spheres otherwise
-    dry = (state.lrefreeze[:, top] == 0) & (state.lwater[:, top] <= 1e-3)
-    shp = jnp.where(dry, 2.0, 0.0)
+    if params.option_flat_plates:
+        dry = ~has_refreeze & ~has_water
+        shp = jnp.where(dry, 2.0, 0.0)
+    else:
+        shp = jnp.full_like(cBC, 0.0)
 
     # assemble input in the order the emulator was trained on
     X = jnp.stack([rds, rho, cBC, cOC, cdust,
@@ -113,8 +118,8 @@ def get_albedo(state, params, forcings):
     albedo_firn = jnp.where(albedo_firn < 1, albedo_firn, params.albedo_firn)
 
     final_albedo = jnp.where(
-        state.ltype[:, top] == 0,
+        state.ltype[:, 0] == 0,
         albedo,
-        jnp.where(state.ltype[:, top] == 1, albedo_firn, params.albedo_ice)
+        jnp.where(state.ltype[:, 0] == 1, albedo_firn, params.albedo_ice)
     )
     return final_albedo, new_annual_min_albedo
