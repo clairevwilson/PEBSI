@@ -93,6 +93,7 @@ class Surface():
             Current timestep
         """
         self.stype = layers.ltype[0]
+        # print(self.snow_timestamp)
         self.days_since_snowfall = (timestamp - self.snow_timestamp)/pd.Timedelta(days=1)
         self.get_surr_albedo(layers,timestamp)
         return
@@ -619,6 +620,12 @@ class Surface():
 
         # find broadband albedo from spectral albedo
         self.bba = np.sum(albedo * spectral_weights) / np.sum(spectral_weights)
+
+        if timestamp == pd.to_datetime('2024-07-15 14:00'):
+            print('yup!')
+            with open('actual_inputs_7_15.yaml', 'w') as f:
+                yaml.safe_dump(inputs, f, encoding='utf-8')
+                print(self.bba)
         
         # calculate visible albedo
         vis_idx = np.where((args.wvs <= 0.75) & (args.wvs >= 0.4))[0]

@@ -1,7 +1,8 @@
-start_date: '2012-04-01'
+start_date: '2000-04-01'
 end_date: '2025-09-01'
 use_aws: false
 store_data: true
+store_climate: true
 output_fp: '/trace/group/rounce/cvwilson/Output/ddf/'
 climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
 rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'
@@ -13,6 +14,8 @@ bias_vars:
 # - wind
 constant_freshgrainsize: 54.5
 
+method_turbulent: 'BulkRichardson'
+method_stability: 'BeljaarsHoltslag'
 # ratio_DU_bin1: 0.0
 # ratio_DU_bin2: 0.00065
 # ratio_DU_bin3: 0.01181

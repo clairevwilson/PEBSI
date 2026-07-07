@@ -1,0 +1,332 @@
+BIOOPTICAL:
+  ABS_CFF_CALC: true
+  ABS_CFF_FILE: file.csv
+  ABS_CFF_LOAD_INVIVO: true
+  ABS_CFF_LOAD_RECONSTRUCTED: false
+  CELL_L: 20
+  CELL_R: 10
+  CELL_VOLUME: 1500
+  DIR_PCKG: Data/pigments/
+  DRY_DENSITY: 684
+  FILENAME_NETCDF: alg
+  GO: true
+  INFO_NETCDF: info
+  K_WATER_DIR: Data/OP_data/k_ice_480.csv
+  MIE: false
+  N_ALGAE: 1.4
+  PCKG_GA: false
+  PCKG_SA: false
+  PIGMENT_CONC:
+    Data/pigments/Photop_carotenoids.csv: 0
+    Data/pigments/Photos_carotenoids.csv: 0
+    Data/pigments/alloxanthin.csv: 0
+    Data/pigments/antheraxanthin.csv: 0
+    Data/pigments/chl-a.csv: 0
+    Data/pigments/chl-b.csv: 0
+    Data/pigments/lutein.csv: 0
+    Data/pigments/neoxanthin.csv: 0
+    Data/pigments/pheophytin.csv: 0
+    Data/pigments/ppg.csv: 0
+    Data/pigments/trans_astaxanthin.csv: 0
+    Data/pigments/trans_astaxanthin_ester.csv: 0
+    Data/pigments/violaxanthin.csv: 0
+    Data/pigments/zeaxanthin.csv: 0
+  PIGMENT_DIR: Data/pigments/
+  PLOT_K_ABS_CFF: false
+  PLOT_SSPS: true
+  REPORT_DIMS: false
+  SAVEFIG_SSPS: false
+  SAVE_NETCDF: false
+  SAVE_N_K_ABS_CFF: false
+  SAVE_PATH_FIG: Data/pigments/
+  SAVE_PATH_NETCDF: Data/OP_data/480band/lap/
+  SAVE_PLOT_K_ABS_CFF: false
+  UNIT: 0
+  WET_DENSITY: 1060
+CTRL:
+  POLY_ORDER: 3
+  SMOOTH: true
+  WINDOW_SIZE: 9
+ICE:
+  AR:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  CDOM:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  DZ:
+  - 0.020738578583622283
+  - 0.03703866083166475
+  - 0.035702051755211406
+  - 0.08253435618738125
+  - 0.14628296567499088
+  - 0.10901201612341345
+  - 0.26089250837544076
+  - 0.20602542863060463
+  - 0.6015439910996786
+  HEX_LENGTH:
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  HEX_SIDE:
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  - 10000
+  LAYER_TYPE:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  LWC:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  LWC_PCT_BBL: 0
+  RDS:
+  - 456
+  - 492
+  - 489
+  - 634
+  - 743
+  - 453
+  - 429
+  - 359
+  - 322
+  RF: 2
+  RHO:
+  - 183.43520663540778
+  - 190.9079451070041
+  - 193.04221025497583
+  - 231.15980265981136
+  - 374.88329851406274
+  - 416.7833093474498
+  - 435.19372001202447
+  - 475.15005084098493
+  - 514.2940805664373
+  SHP:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  SHP_FCTR:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  WATER_COATING:
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+  - 0
+IMPURITIES:
+  BC:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 1.0155761445429967
+    - 0.9287241666127277
+    - 0.8600852955431453
+    - 1.2354065360919273
+    - 6.198446681423724
+    - 8.502917263444575
+    - 6.637754060486043
+    - 4.169608344716702
+    - 2.108208483342219
+    FILE: bc_ChCB_rn40_dns1270.nc
+    NAME: bc
+    UNIT: 0
+  DUST1:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 23.712380332603658
+    - 11.416846328350022
+    - 17.88370747725484
+    - 42.88165825590038
+    - 50.482034015493944
+    - 23.815643012883132
+    - 24.056003057396474
+    - 26.777611182704415
+    - 13.01141598733115
+    FILE: dust_balkanski_central_size1.nc
+    NAME: dust
+    UNIT: 0
+  DUST2:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 64.8380466218397
+    - 31.21770164482926
+    - 48.900390551987776
+    - 117.25364211516835
+    - 138.03576145248576
+    - 65.12040336478763
+    - 65.77763286067065
+    - 73.21947345363984
+    - 35.577819880139174
+    FILE: dust_balkanski_central_size2.nc
+    NAME: dust
+    UNIT: 0
+  DUST3:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 152.08602925042433
+    - 73.22515919051928
+    - 114.70219439556227
+    - 275.03359174981114
+    - 323.7807421359926
+    - 152.7483335316975
+    - 154.28995036846135
+    - 171.74575055165312
+    - 83.45238076827873
+    FILE: dust_balkanski_central_size3.nc
+    NAME: dust
+    UNIT: 0
+  DUST4:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 64.34074969742092
+    - 30.97826711796972
+    - 48.5253327720054
+    - 116.35432637944209
+    - 136.97705035295976
+    - 64.62094081158803
+    - 65.27312946765602
+    - 72.65789239354983
+    - 35.30494397894015
+    FILE: dust_balkanski_central_size4.nc
+    NAME: dust
+    UNIT: 0
+  DUST5:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 10.735298685865839
+    - 5.1687453417297045
+    - 8.096485409143337
+    - 19.41380000932907
+    - 22.854715799291533
+    - 10.782048767483708
+    - 10.89086689682397
+    - 12.123019709879497
+    - 5.890654375090002
+    FILE: dust_balkanski_central_size5.nc
+    NAME: dust
+    UNIT: 0
+  OC:
+    CFACTOR: 1
+    COATED: false
+    CONC:
+    - 11.134924881486484
+    - 9.67580251999978
+    - 8.444888355023698
+    - 13.124944724064639
+    - 86.54658599885495
+    - 127.25181600763746
+    - 100.44942024434722
+    - 53.540992618164104
+    - 15.880344499265957
+    FILE: brC_Kirch_BCsd.nc
+    NAME: oc
+    UNIT: 0
+PATHS:
+  BUBBLY_ICE: Data/OP_data/480band/bubbly_ice_files/
+  FLX_DIR: Data/OP_data/480band/fsds/
+  FN_ICE: /Data/OP_data/480band/rfidx_ice.nc
+  FN_WATER: /Data/OP_data/Refractive_Index_Liquid_Water_Segelstein_1981.csv
+  HEX_ICE: Data/OP_data/480band/ice_hexagonal_columns/
+  ILLUMINATION_FILE_STUBS:
+  - swnb_480bnd_mlw
+  - swnb_480bnd_mls
+  - swnb_480bnd_saw
+  - swnb_480bnd_sas
+  - swnb_480bnd_smm
+  - swnb_480bnd_hmn
+  - swnb_480bnd_trp
+  OP_DIR_STUBS:
+  - ice_Wrn84/ice_Wrn84_
+  - ice_Wrn08/ice_Wrn08_
+  - ice_Pic16/ice_Pic16_
+  RI_ICE: Data/OP_data/480band/
+  SFC: Data/OP_data/480band/r_sfc/ice_spectrum_18GTH.csv
+  SPHERE_ICE: Data/OP_data/480band/ice_spherical_grains/
+  SPHERE_WATER: Data/OP_data/480band/water_spherical_grains/
+  WVL: Data/OP_data/wavelengths.csv
+PLOT:
+  FACECOLOR: white
+  FIG_SIZE: (8,6)
+  FONTSIZE: 20
+  GRID: false
+  GRIDCOLOR: '.8'
+  LINEWIDTH: 1.25
+  SAVE: false
+  SAVEPATH: ''
+  XTICK_BTM: true
+  XTICK_SIZE: 5
+  XTICK_WIDTH: 1
+  YTICK_LEFT: true
+  YTICK_SIZE: 5
+  YTICK_WIDTH: 1
+RTM:
+  APRX_TYP: 2
+  DELTA: true
+  DIRECT: 1
+  INCOMING: 0
+  NBR_WVL: 480
+  NIR_MAX_IDX: 480
+  SOLZEN: 47
+  VIS_MAX_IDX: 39

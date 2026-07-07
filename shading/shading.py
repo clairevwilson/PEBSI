@@ -279,16 +279,17 @@ class Shading():
         # find the shapefile in the RGI from the rgi_id
         id = self.args.rgi_id
         region = id.split('.')[0]
+        rgi_fp = self.args.rgi_fp + '../'
         # search RGI folders for the correct shapefile
-        for folder in os.listdir(fp_base + rgi_fp):
+        for folder in os.listdir(rgi_fp):
             if folder[:2] == region:
-                for f in os.listdir(fp_base + rgi_fp + folder):
+                for f in os.listdir(rgi_fp + folder):
                     if f[-3:] == 'shp':
                         fn = folder + '/' + f
         # open and index regional shapefile to the glacier
-        self.args.shapefile_exists = os.path.exists(fp_base + rgi_fp + fn)
-        assert self.args.shapefile_exists, f'Shapefile not found at {fp_base + rgi_fp + fn}'
-        all_gdf = gpd.read_file(fp_base + rgi_fp + fn).set_crs(epsg=4326)
+        self.args.shapefile_exists = os.path.exists(rgi_fp + fn)
+        assert self.args.shapefile_exists, f'Shapefile not found at {rgi_fp + fn}'
+        all_gdf = gpd.read_file(rgi_fp + fn).set_crs(epsg=4326)
         shapefile = all_gdf.loc[all_gdf['RGIId'] == 'RGI60-'+id]
         self.shapefile = shapefile
 
@@ -334,6 +335,7 @@ class Shading():
         aspect = np.arctan2(-dy,-dx)
         # adjust so 0 is North
         aspect = (aspect + 2*np.pi) % (2*np.pi) 
+        
         # store in a DataArray
         slope = xr.DataArray(slope, dims=['y', 'x'], coords={'y': dem.y, 'x': dem.x})
         aspect = xr.DataArray(aspect, dims=['y', 'x'], coords={'y': dem.y, 'x': dem.x})

@@ -39,11 +39,11 @@ out_str = 'base'
 # Sites to run in parallel
 site_dict = {
     '01.22193':['K17b','K53',], # KAHILTNA
-    # '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
-    # '01.00570':['AU','B','D'], # ['A','AU','B','D','T','Z'], # GULKANA
-    # '01.09162':['N','B','EC'], # WOLVERINE   
-    # '01.01104':['C','B','D'], # LEMON CREEK
-    # '01.01390':['NWB1','TKG3'], # TAKU       
+    '01.15645':['GTH','KC31','GTL'], # KENNICOTT   
+    '01.00570':['AU','B','D'], # ['A','AU','B','D','T','Z'], # GULKANA
+    '01.09162':['N','B','EC'], # WOLVERINE   
+    '01.01104':['C','B','D'], # LEMON CREEK
+    '01.01390':['NWB1','TKG3'], # TAKU       
 }
 
 # all_elevs = list(range(500, 2000, 100)) + list(range(2000, 4400, 500))
@@ -93,7 +93,7 @@ def pack_vars():
             climate, args_run = sim.initialize_model(args_run)
 
             # Manipulate climate if desired
-            # args_run.snow_free_doy = 0 # dust_doys[glac]
+            args_run.snow_free_doy = 0 # dust_doys[glac]
             args_run.wind_factor = wind_dict[args_run.glac_name][site]
 
             # Store model parameters

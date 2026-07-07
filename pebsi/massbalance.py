@@ -84,6 +84,7 @@ class massBalance():
 
         # ===== ENTER TIME LOOP =====
         for time in self.iterable(self.time_list, desc='Main loop'):
+            
             # >>> INITIALIZE TIMESTEP <<<
             self.time = time
             self.timer.update()
@@ -203,7 +204,7 @@ class massBalance():
             if no_glacier:
                 # end simulation cleanly
                 return
-
+            
         # ===== COMPLETED SIMULATION: STORE DATA =====
         self.store_simulation()
         return
@@ -315,9 +316,6 @@ class massBalance():
             new_BC = enbal.bcwet * enbal.dt
             new_OC = enbal.ocwet * enbal.dt
             new_dust = enbal.dustwet * enbal.dt
-            
-            # update new snow timestamp
-            self.surface.snow_timestamp = self.time
 
         # check switch for LAPs
         if int(args.switch_LAPs) != 1:
@@ -347,6 +345,9 @@ class massBalance():
                 # add the layer and reset delayed_snow to 0
                 layers.add_layers(new_layer)
                 layers.delayed_snow = 0
+
+                # update new snow timestamp
+                self.surface.snow_timestamp = self.time
         else:
             # get new layers mass
             new_layermass = layers.lice[0] + snowfall
@@ -377,6 +378,9 @@ class massBalance():
             
             # reset delayed snow
             layers.delayed_snow = 0
+
+            # update new snow timestamp
+            self.surface.snow_timestamp = self.time
 
         # update layer depth from new layer heights
         layers.update_layer_props()

@@ -308,6 +308,10 @@ class Climate():
             # turn daily into hourly
             ds = ds.resample(time='h').ffill()
 
+        # add half hour for MERRA-2 indexing 
+        if args.reanalysis == 'MERRA2':
+            dates = dates + pd.Timedelta(minutes=30)
+
         # check the units
         ds = self.check_units(var,ds)
 
@@ -317,8 +321,8 @@ class Climate():
             assert dates[-1] <= pd.to_datetime(ds.time.values[-1]), f'Check input times and {var} data'
             if not dep_var and args.reanalysis == 'ERA5-hourly':
                 ds = ds.interp(time=dates)
-            elif self.interpolate:
-                ds = ds.interp(time=dates)
+            # elif self.interpolate:
+            #     ds = ds.interp(time=dates)
             else:
                 ds = ds.sel(time=dates)
         
@@ -329,6 +333,9 @@ class Climate():
         # store result
         result_dict[var] = ds.values.ravel()
         ds.close()
+
+        # if var == 'SWin':
+        #     print(ds.values.ravel())
 
         # return the result dict
         return result_dict
