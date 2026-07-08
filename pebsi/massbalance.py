@@ -642,8 +642,9 @@ class MassBalanceDriver:
             q_in_blocked = jnp.where(is_barrier, q_in, 0.0)
             q_in = jnp.where(is_barrier, 0.0, q_in)
 
-            # remaining room for water before hitting irreducible water content
-            available_room = jnp.maximum(0.0, capacity - lwater)
+            # remaining room before hitting irreducible water content
+            # if negative, the layer is over capacity and must drain the excess
+            available_room = capacity - lwater
             q_out = jnp.maximum(0.0, q_in - available_room)
 
             # update layer liquid water content

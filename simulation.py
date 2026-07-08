@@ -519,8 +519,8 @@ class PEBSI():
         chunk_size = params.temporal_chunks
         n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
 
-        # seed duration estimate from spin-up (faster now because compiled)
-        prev_duration = self.spinup_time * 0.7
+        # seed duration estimate from spin-up
+        prev_duration = self.spinup_time * 3
         progress = ChunkProgress(total_steps, params.progress_bar, prev_duration)
 
         chunk_i = 0
@@ -552,18 +552,20 @@ class PEBSI():
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
             del chunk_records
 
-        progress.close()
         if not self.params.progress_bar:
             print()  # end the overwriting line before the summary
 
         time_elapsed = time.time() - self.start_time
-        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print(f'~ Simulation completed in {time_elapsed:.1f} seconds ~')
+
+        progress.close()
 
         if self.params.store_data:
             model_output.close_out(params, time_elapsed, self.climate)
         else:
             print('~ Success: data was not saved ~')
+
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print(f'~ Simulation completed in {time_elapsed:.1f} seconds ~')
         return state
     
     def start_print(self):

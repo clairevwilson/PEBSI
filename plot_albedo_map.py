@@ -18,8 +18,8 @@ import rasterio.features
 import rasterio.transform
 
 # ===================== USER CONFIG =====================
-DATE  = '2024-08-20'          # date to search near
-output_dir  = '../Output/big_gulkana_3/'   # simulation zarrs
+DATE  = '2020-07-20'          # date to search near
+output_dir  = '../Output/big_gulkana_4/'   # simulation zarrs
 albedo_dir  = '/Users/cvw/local/data/rs/albedo/'
 rgi_fp      = '/Users/cvw/local/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 COVERAGE_THRESH = 0.90              # fraction of glacier pixels required

@@ -1,5 +1,5 @@
 """
-Two-panel plot for the ablation season (April 15 – September 15).
+Two-panel plot for the ablation season (April 15 - September 15).
 
 Left:  fractional hours in shadow (from shadow zarr)
 Right: mean direct shortwave radiation [W/m²] (kriged from big_gulkana_1 outputs)
@@ -61,6 +61,33 @@ def add_map_decorations(ax, length_m, x_frac=0.08, y_frac=0.06, color='black'):
     ax.text(x_arr, y0 + dy * 1.1, 'N', ha='center', va='bottom',
             color=color,
             path_effects=stroke, zorder=7)
+
+
+def reproject_array(data, src_x, src_y, src_crs, dst_crs):
+    """Reproject a 2-D numpy array from src_crs to dst_crs."""
+    dx = float(src_x[1] - src_x[0])
+    dy = float(src_y[0] - src_y[1])
+    src_tf = rasterio.transform.from_origin(
+        float(src_x[0]) - dx / 2,
+        float(src_y[0]) + dy / 2,
+        dx, dy,
+    )
+    dst_tf, dst_w, dst_h = calculate_default_transform(
+        src_crs, dst_crs, data.shape[1], data.shape[0],
+        left=float(src_x[0])  - dx / 2, bottom=float(src_y[-1]) - dy / 2,
+        right=float(src_x[-1]) + dx / 2, top=float(src_y[0])   + dy / 2,
+    )
+    out = np.full((dst_h, dst_w), np.nan, dtype=np.float64)
+    rio_reproject(
+        source=data.astype(np.float64), destination=out,
+        src_transform=src_tf, src_crs=src_crs,
+        dst_transform=dst_tf, dst_crs=dst_crs,
+        resampling=Resampling.bilinear,
+        src_nodata=np.nan, dst_nodata=np.nan,
+    )
+    x_arr = dst_tf.c + dst_tf.a * (np.arange(dst_w) + 0.5)
+    y_arr = dst_tf.f + dst_tf.e * (np.arange(dst_h) + 0.5)
+    return out, x_arr, y_arr
 
 
 def reproject_dem(dem_fp, dst_crs):
@@ -172,13 +199,17 @@ season_shad = (
     (shad_ds.time.dt.month.isin([5, 6, 7, 8])) |
     ((shad_ds.time.dt.month == 9) & (shad_ds.time.dt.day <= 15))
 )
+import pandas as pd
+n_seconds = pd.to_datetime('2024-09-15') - pd.to_datetime('2024-04-15')
+n_days = n_seconds.total_seconds() / (24 * 3600)
+print(n_days)
 frac_shadow = (
     shad_ds['shadow_mask']
     .where(season_shad, drop=True)
-    .mean('time')
+    .sum('time')
     .values
     .astype(np.float32)
-)
+) / n_days
 
 sr_attrs = dict(shad_ds['spatial_ref'].attrs)
 if 'crs_wkt' in sr_attrs:
@@ -207,30 +238,32 @@ shad_glac_mask = rasterio.features.rasterize(
 )
 frac_shadow = np.where(shad_glac_mask == 1, frac_shadow, np.nan)
 
-xx_shad, yy_shad = np.meshgrid(shad_x, shad_y)
-
-# DEM contours for left panel (shadow CRS)
-dem_s, x_dem_s, y_dem_s = reproject_dem(dem_fp, shadow_crs)
-xx_dem_s, yy_dem_s = np.meshgrid(x_dem_s, y_dem_s)
+# Reproject shadow fraction into metric_crs so both panels share one coordinate space
+frac_shadow_m, x_shad_m, y_shad_m = reproject_array(
+    frac_shadow, shad_x, shad_y, shadow_crs, metric_crs
+)
+xx_shad_m, yy_shad_m = np.meshgrid(x_shad_m, y_shad_m)
 
 # ===================== PLOT =====================
 fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
 # ---- left: shadow fraction ----
 ax = axes[0]
-im_shad = ax.pcolormesh(xx_shad, yy_shad, frac_shadow,
-                         cmap='Blues_r', vmin=0.4, vmax=0.6, shading='auto')
+im_shad = ax.pcolormesh(xx_shad_m, yy_shad_m, frac_shadow_m,
+                         cmap='Blues_r', shading='auto', vmin=10, vmax=16)
 if CONTOUR_SOURCE == 'elevation':
-    ax.contour(xx_dem_s, yy_dem_s, dem_s, levels=contour_levels,
+    ax.contour(xx_dem_m, yy_dem_m, dem_m, levels=contour_levels,
                colors='gray', linewidths=0.8, alpha=0.7, zorder=3)
 else:
-    ax.contour(xx_shad, yy_shad, frac_shadow, N_VALUE_CONTOURS,
+    ax.contour(xx_shad_m, yy_shad_m, frac_shadow_m, N_VALUE_CONTOURS,
                colors='k', linewidths=0.6, alpha=1, zorder=3)
-glacier_shad.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.0, zorder=4)
-cbar = fig.colorbar(im_shad, ax=ax, label='Fraction of hours in direct sun',
+glacier.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.0, zorder=4)
+cbar = fig.colorbar(im_shad, ax=ax, 
                     fraction=0.03, pad=0.03)
-cbar.set_ticks(np.linspace(0.4, 0.6, 3))
-ax.set_title('Shading')
+cbar.set_label('Time in direct sun [hrs / day]', fontsize=13)
+cbar.set_ticks(np.linspace(10, 16, 4))
+# ax.set_title('Shading')
+
 ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 ax.set_xlabel('')
 ax.set_ylabel('')
@@ -254,10 +287,11 @@ else:
 glacier.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.0, zorder=4)
 ax.scatter(xs, ys, c=vals_sw, cmap='YlOrRd', vmin=vmin, vmax=vmax,
            s=15, edgecolors='k', linewidths=0.3, zorder=5)
-cbar = fig.colorbar(im_sw, ax=ax, label='Mean direct SW [W m$^{-2}$]',
+cbar = fig.colorbar(im_sw, ax=ax, 
                     fraction=0.03, pad=0.03)
 cbar.set_ticks(np.linspace(vmin, vmax, 4).round(0))
-ax.set_title('Mean direct shortwave')
+cbar.set_label('Direct shortwave radiation [W m$^{-2}$]', fontsize=13)
+# ax.set_title('Mean direct shortwave')
 ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
 ax.set_xlabel('')
 ax.set_ylabel('')
@@ -267,15 +301,17 @@ for spine in ax.spines.values():
     spine.set_color('black')
 
 # apply shared axis limits and add map decorations
-xlims = (-3300, 3300)
-ylims = (-3100, 2300)
-for ax in axes:
+xlims = axes[1].get_xlim()
+ylims = axes[1].get_ylim()
+for ax, l in zip(axes, ['a','b']):
     ax.set_xlim(*xlims)
     ax.set_ylim(*ylims)
     add_map_decorations(ax, SCALEBAR_M)
+    ax.text(0.03, 0.95, l, transform=ax.transAxes, fontsize=12, fontweight='bold',
+            va='center', ha='center')# , bbox=dict(facecolor='white', edgecolor='none', pad=3))
 
 rgi_label = ', '.join(sorted(rgi_ids))
-fig.suptitle('Gulkana Glacier — ablation season (April 15 - September 15)', fontsize=13, y=0.95)
+# fig.suptitle('Gulkana Glacier — ablation season (April 15 - September 15)', fontsize=13, y=0.95)
 
 plt.tight_layout()
 out_path = f'{output_dir}/shading_sw_map.png'

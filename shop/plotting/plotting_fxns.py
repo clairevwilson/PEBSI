@@ -1140,7 +1140,7 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         max_val = bounds[1]
         # value = max(min_val, min(max_val, value))
         norm = mpl.colors.Normalize(vmin=min_val,vmax=max_val)
-        cmap = mpl.cm.get_cmap(color)
+        cmap = mpl.colormaps[color]
         c = cmap(norm(value))
         return c
 

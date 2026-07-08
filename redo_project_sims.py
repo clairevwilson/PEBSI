@@ -70,13 +70,15 @@ configs = {
     'constant_freshgrainsize': 54.5, 
 
     'debug': True,
-    # 'progress_bar': True,
-    # 'store_data': True,
+    'progress_bar': True,
+    'store_data': True,
     'store_vars': ['MB','EB','layers','climate'],
 
     'output_fp': '../Output/check/',
 
     # 'deposition_data': 'UKESM',
+    # 'ukesm_fp': '../UKESM/dw068_nofires/'
+
 }
 
 with open(config_fn, 'w') as f:

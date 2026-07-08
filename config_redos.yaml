@@ -90,6 +90,8 @@ option_accel_grains: false
 option_flat_plates: true
 constant_freshgrainsize: 54.5
 debug: true
+progress_bar: true
+store_data: true
 store_vars:
 - MB
 - EB
