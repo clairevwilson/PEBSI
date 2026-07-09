@@ -85,48 +85,26 @@ class MassBalanceDriver:
         mass_fluxes : dict
             Dictionary containing runoff and melt
         """
-        # define state checker for debugging
-        # def _check_state(text, state, forcings):
-        #     lwater = jnp.sum(state.lwater, axis=1)
-        #     lice = jnp.sum(state.lice, axis=1)
-        #     reservoir = state.basal_reservoir 
-        #     doy = forcings.doy 
-        #     hour = forcings.hour
-
-        #     # change this condition to print when you want to troubleshoot
-        #     if False: # doy == 208 and hour == 20:
-        #         print(f'({doy}:{hour}) Function {text:<10}: ice {lice}    lwater {lwater}    reservoir {reservoir}')
 
         # subsurface heating and melting
         state, melt_array, mass_to_route = self.heating_melting(state, fluxes)
-        # if self.params.debug:
-        #     jax.debug.callback(_check_state, 'melting', state, forcings)
 
         # percolate meltwater and route LAPs
         for var, data in mass_to_route.items():
             fluxes[var] = jnp.sum(data, axis=1)
         state, melt_runoff, fluxes = self.percolation(state, fluxes)
         state = self.route_particles(state, forcings, fluxes)
-
-        # if self.params.debug:
-        #     jax.debug.callback(_check_state, 'percolation', state, forcings)
         
         # refreezing
         state = self.refreezing(state)
-        # if self.params.debug:
-        #     jax.debug.callback(_check_state, 'refreezing', state, forcings)
 
         # phase changes (e.g., sublimation, condensation)
         state, condensation_runoff, mass_fluxes = self.phase_changes(
             state, fluxes['latent_heat']
         )
-        # if self.params.debug:
-        #     jax.debug.callback(_check_state, 'phase', state, forcings)
 
         # check layer sizes for numeric stability before running temp profile
         state, dead_mass = layers.check_layer_sizes(state, self.params)
-        # if self.params.debug:
-        #     jax.debug.callback(_check_state, 'layers', state, forcings)
         
         # resolve temperature profile
         state = self.resolve_temperature_profile(state)

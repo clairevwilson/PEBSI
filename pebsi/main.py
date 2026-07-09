@@ -92,7 +92,7 @@ def main(
             current_state, current_forcings, point_attrs
         )
         
-        # ===================== STEP 3 =====================
+        # ===================== STEP 4 =====================
         #          vertical heat and mass exchange
         fluxes_to_vert = {
             'rainfall': rainfall,
