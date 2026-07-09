@@ -1,0 +1,27 @@
+name: gpu-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - jax
+  - numpy
+  - pandas
+  - xarray
+  - rioxarray
+  - geopandas
+  - pysolar
+  - pytz
+  - shapely
+  - rasterio
+  - netcdf4
+  - zarr<3
+  - dask
+  - jupyter
+  - joblib
+  - scipy
+  - matplotlib
+  - tqdm
+  - pip:
+    - equinox
