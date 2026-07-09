@@ -19,7 +19,7 @@ conda activate pebsi-env
 ```
 
 !!! note
-    PEBSI requires Python >= 3.10. Please [open an issue](https://github.com/clairevwilson/PEBSI/issues) if you find this is not the case.
+    PEBSI should work on Python >= 3.10. Please [open an issue](https://github.com/clairevwilson/PEBSI/issues) if you find this is not the case.
 
 ## 3. Test the installation
 
@@ -33,7 +33,7 @@ pytest tests/
 
 ### B. Test simulation
 
-The model ships with one year of mock forcing data. Running with `--testing` uses preset parameters and that sample data — no additional setup required:
+The model comes with one year of mock forcing data. Running with `--testing` uses preset parameters and that sample data with no additional setup required:
 
 ```bash
 python simulation.py --testing
