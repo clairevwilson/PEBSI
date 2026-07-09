@@ -87,7 +87,6 @@ def _make_state(params, surftemp=-5.0, ltemp=-2.0, lwater_frac=0.0,
 def _make_forcings(tempC=0.0, tp=0.001, wind=3.0, sp=85000.0, rh=80.0,
                    sw=500.0, lw=300.0, n_points=N):
     """Build a minimal one-timestep ClimateState (scalars for time, N for space)."""
-    tempC_arr = jnp.full((n_points,), tempC, dtype=jnp.float64)
     return ClimateState(
         time_idx     = jnp.array(0, dtype=jnp.int32),
         year         = jnp.array(2020, dtype=jnp.int32),
@@ -96,10 +95,8 @@ def _make_forcings(tempC=0.0, tp=0.001, wind=3.0, sp=85000.0, rh=80.0,
         hour         = jnp.array(12, dtype=jnp.int32),
         local_hour   = jnp.full((n_points,), 12, dtype=jnp.int32),
         doy          = jnp.array(183, dtype=jnp.int32),
-        tempC        = tempC_arr,
-        tempK        = tempC_arr + 273.15,
+        temp         = jnp.full((n_points,), tempC, dtype=jnp.float64),
         tp           = jnp.full((n_points,), tp,    dtype=jnp.float64),
-        prec         = jnp.full((n_points,), tp / 3600.0, dtype=jnp.float64),
         wind         = jnp.full((n_points,), wind,  dtype=jnp.float64),
         winddir      = jnp.zeros((n_points,), dtype=jnp.float64),
         sp           = jnp.full((n_points,), sp,    dtype=jnp.float64),
@@ -120,13 +117,20 @@ def _make_forcings(tempC=0.0, tp=0.001, wind=3.0, sp=85000.0, rh=80.0,
 
 
 def _make_point_attrs(n_points=N):
+    # one unique cell shared by all points
     return PointAttributes(
-        latitude       = jnp.full((n_points,), 63.0,  dtype=jnp.float64),
+        latitude       = jnp.full((n_points,), 63.0,   dtype=jnp.float64),
         longitude      = jnp.full((n_points,), -145.0, dtype=jnp.float64),
         elevation      = jnp.full((n_points,), 1500.0, dtype=jnp.float64),
         slope          = jnp.zeros((n_points,), dtype=jnp.float64),
         aspect         = jnp.zeros((n_points,), dtype=jnp.float64),
-        sky_view_factor= jnp.ones((n_points,), dtype=jnp.float64),
+        sky_view_factor= jnp.ones((n_points,),  dtype=jnp.float64),
+        median_elev    = jnp.full((n_points,), 1500.0, dtype=jnp.float64),
+        cell_idx       = jnp.zeros((n_points,), dtype=jnp.int32),
+        gcm_elev       = jnp.array([1500.0],    dtype=jnp.float64),
+        temp_elev      = jnp.array([1500.0],    dtype=jnp.float64),
+        sp_elev        = jnp.array([1500.0],    dtype=jnp.float64),
+        LWin_elev      = jnp.array([1500.0],    dtype=jnp.float64),
     )
 
 
