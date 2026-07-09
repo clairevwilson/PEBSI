@@ -14,7 +14,7 @@ Navigate inside the PEBSI directory and create a new conda environment from the 
 
 ```bash
 cd PEBSI
-conda env create -f environment.yml
+conda env create -f environment.yaml
 conda activate pebsi-env
 ```
 
