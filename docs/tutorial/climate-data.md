@@ -1,6 +1,6 @@
 # Climate Data
 
-PEBSI accepts two types of climate forcing: reanalysis data (MERRA-2) and on-glacier weather station data (AWS). You need at least one.
+PEBSI accepts two types of climate forcing: reanalysis data (MERRA-2) and on-glacier weather station data (AWS). You need at least one, and you likely MERRA-2 even if you have AWS data to fill in variables that were not measured.
 
 ## MERRA-2
 
@@ -22,16 +22,16 @@ Preprocessing notebooks are in `PEBSI/shop/preprocessing/`. PEBSI expects a comm
 
 **`preprocess_AWS`** — for data split across multiple files with significant gaps. Walks through:
 
-1. Concatenating files
-2. Renaming columns to be self-consistent
-3. Identifying periods viable for simulation (i.e., gaps small enough for interpolation)
+- Concatenating files
+- Renaming columns to be self-consistent
+- Identifying periods viable for simulation (i.e., gaps small enough for interpolation)
 
 **`process_AWS`** — for the final preparation steps:
 
-1. Interpolating NaNs
-2. Checking units
-3. Formatting the `.csv` as expected by PEBSI
+- Interpolating NaNs
+- Checking units
+- Formatting the `.csv` as expected by PEBSI
 
 ## Quantile Mapping (Bias Correction)
 
-Code in `PEBSI/shop/preprocessing/` can generate quantile CDFs from your AWS dataset for bias-correcting MERRA-2 data. This is recommended when both data sources are available for the same site.
+Code in `PEBSI/shop/preprocessing/` can generate quantile CDFs from your AWS dataset for bias-correcting MERRA-2 data. This is the recommended way to use AWS data when only certain variables are present, as bias-corrected MERRA-2 forcings performs similarly to AWS forcings but enable longer periods to be simulated.

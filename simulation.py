@@ -57,7 +57,7 @@ def get_args(parse=True):
                         help='filename of config yaml file')
     
     # GLACIERS
-    parser.add_argument('-rgi_ids', type=str, nargs='+', default=None,
+    parser.add_argument('-id', '--rgi_ids', type=str, nargs='+', default=None,
                         help='List of RGI IDs to run (overrides rgi_region)')
     parser.add_argument('-rgi_region', type=int, 
                         default=defaults.rgi_region,

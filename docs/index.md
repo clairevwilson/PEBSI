@@ -6,9 +6,9 @@ PEBSI is an open-source glacier energy balance model that simulates the surface 
 
 ## Documentation
 
-- [Installation](installation.md) — set up PEBSI and its environment
-- [File Structure](file-structure.md) — how to organize your data directories
-- [Tutorial](tutorial/climate-data.md) — step-by-step guide to running your first glacier simulation
+- [Installation](installation.md): set up PEBSI and its environment
+- [File Structure](file-structure.md): how to organize your data directories
+- [Tutorial](tutorial/climate-data.md): step-by-step guide to running a glacier simulation
 
 ## Questions & Feedback
 
