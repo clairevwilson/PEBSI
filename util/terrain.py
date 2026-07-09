@@ -20,7 +20,7 @@ from pyproj import CRS, Transformer
 import shapely.geometry as geom
 from rasterio.enums import Resampling
 # Local libraries
-from shading.gpu_shading import Shading
+from shading.shading import Shading
 
 class Terrain:
     """
@@ -31,9 +31,8 @@ class Terrain:
         Load the points and start timer for Terrain functions.
         """
         self.params = params
-        self.shade_fn = os.path.join(
-            params.shading_fp, params.shading_fn
-        )
+        shade_fp = params.sample_shading_fp if params.rgi_region == 0 else params.shading_fp
+        self.shade_fn = os.path.join(shade_fp, params.shading_fn)
 
         # start timer for loading spatial inputs
         self.start_time = time.time()
@@ -50,6 +49,17 @@ class Terrain:
         """
         # load RGI data into memory for this region
         self.get_rgi_data()
+
+        # test glacier: skip distribution logic entirely, use a hardcoded point
+        if self.params.rgi_region == 0:
+            gid = self.params.rgi_ids[0]
+            self.lat_n = np.array([60.0])
+            self.lon_n = np.array([-150.0])
+            self.rgiid_n = np.array([gid], dtype=str)
+            self.rgiid_unique = np.array([gid], dtype=str)
+            self.N_POINTS = 1
+            self.elev_n = self.slope_n = self.aspect_n = None
+            return
 
         if self.params.method_distribute == 'scatter':
             lats, lons, glaciers = self.scatter_points()
@@ -97,6 +107,12 @@ class Terrain:
         """
         Loads the shapefile for the region of interest.
         """
+        # region 00 is the test glacier — no real RGI data needed
+        if self.params.rgi_region == 0:
+            self.rgi_df = pd.DataFrame()
+            self.rgi_gdf = None
+            return
+
         # find the regional shapefile
         region = str(self.params.rgi_region).zfill(2)
         all_rgi = os.listdir(self.params.rgi_fp)
@@ -108,8 +124,8 @@ class Terrain:
         df = pd.read_csv(os.path.join(self.params.rgi_fp, region_name[0]+'.csv'))
         gdf = gpd.read_file(os.path.join(self.params.rgi_fp, shapefile_fn))
 
-        # store to self 
-        self.rgi_df = df 
+        # store to self
+        self.rgi_df = df
         self.rgi_gdf = gdf
         return
 
@@ -126,6 +142,7 @@ class Terrain:
             Acceptable deviation between actual points 
             generated and n_points
         """
+
         # find the total number of parallel processes available 
         N_PARALLEL = self.params.n_points
 
@@ -259,6 +276,11 @@ class Terrain:
         point, dynamically loading across multiple regional 
         CSV files.
         """
+        # test glacier (region 00): use the hardcoded elevation from run_dem_functions
+        if self.params.rgi_region == 0:
+            self.median_elev_n = self.elev_n.copy()
+            return
+
         # figure out what unique IDs there are
         unique_ids = np.unique(self.rgiid_n)
         unique_ids_fmtd = ['RGI60-'+i for i in unique_ids]
@@ -426,6 +448,13 @@ class Terrain:
             Buffer to add around glacier bounds when 
             cropping DEM to capture surrounding peaks
         """
+        # test glacier (region 00): no DEM needed — use sample fixed values
+        if self.params.rgi_region == 0:
+            self.elev_n = np.array([1500.0])
+            self.slope_n = np.array([10.0])
+            self.aspect_n = np.array([180.0])
+            return
+
         # make sure there is storage space for shading output
         output_fp = self.params.shading_fp
         os.makedirs(output_fp, exist_ok=True)

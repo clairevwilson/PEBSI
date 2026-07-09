@@ -57,13 +57,14 @@ rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier I
 cop30_fp = '../data/dems/COP30'                             # DEM filepath for many glaciers (COP 30)
 cop30_vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'      # Path to VRT file for COP30 DEMs, inside cop30_fp
 dem_fn = None                                               # DEM filename to override COP30 (e.g. for modeling one glacier)
-shading_fp = '../data/shading/'                             # Shading data filepath for output of shading model  
+shading_fp = '../data/shading/'                             # Shading data filepath for output of shading model
+sample_shading_fp = 'data/sample_data/'                     # Shading filepath for the test glacier (region 00)
 shading_fn = '{gid}_shadows.zarr'                           # Shading data filename template
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
 cds_input_fn = '{g}{s}_climate.nc'                          # Climate dataset filepath to load ++
-aws_fn = 'data/sample_aws.csv'                              # Sample weather station filename
+aws_fn = 'data/sample_data/sample_aws.csv'                  # Sample weather station filename
 
 # INITIAL CONDITIONS
 initial_temp_fn = 'data/init/initial_temp_profile.csv'      # Initial temperature profile filepath
