@@ -94,7 +94,7 @@ class ClimateState(NamedTuple):
     
     # ========================= Climate variables (2D) ========================
 
-    temp: jnp.ndarray          # 2 meter air temperature [C]
+    temp: jnp.ndarray           # 2 meter air temperature [C]
     tp: jnp.ndarray             # Total precipitation [m w.e.]
     wind: jnp.ndarray           # Wind speed [m s-1]
     winddir: jnp.ndarray        # Wind direction [deg]
