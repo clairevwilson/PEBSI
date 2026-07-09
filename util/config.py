@@ -153,17 +153,22 @@ class Config():
             all_regions = np.unique([f[:2] for f in args.rgi_ids])
             assert len(all_regions) < 2, 'PEBSI is only set up to run a single region'  
             args.rgi_region = int(all_regions[0])
+
         else:
             # no rgi_ids specified: open the RGI data for this region
             region = str(args.rgi_region).zfill(2)
             all_regions = os.listdir(args.rgi_fp)
             csv_path = [f for f in all_regions if f.startswith(region) and f.endswith('csv')][0]
             df = pd.read_csv(args.rgi_fp + csv_path)
-            df = df.loc[(df['Area'] > 14) & (df['Area'] < 15)]
 
             # find all glaciers in this region
             all_ids = [f.split('-')[-1] for f in df['RGIId']]
             args.rgi_ids = all_ids
+
+        # test glacier (region 00) always uses the sample AWS file
+        if args.rgi_region == 0:
+            args.use_aws = True
+            args.aws_elev = 1232
 
         # set method_distribute to points if specified sites
         if args.sites is not None:

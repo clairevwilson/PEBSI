@@ -345,7 +345,9 @@ class Climate():
                 self.bias_correct_qm(var)
         
         # apply coefficients to adjust deposition
-        if not params.deposition_data:
+        if params.rgi_region == 0:
+            pass  # test glacier: no adjustmenets necessary
+        elif not params.deposition_data:
             # MERRA-2 representative bin --> total deposition
             self.apply_merra_dep_ratio()
         else:
@@ -416,7 +418,7 @@ class Climate():
 
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
-                       'rh':'%','sp':'Pa','tp':'m s-1','elev':'m',
+                       'rh':'%','sp':'Pa','tp':'m','elev':'m',
                        'SWin':'J m-2', 'LWin':'J m-2', 'NR':'J m-2', 'tcc':'1',
                        'bcdry':'kg m-2 s-1', 'bcwet':'kg m-2 s-1',
                        'ocdry':'kg m-2 s-1', 'ocwet':'kg m-2 s-1',
@@ -440,8 +442,8 @@ class Climate():
             elif var == 'tp':
                 if units_in == 'kg m-2 s-1':
                     ds = ds / DENSITY_WATER * SPH
-                elif units_in == 'm':
-                    ds = ds / SPH
+                elif units_in == 'm s-1':
+                    ds = ds * SPH
 
             # RADIATION
             elif var in ['SWin','LWin','NR'] and units_in == 'W m-2':

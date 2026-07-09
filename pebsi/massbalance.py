@@ -230,13 +230,13 @@ class MassBalanceDriver:
         temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW, SNOW_THRESHOLD_HIGH, 20)
 
         # calculate fraction of rain
-        fraction_rain = jnp.interp(forcings.tempC, temp_scale, rain_scale)
+        fraction_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
         rain = forcings.tp * fraction_rain * DENSITY_WATER 
         snow = forcings.tp * (1-fraction_rain) * DENSITY_WATER
 
         # make sure amounts to the boundaries correctly
-        rain = jnp.where(forcings.tempC <= SNOW_THRESHOLD_LOW, 0, rain)
-        snow = jnp.where(forcings.tempC > SNOW_THRESHOLD_HIGH, 0, snow)
+        rain = jnp.where(forcings.temp <= SNOW_THRESHOLD_LOW, 0, rain)
+        snow = jnp.where(forcings.temp > SNOW_THRESHOLD_HIGH, 0, snow)
         
         return rain,snow # kg m-2
 
@@ -260,7 +260,7 @@ class MassBalanceDriver:
         # grab forcings objects we need
         time_idx = forcings.time_idx
         wind = forcings.wind 
-        tempC = forcings.tempC
+        temp = forcings.temp
         bcwet = forcings.bcwet
         ocwet = forcings.ocwet 
         dustwet = forcings.dustwet
@@ -273,14 +273,14 @@ class MassBalanceDriver:
             new_density = params.constant_snowfall_density
         else:
             # CROCUS formulation of density (Vionnet et al. 2012)
-            new_density = jnp.maximum(109 + 6 * (tempC - 0.) + 26 * wind ** 0.5, 50)
+            new_density = jnp.maximum(109 + 6 * (temp - 0.) + 26 * wind ** 0.5, 50)
         
         # check if using constant grain size for new snow
         if params.constant_freshgrainsize:
             new_grainsize = params.constant_freshgrainsize
         else:
             # CLM formulation of grain size (CLM5.0 Documentation)
-            airtemp = tempC
+            airtemp = temp
             new_grainsize = jnp.select(
                 [airtemp <= -30, airtemp < 0],
                 [54.5, 54.5 + 5 * (airtemp + 30)],
@@ -300,9 +300,9 @@ class MassBalanceDriver:
 
         # pack properties of new layer into a namespace
         new_layer = {
-            'ltemp': tempC,
+            'ltemp': temp,
             'lheight': total_snowfall / new_density,
-            'ltype': jnp.full_like(tempC, 0),
+            'ltype': jnp.full_like(temp, 0),
             'lice': total_snowfall,
             'ldensity': new_density,
             'lgrainsize': new_grainsize,
@@ -310,9 +310,9 @@ class MassBalanceDriver:
             'lOC': new_OC,
             'ldust': new_dust,
             'lage': new_age,
-            'lwater': jnp.full_like(tempC, 0),
-            'lrefreeze': jnp.full_like(tempC, 0),
-            'ldrefreeze': jnp.full_like(tempC, 0)
+            'lwater': jnp.full_like(temp, 0),
+            'lrefreeze': jnp.full_like(temp, 0),
+            'ldrefreeze': jnp.full_like(temp, 0)
         }
         
         # define conditions for making a new layer for accumulation
@@ -1240,7 +1240,7 @@ class MassBalanceDriver:
         dt = params.dt
 
         # get temperatures
-        airtemp = forcings.tempC
+        airtemp = forcings.temp
         surftemp = state.surftemp
 
         # find fresh snow grainsize
