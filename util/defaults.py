@@ -207,6 +207,7 @@ dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
 max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
+min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
