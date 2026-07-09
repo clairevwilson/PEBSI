@@ -11,60 +11,27 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 plot_quantiles = True
+base_fp = '/Users/cvw/local/'
 
 # ========= WEATHER STATION INFO =========
 master_dict = {
-    # WESTERN ALASKA
+    # Sample: benchmark glacier dataset
     'kahiltna': {
         1: {'lat': 62.94225, 'lon':-151.29205, 'elev':2380, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
             'variables': {'wind': 'm s-1', 'temp':'C'}},
     },
-    # EASTERN ALASKA
-    'gulkana': {
-        1: {'lat':63.28180, 'lon':-145.42631, 'elev':1725, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
-            'variables': {'SWin': 'W m-2','LWin': 'W m-2','temp':'C','rh':'%'}},
-        2: {'lat':63.285514, 'lon':-145.410336, 'elev':1682, 'time_col':'TIMESTAMP', 'timezone':-8, 'type': '-', 'variables': {'wind': 'm s-1'},
-            'fn': '../../../climate_data/AWS/Processed/gulkana/gulkana2024.csv'},
-        # 3: {'lat':63.26137, 'lon':-145.41021, 'elev':1480, 'time_col':'UTC_time', 'timezone':0, 'variables': {'temp': 'C','wind': 'm s-1'}}, 
-    },
-    # KENAI
-    'wolverine': {
-        1: {'lat':60.38192, 'lon':-148.93966, 'elev':990, 'time_col':'UTC_time', 'timezone':0, 'type': 'benchmark',
-            'variables': {'temp': 'C','wind': 'm s-1','rh': '%','sp': 'kPa'}},
-        2: {'lat':60.39486, 'lon':-148.94524, 'elev':1420, 'time_col':'local_time', 'timezone':-8, 'type': 'benchmark',
-            'variables': {'SWin': 'W m-2'}},
-    },
-    # COASTAL
-    'lemon_creek':{
-        1: {'lat':58.36756, 'lon':-134.36627, 'elev':1280, 'time_col':'local_time', 'timezone':-8, 'type': 'benchmark',
-            'variables': {'temp': 'C','rh': '%','sp': 'kPa'}},
-    },
-    # ST ELIAS
+
+    # Sample: non-benchmark, preprocessed dataset 
+    # Needs file name in addition to the basic information
+    # Variables in file must be named according to the var_names dict
     'kaskawulsh':{
         1: {'lat': 60.7421, 'lon': -139.1659, 'elev': 1800, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '-', 
             'variables': {'temp': 'C', 'wind': 'm s-1', 'SWin': 'W m-2', 'LWin': 'W m-2', 'rh': '%', 'sp': 'mbar'},
-            'fn': '../../../climate_data/AWS/Raw/kaskawulsh/preprocessed_2019.csv'},
+            'fn': 'climate_data/AWS/Raw/kaskawulsh/preprocessed_2019.csv'},
     },
-    'lowell':{
-        1: {'lat': 60.30271, 'lon': -138.57565, 'elev': 1419, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '', 
-            'variables': {'temp': 'C', 'rh': '%'},
-            'fn': '../../../climate_data/AWS/Raw/lowell/preprocessed_all.csv'}
-    },
-    # WRANGELLS
-    'gates':{
-        1: {'lat': 61.6029, 'lon': -143.0132, 'elev': 1237, 'time_col':'Unnamed: 0', 'timezone':0, 'type': '', 
-            'variables': {'temp': 'C', 'wind': 'm s-1', 'rh': '%', 'SWin': 'W m-2'},
-            'fn': '../../../climate_data/AWS/Raw/gates/preprocessed_all.csv'}
-    },
-    # BROOKS (McCALL)
-    # TALKEETNA (? - don't think there's nay here, but there ARE high elevation stations))
-
-    'dummy':{
-        1: {'lat': 0, 'lon': 0, 'elev': 0, 'time_col':'', 'timezone':0, 'type': '', 'variables': {'temp': 'C'}}
-    }
 }
 
-benchmark_fp = '../../../climate_data/AWS/Benchmark/{g}/'
+benchmark_fp = 'climate_data/AWS/Benchmark/{g}/'
 benchmark_fn = '{g}{e}_hourly_LVL2_{y}.csv'
 benchmark_var_names = {'temp': 'site_temp_USGS', 
                        'SWin': 'ShortwaveIn',
@@ -73,12 +40,12 @@ benchmark_var_names = {'temp': 'site_temp_USGS',
                        'wind': 'WindSpeed', 
                        'sp': 'Barom'}
 
-merra2_fn = '/Volumes/TOSHIBA EXT/climate_data/MERRA2/reg01/{v}_reg01.zarr'
+merra2_fn = 'climate_data/MERRA2/reg01/{v}_reg01.zarr'
 merra2_var_names = {'temp': 'T2M','rh': 'RH2M',
                     'SWin': 'SWGDN', 'LWin': 'LWGAB',
                     'wind': 'U2M', 'sp': 'PS',}
 
-general_var_names = {'temp': 'Temperature', 'sp': 'Pressure', 'wind': 'uwind'}
+var_names = {'temp': 'Temperature', 'sp': 'Pressure', 'wind': 'uwind'}
 
 expected_units = {'temp':'C', 'wind': 'm s-1', 'SWin': 'J m-2', 'LWin': 'J m-2', 'rh': '%', 'sp': 'Pa'}
 
@@ -117,14 +84,18 @@ for glacier, stations in master_dict.items():
         station_type = data['type']
         variables = data['variables']
 
-        # load and concatenate all the files
+        # load AWS data
         if station_type == 'benchmark':
             df = None
-            fp = benchmark_fp.format(g=glacier.replace('_',''))
+            fp = base_fp + benchmark_fp.format(g=glacier.replace('_',''))
+
+            # benchmark glaciers with only one station have one less file level
             if 'LVL2' not in os.listdir(fp):
                 fp = fp + str(elevation) + '/LVL2/'
             else:
                 fp += 'LVL2/'
+
+            # data is stored by year: concatenate them all
             for fn in os.listdir(fp):
                 if 'hourly' in fn and str(elevation) in fn:
                     _df = pd.read_csv(fp + fn)
@@ -133,7 +104,8 @@ for glacier, stations in master_dict.items():
                     else:
                         df = pd.concat([df, _df])
         else:
-            fn_data = data['fn']
+            # open the preprocessed file directly
+            fn_data = base_fp + data['fn']
             assert os.path.exists(fn_data), f'Data not found at {fn_data}'
             df = pd.read_csv(fn_data)
 
@@ -152,14 +124,14 @@ for glacier, stations in master_dict.items():
             elif var.upper() in df.columns:
                 var_aws = var.upper()
             else:
-                var_aws = general_var_names[var]
+                var_aws = var_names[var]
 
             data_aws = df[var_aws]
-            data_merra = xr.open_zarr(merra2_fn.format(v=var_merra), consolidated=False)
+            data_merra = xr.open_zarr(base_fp + merra2_fn.format(v=var_merra), consolidated=False)
             data_merra = data_merra.sel(lat = lat, lon = lon, method='nearest')[var_merra]
 
             if var == 'wind':
-                data_v2m = xr.open_zarr(merra2_fn.format(v='V2M'))
+                data_v2m = xr.open_zarr(base_fp + merra2_fn.format(v='V2M'))
                 data_v2m = data_v2m.sel(lat = lat, lon = lon, method='nearest')['V2M']
                 data_merra.values = np.sqrt(data_v2m.values **2 + data_merra.values **2)
             

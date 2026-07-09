@@ -1,35 +1,26 @@
 # =========== PEBSI CONFIGURATION FILE ===========
-#
-# This configuration file is for the user to 
-# specify information about the simulation.
-# Any variables from defaults.py can be input here.
+# Any variables from defaults.py can be input here
+# to direct simulation physics, metadata, etc.
 # See defaults.py for variable descriptions.
-# 
+# The order of parameters does not matter.
+# ------------------------------------------------
+
+# dummy RGI ID (calls sample data)
+rgi_ids: ['00.00000']
+
 # ================================================
-#               SIMULATION METADATA
+#                  USER OPTIONS
 # ================================================
+
 store_data: true
 debug: false 
 progress_bar: true
-output_fp: '../Output/big_gulkana/'
-# climate_fp: '/Volumes/TOSHIBA EXT/climate_data/' # '/run/media/claire/TOSHIBA EXT/'
-start_date: '2019-04-20 00:00'
-end_date: '2020-08-22 00:00'
-temporal_chunks: 384
-# dem_fn: '../DEMs/gulkana_dem.tif'
 
-rgi_ids: ['01.00570'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
-method_distribute: 'scatter'
-n_points: 300 
-# rgi_ids: ['01.09162'] #
-# sites: ['N']
-n_spinup_years: 1
-# sites: ['D']
-kp: 2.1
-wind_factor: 1.75
-# kp: [2.0588, 2.7100, 3.190, 0.9877, 1.1478, 2.0991]
-# wind_factor: [1.5, 2, 2, 1, 1,1]
-# bias_vars: ['temp'] # , 'wind']
-store_vars: ['MB','EB','climate']
-
-# deposition_data: 'UKESM'
+# ================================================
+#               SIMULATION METADATA
+# ================================================
+output_fp: '../Output/test_simulation/'
+use_aws: true
+start_date: '2024-04-20 00:00'
+end_date: '2025-04-19 23:00'
+store_vars: ['MB','EB','layers']

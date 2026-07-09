@@ -82,6 +82,12 @@ def process_files(dataset, data_fp, filetype='.nc4'):
                 if not mask.any():
                     continue
                 da = da.isel(time=mask)
+
+                # deduplicate within this batch (guards against overlapping source files)
+                _, keep = np.unique(da.time.values, return_index=True)
+                if len(keep) < len(da.time):
+                    da = da.isel(time=np.sort(keep))
+
                 times_var[var].update(pd.to_datetime(da.time.values))
 
                 fn_zarr_var = os.path.join(fp_zarr_store, f'{var}_{roi}.zarr')
