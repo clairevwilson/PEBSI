@@ -12,8 +12,8 @@ is here to simplify. One environment can be used
 to generate the shading masks using CuPY, and then
 a separate environment can be used to run the model
 using JAX.
-
 """
+
 import os 
 import jax
 os.environ["JAX_TRACEBACK_FILTERING"] = "off"

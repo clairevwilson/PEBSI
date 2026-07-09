@@ -68,10 +68,6 @@ class Output():
     def get_output_names(self):
         """
         Creates the filepath/names to store the output.
-
-        Parameters
-        ==========
-        params : command-line arguments
         """
         params = self.params
 
@@ -240,7 +236,7 @@ class Output():
             new_vars.to_zarr(fn, mode='a')
         return
     
-    def add_basic_attrs(self,params,time_elapsed,climate):
+    def add_basic_attrs(self, params, time_elapsed, climate):
         """
         Adds informational attributes to the output dataset.
         - glacier name, site, and elevation

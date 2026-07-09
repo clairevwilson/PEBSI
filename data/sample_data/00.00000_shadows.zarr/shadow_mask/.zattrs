@@ -1,0 +1,9 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "time",
+        "y",
+        "x"
+    ],
+    "grid_mapping": "spatial_ref",
+    "units": "0=shade, 1=sun"
+}

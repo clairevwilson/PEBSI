@@ -30,7 +30,7 @@ class EnergyBalanceDriver():
         # 2. solve for the root of the energy balance equation
         # initialize two starting guesses
         t0 = state.surftemp     # previous surface temperature
-        t1 = forcings.tempC     # current air temperature
+        t1 = forcings.temp     # current air temperature
 
         # evaluate the initial energy balance residuals for both guesses
         y0, _ = self.compute_fluxes(t0, state, forcings, point_attrs)
@@ -202,18 +202,19 @@ class EnergyBalanceDriver():
         SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
         DENSITY_WATER = self.params.density_water
         CP_WATER = self.params.Cp_water
+        SPH = self.params.seconds_per_hour
 
         # unpack climate variables
-        airtemp = forcings.tempC
+        airtemp = forcings.temp
         surftemp = state.surftemp 
-        precip_rate = forcings.prec
+        precip_rate = forcings.tp / SPH
 
         # define rain vs snow scaling
         rain_scale = jnp.linspace(0,1,20)
         temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW,SNOW_THRESHOLD_HIGH,20)
         
         # get fraction of precip that is rain
-        frac_rain = jnp.interp(forcings.tempC, temp_scale, rain_scale)
+        frac_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
 
         Qp = (airtemp - surftemp)*precip_rate*frac_rain*DENSITY_WATER*CP_WATER
         return Qp
@@ -261,14 +262,15 @@ class EnergyBalanceDriver():
         )
 
         # transform humidity into mixing ratio (q) 
-        Ewz = self.sat_vapor_pressure(forcings.tempC)  # saturation vapor pressure at 2m
+        Ewz = self.sat_vapor_pressure(forcings.temp)  # saturation vapor pressure at 2m
         Ew0 = self.sat_vapor_pressure(surftemp)  # saturation vapor pressure at the surface
         
         qz = (forcings.rh / 100) * 0.622 * (Ewz / (forcings.sp - Ewz))
         q0 = 1.0 * 0.622 * (Ew0 / (forcings.sp - Ew0))
 
         # get air density from PV=nRT
-        density_air = forcings.sp / R_GAS / forcings.tempK * MM_AIR
+        tempK = forcings.temp + params.celsius_to_kelvin
+        density_air = forcings.sp / R_GAS / tempK * MM_AIR
 
         # latent heat term depends on direction of heat exchange
         is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
@@ -276,7 +278,7 @@ class EnergyBalanceDriver():
 
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
-        RICHARDSON = (GRAVITY / forcings.tempK) * (forcings.tempC - surftemp) \
+        RICHARDSON = (GRAVITY / tempK) * (forcings.temp - surftemp) \
                                                     * (z - z0) / safe_wind_sq
         # override Richardson to 0 if wind was actually 0
         RICHARDSON = jnp.where(wind_2m == 0.0, 0.0, RICHARDSON)
@@ -293,7 +295,7 @@ class EnergyBalanceDriver():
         )
         
         # final flux calculation
-        Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.tempC - surftemp) * jnp.cos(slope)
+        Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.temp - surftemp) * jnp.cos(slope)
         Ql = density_air * Lv * csQ * psi * wind_2m * (qz - q0) * jnp.cos(slope)
 
         return Qs, Ql

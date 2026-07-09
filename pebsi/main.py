@@ -134,7 +134,7 @@ def main(
 
         # pack climate outputs manually
         out = {
-            'airtemp': current_forcings.tempC, 
+            'airtemp': current_forcings.temp, 
             'rh': current_forcings.rh,
             'wind': current_forcings.wind,
             'winddir': current_forcings.winddir,

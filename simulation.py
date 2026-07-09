@@ -249,7 +249,7 @@ class PEBSI():
 
         # store point_attrs to self since they are invariant
         self.point_attrs = point_attrs
-        return glacier_state, point_attrs
+        return glacier_state
     
     def pack_forcings(self, params, dates, start, spinup=False):
         """
@@ -278,10 +278,6 @@ class PEBSI():
             )
             self._cell_elevs_set = True
 
-        # define conversion factors
-        CTOK = self.params.celsius_to_kelvin
-        SPH = self.params.seconds_per_hour
-
         # slice solar inputs from terrain by (day of year, hour)
         shading_idx = [self.terrain.shading_lookup[(d, h)]
                        for d, h in zip(dates.dayofyear, dates.hour)]
@@ -306,10 +302,8 @@ class PEBSI():
             doy=jnp.array(dates.day_of_year, dtype=jnp.int32),
 
             # basic climate variables
-            tempC=jnp.array(climate.temp, dtype=jnp.float64).T,
-            tempK=jnp.array(climate.temp, dtype=jnp.float64).T + CTOK,
+            temp=jnp.array(climate.temp, dtype=jnp.float64).T,
             tp=jnp.array(climate.tp, dtype=jnp.float64).T,
-            prec=jnp.array(climate.tp, dtype=jnp.float64).T / SPH,
             wind=jnp.array(climate.wind, dtype=jnp.float64).T,
             winddir=jnp.array(climate.winddir, dtype=jnp.float64).T,
             rh=jnp.array(climate.rh, dtype=jnp.float64).T,
@@ -332,8 +326,6 @@ class PEBSI():
             solar_zenith=jnp.array(solar_zenith, dtype=jnp.float64).T,
         )
 
-        # print out the time taken to process climate data
-        time_elapsed = time.time() - climate.start_time
         return forcings
     
     # ----------------------------------------------------------------- #
@@ -414,6 +406,18 @@ class PEBSI():
 
         return state, chunk_records
     
+    def _start_spinner(self, message_fn):
+        """Starts a braille spinner in a background thread. Returns (done_event, thread)."""
+        done = threading.Event()
+        frames = itertools.cycle(['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'])
+        def _animate():
+            while not done.is_set():
+                print(f'\r{message_fn(next(frames))}', end='', flush=True)
+                done.wait(0.1)
+        t = threading.Thread(target=_animate, daemon=True)
+        t.start()
+        return done, t
+
     def spinup(self, state):
         """
         Spins up the model for the user-prescribed duration
@@ -438,21 +442,10 @@ class PEBSI():
         # initialize spinup animation variables
         n_spinup_chunks = n_spinup_steps // chunk_size
         spinup_start = time.time()
-        spinup_done = threading.Event()
         spinup_chunk = [0]  # list so the animation thread can read updates
-
-        def _spinup_animate():
-            """Spinner to indicate spinning-up in progress"""
-            frames = itertools.cycle(['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'])
-            while not spinup_done.is_set():
-                print(f'\r~ Spinning up {next(frames)} '
-                      f'({spinup_chunk[0]}/{n_spinup_chunks} chunks)',
-                      end='', flush=True)
-                spinup_done.wait(0.1)
-
-        # use threading to drive the animation
-        spinup_thread = threading.Thread(target=_spinup_animate, daemon=True)
-        spinup_thread.start()
+        spinup_done, spinup_thread = self._start_spinner(
+            lambda f: f'~ Spinning up {f} ({spinup_chunk[0]}/{n_spinup_chunks} chunks)'
+        )
 
         # loop through temporal chunks for first year
         for i, start in enumerate(range(0, len(spinup_dates), chunk_size)):
@@ -492,7 +485,7 @@ class PEBSI():
         # prepare all the inputs
         self.prepare_spatial_inputs()
         self.prepare_initial_state()
-        initial_state, point_attrs = self.pack_states()
+        initial_state = self.pack_states()
 
         self.start_print()
 
@@ -519,9 +512,13 @@ class PEBSI():
         chunk_size = params.temporal_chunks
         n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
 
+        # single-chunk runs: spinner only (progress bar is meaningless with no prior timing)
+        if n_chunks == 1 and params.progress_bar:
+            sim_done, sim_thread = self._start_spinner(lambda f: f'~ Simulating {f}')
+
         # seed duration estimate from spin-up
         prev_duration = self.spinup_time * 3
-        progress = ChunkProgress(total_steps, params.progress_bar, prev_duration)
+        progress = ChunkProgress(total_steps, params.progress_bar and n_chunks > 1, prev_duration)
 
         chunk_i = 0
         self._chunk_label = (0, n_chunks)  # (current, total) for use in sub-methods
@@ -551,6 +548,11 @@ class PEBSI():
                 model_output.store_chunk(chunk_records, chunk_dates, start)
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
             del chunk_records
+
+        if n_chunks == 1 and params.progress_bar:
+            sim_done.set()
+            sim_thread.join()
+            print('\033[2K', end='\r', flush=True)
 
         if not self.params.progress_bar:
             print()  # end the overwriting line before the summary
