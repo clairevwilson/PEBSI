@@ -54,7 +54,6 @@ output_fn = '{g}_{i}.zarr'                                  # Output file name, 
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
-cop30_fp = '../data/dems/COP30'                             # DEM filepath for many glaciers (COP 30)
 cop30_vrt_path = '../data/dems/COP30/COP30_reg{r}.vrt'      # Path to VRT file for COP30 DEMs, inside cop30_fp
 dem_fn = None                                               # DEM filename to override COP30 (e.g. for modeling one glacier)
 shading_fp = '../data/shading/'                             # Shading data filepath for output of shading model
@@ -63,7 +62,6 @@ shading_fn = '{gid}_shadows.zarr'                           # Shading data filen
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
-cds_input_fn = '{g}{s}_climate.nc'                          # Climate dataset filepath to load ++
 aws_fn = 'data/sample_data/sample_aws.csv'                  # Sample weather station filename
 
 # INITIAL CONDITIONS
@@ -80,7 +78,6 @@ initial_LAP_fn = 'data/init/initial_laps_profile.csv'       # Initial LAP conten
 # UTILITY
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
-compiled_path = '.compiled_main.pkl'                        # Path to store the compiled executable 
 emulator_fn = 'data/snicar_emulator.npz'                    # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
 
 # CLIMATE
@@ -117,7 +114,6 @@ wind_ref_height = 2                         # Reference height for wind speed [m
 
 # BIAS CORRECTION
 bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
-qm_glac_name = None                         # Name of glacier used to prepare quantile mapping
 
 # PERTURBATIONS
 temp_perturb = 0                            # Additive factor to apply to model temperature
@@ -134,28 +130,19 @@ initialize_water = 'dry'                # 'dry' or 'saturated'
 surftemp_guess =  -10                   # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1                  # default amount of initial snow [m]
 initial_firn_depth = 10                 # default amount of initial firn [m] (only for sites identified as accumulation area)
-initial_ice_depth = 200                 # default amount of initial ice [m]
 
 # OUTPUT
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate']
 
 # METHODS
-method_distribute = 'scatter'           # 'scatter', 'none'
-method_turbulent = 'MO-similarity'      # 'MO-similarity', 'BulkRichardson' 
-method_stability = 'cutoff'             # 'cutoff', 'BeljaarsHoltslag'
-method_diffuse = 'Wohlfahrt'            # 'Wohlfahrt', 'none'
-method_heateq = 'Crank-Nicholson'       # 'Crank-Nicholson'
+method_distribute = 'scatter'           # 'scatter', 'sites'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
-method_cooling = 'minimize'             # 'minimize' (slow), 'iterative' (fast)
-method_ground = 'MolgHardy'             # 'MolgHardy'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
 option_flat_plates = False              # Use flat grain shapes in SNICAR emulator or only spherical?
 option_accel_grains = False             # Accelerate wet grain metamorphosis?
-option_uniform_ice = False              # Uniform size for ice bins?
-option_uniform_snow = False             # Uniform size for snow bins?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
@@ -170,11 +157,8 @@ constant_irrwater = True                # True or False to estimate from density
 dt = 3600                   # Model timestep [s]
 daily_dt = 86400            # Seconds in a day [s]
 n_heat_steps = 5            # Number of times to run heat equation per dt [-]
-task_id = -1                #$ -task_id     Unique identifier for parallel simulations
 
-# ALBEDO BANDS
-wvs = [round(x/100., 2) for x in range(20, 500)]# 480 bands used by SNICAR
-band_indices = {}                       # dictionary for storing spectral albedo
+# GRAIN SIZE INITIALIZATION
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 
 # INTENSIVE AND EXTENSIVE LAYER VARIABLES
@@ -190,7 +174,6 @@ all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
 wind_factor = 1             #* Wind factor [-]
 kp = 2.25                   #* Precipitation factor [-]
 dust_factor = 1             #* Dust factor [-]
-snow_free_doy = 100         #* Julian day of year after which to apply dust_factor [-]
 precgrad = 0                #* Precipitation gradient with elevation [% m-1] 
 lapse_rate = -6.5           #* Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_fresh_snow = 0.85    #* Albedo of fresh snow [-]
@@ -207,12 +190,11 @@ dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
 max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
+min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
 min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
-min_dz_ice = 0.5            # Thickness of uppermost layer when surface is ice and option_uniform_ice = False [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
-max_wet_metamorph = 200     # Maximum possible wet grain metamorphosis in a timestep for a single layer [um]
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>
 density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]
@@ -248,9 +230,6 @@ seconds_per_hour = 3600
 # <<<<<< Ideal gas law >>>>>>
 R_gas = 8.3144598           # Universal gas constant [J mol-1 K-1]
 molarmass_air = 0.0289644   # Molar mass of Earth's air [kg mol-1]
-pressure_std = 101325       # Standard pressure [Pa]
-temp_std = 293.15           # Standard temperature [K]
-density_std = 1.225         # Air density at sea level [kg m-3]
 # <<<<<< Model parameterizations >>>>>>
 Boone_c1 = 2.7e-6           # Densification c1 [s-1]
 Boone_c2 = 0.042            # Densification c2 [K-1]
@@ -270,10 +249,6 @@ albedo_ground = 0.2         #* Albedo of surrounding bedrock [-]
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
 diffuse_cloud_limit = 0.6   # Threshold to consider cloudy vs clear-sky in SNICAR [-]
-include_LWC_SNICAR = False  # Include liquid water in SNICAR? (slush)
-# <<<<<< Constants for switch runs >>>>>
-albedo_deg_rate = 15        # Rate of exponential decay of albedo
-average_grainsize = 500     # Grainsize to treat as constant if switch_melt is 0 [um]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
 ksp_BC = 1                  #* Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)
@@ -282,14 +257,8 @@ ksp_dust = 0.01             #* Meltwater scavenging efficiency of dust [-] (0.01
 BC_freshsnow = 0            # Concentration of BC in fresh snow for initialization [kg m-3]
 OC_freshsnow = 0            # Concentration of OC in fresh snow for initialization [kg m-3]
 dust_freshsnow = 0          # Concentration of dust in fresh snow for initilization [kg m-3]
-adjust_deposition = False   # Adjust deposition according to preprocessed factor
 # <<<<<< MERRA-2: LAP binning >>>>>
 ratio_DU3_DUtot = 3         # Ratio to transform dust bin 3 deposition to total dust
-ratio_DU_bin1 = 0.0751      # Ratio to transform total dust to SNICAR Bin 1 (0.05-0.5um)
-ratio_DU_bin2 = 0.20535     # " SNICAR Bin 2 (0.5-1.25um)
-ratio_DU_bin3 = 0.481675    # " SNICAR Bin 3 (1.25-2.5um)
-ratio_DU_bin4 = 0.203775    # " SNICAR Bin 4 (2.5-5um)
-ratio_DU_bin5 = 0.034       # " SNICAR Bin 5 (5-50um)
 merra_lat_res = 0.5         # Resolution of MERRA-2 latitudinally [deg]
 merra_lon_res = 0.625       # Resolution of MERRA-2 longitudinally [deg]
 # <<<<<< End-of-summer >>>>>

@@ -75,18 +75,8 @@ class Layers():
 
         # define the exponential curve for indexing reference
         layer_indices = np.arange(N_LAYERS)
-
-        # are snow layers a constant size?
-        if params.option_uniform_snow:
-            curve_snow = np.full(N_LAYERS, DZ_SNOW)
-        else:
-            curve_snow = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
-
-        # are ice layers a constant size?
-        if params.option_uniform_ice:
-            curve_ice = np.full(N_LAYERS, DZ_ICE)
-        else:
-            curve_ice = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
+        curve_snow = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
+        curve_ice = DZ_TOP * np.exp(layer_indices * LAYER_GROWTH)
     
         # create layers for each point
         for i in range(N_POINTS):

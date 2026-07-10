@@ -211,9 +211,9 @@ def test_accumulation_adds_mass(mb, params):
     """Snowfall increases total ice mass by the snowfall amount."""
     state = _make_state(params)
     forcings = _make_forcings(tempC=-5.0, tp=0.005)    # guaranteed snow
-    snowfall, _ = mb.get_precip_amounts(forcings)      # kg m-2
+    snowfall, rainfall = mb.get_precip_amounts(forcings)  # kg m-2
     mass_before = jnp.sum(state.lice, axis=1)
-    _, state_out = mb.add_accumulation(snowfall, state, forcings)
+    _, state_out = mb.add_accumulation(snowfall, rainfall, state, forcings)
     mass_after = jnp.sum(state_out.lice, axis=1)
     np.testing.assert_allclose(mass_after - mass_before, snowfall, atol=ATOL)
 
@@ -227,19 +227,22 @@ def test_run_vertical_processes_conserves_mass(mb, params):
     state = _make_state(params, ltemp=0.0, lwater_frac=0.02)
     fluxes = {
         'rainfall':          jnp.full((4,), 1.0),
+        'snowfall':          jnp.zeros((4,)),
         'melt_energy':       jnp.full((4,), 100.0),
         'SWnet_penetrating': jnp.zeros((4,)),
         'latent_heat':       jnp.full((4,), -10.0),
+        'BC':                jnp.zeros((4,)),
+        'OC':                jnp.zeros((4,)),
+        'dust':              jnp.zeros((4,)),
     }
-    mass_before = total_solid_liquid(state)
+    mass_before = total_solid_liquid(state) + state.basal_reservoir
     forcings = _make_forcings()
     state_out, mass_fluxes = mb.run_vertical_processes(state, forcings, fluxes)
-    mass_after = total_solid_liquid(state_out)
+    mass_after = total_solid_liquid(state_out) + state_out.basal_reservoir
 
     mass_in  = fluxes['rainfall'] + mass_fluxes.get('condensation', 0) \
                                   + mass_fluxes.get('deposition', 0)
     mass_out = mass_fluxes['runoff'] + mass_fluxes.get('sublimation', 0) \
-                                     + mass_fluxes.get('evaporation', 0) \
-                                     + mass_fluxes['dead']
+                                     + mass_fluxes.get('evaporation', 0)
     expected_after = mass_before + mass_in - mass_out
     np.testing.assert_allclose(mass_after, expected_after, atol=0.1)

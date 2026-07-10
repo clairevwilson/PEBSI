@@ -161,6 +161,11 @@ class Config():
             csv_path = [f for f in all_regions if f.startswith(region) and f.endswith('csv')][0]
             df = pd.read_csv(args.rgi_fp + csv_path)
 
+            min_area = args.min_area
+            df = df.loc[df['Area'] > min_area]
+            n = len(df.index)
+            print(f'No RGI IDs were specified: running {n} glaciers over {min_area} km 2')
+
             # find all glaciers in this region
             all_ids = [f.split('-')[-1] for f in df['RGIId']]
             args.rgi_ids = all_ids

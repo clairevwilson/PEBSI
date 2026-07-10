@@ -4,7 +4,9 @@
 # specify information about the simulation.
 # Any variables from defaults.py can be input here.
 # See defaults.py for variable descriptions.
-# 
+# The order of parameters does not matter.
+# ------------------------------------------------
+
 # ================================================
 #               SIMULATION METADATA
 # ================================================

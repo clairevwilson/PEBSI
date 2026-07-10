@@ -57,7 +57,7 @@ def get_args(parse=True):
                         help='filename of config yaml file')
     
     # GLACIERS
-    parser.add_argument('-rgi_ids', type=str, nargs='+', default=None,
+    parser.add_argument('-id', '--rgi_ids', type=str, nargs='+', default=None,
                         help='List of RGI IDs to run (overrides rgi_region)')
     parser.add_argument('-rgi_region', type=int, 
                         default=defaults.rgi_region,
@@ -86,6 +86,10 @@ def get_args(parse=True):
     # CLIMATE OPTOINS
     parser.add_argument('-use_aws', action='store_true',
                         help='use AWS or just reanalysis?')
+
+    # TESTING
+    parser.add_argument('--testing', action='store_true',
+                        help='run the test glacier (RGI ID 00.00000) with sample data?')
 
     if parse:
         args = parser.parse_args()
@@ -591,6 +595,9 @@ class PEBSI():
 if __name__ == '__main__':
     # get command-line args
     args = get_args()
+
+    if args.testing:
+        args.rgi_ids = ['00.00000']
 
     # initialize and run the model
     model = PEBSI(args)

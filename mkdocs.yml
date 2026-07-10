@@ -1,0 +1,63 @@
+site_name: PEBSI
+site_description: Python Energy Balance model for Snow and Ice
+site_author: Claire Wilson
+site_url: https://pebsi.readthedocs.io
+
+repo_name: clairevwilson/PEBSI
+repo_url: https://github.com/clairevwilson/PEBSI
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: installation.md
+    - File Structure: file-structure.md
+  - Tutorial:
+    - Climate Data: tutorial/climate-data.md
+    - Configuration: tutorial/configuration.md
+    - DEM: tutorial/dem.md
+    - Running a Simulation: tutorial/running.md
+    - Outputs: tutorial/outputs.md
+  - API Reference:
+    - Energy Balance: api/energybalance.md
+    - Mass Balance: api/massbalance.md
+    - Albedo: api/albedo.md
+    - State: api/state.md
+    - Forcing: api/forcing.md
+
+plugins:
+  - search
