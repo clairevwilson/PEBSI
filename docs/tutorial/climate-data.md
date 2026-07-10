@@ -34,4 +34,4 @@ Preprocessing notebooks are in `PEBSI/shop/preprocessing/`. PEBSI expects a comm
 
 ## Quantile Mapping (Bias Correction)
 
-Code in `PEBSI/shop/preprocessing/` can generate quantile CDFs from your AWS dataset for bias-correcting MERRA-2 data. This is the recommended way to use AWS data when only certain variables are present, as bias-corrected MERRA-2 forcings performs similarly to AWS forcings but enable longer periods to be simulated.
+Code in `PEBSI/shop/preprocessing/` can generate quantile CDFs from your AWS dataset for bias-correcting MERRA-2 data. This is the recommended way to use AWS data when limited data is available, as bias-corrected MERRA-2 forcings performs similarly to AWS forcings but enable longer periods to be simulated.

@@ -7,18 +7,20 @@ The `config.yaml` file is the core of every simulation. You can copy it or edit 
 The bare minimum to run a new glacier is to set the RGI glacier ID:
 
 ```yaml
-rgi_id: "01.00570"  # example: Gulkana Glacier, Alaska
+rgi_ids: ["01.00570"]  # example: Gulkana Glacier, Alaska
 ```
+
+This is also the place to specify your local filepaths (e.g., the path to your climate data or DEM), physics options (e.g., use penetrating shortwave radiation?), and parameters (e.g., precipitation gradient or temperature lapse rate).
 
 ## Parameter hierarchy
 
-Settings are resolved in this order (later overrides earlier):
+Settings are resolved in this order:
 
-1. `util/defaults.py` — model defaults
-2. `config.yaml` — your configuration file
-3. Command-line arguments — highest priority
+1. `util/defaults.py`
+2. `config.yaml`
+3. Command-line arguments
 
-Any parameter listed in `defaults.py` can be added to `config.yaml`.
+Any parameter listed in `defaults.py` can be added to `config.yaml`. More information on the parameter and physics options can be found in `defaults.py`.
 
 ## Command-line overrides
 

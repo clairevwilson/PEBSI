@@ -2,13 +2,16 @@
 
 `MassBalanceDriver` manages all subsurface and surface mass processes. It is called once per timestep from the main loop.
 
+!!! note
+    These methods are described in further detail in the [technical reference](https://docs.google.com/document/d/1skLi2KsmpXVVr0Mw3aYVu41SMf5OGHMGAQyU9AGE_iM/edit?tab=t.0#heading=h.yflmwwzexoft).
+
 ---
 
 ## Top-level drivers
 
 | Method | When called | What it does |
 |--------|------------|--------------|
-| `run_new_mass(state, forcings)` | Every timestep | Adds accumulation and dry deposition; returns updated state and precipitation flux dict |
+| `run_new_mass(state, forcings)` | Every timestep | Adds accumulation and dry deposition |
 | `run_vertical_processes(state, forcings, fluxes)` | Every timestep | Runs the full subsurface pipeline: melting → percolation → particle routing → refreezing → phase changes → layer checking → temperature profile |
 | `run_state_updates(state, forcings)` | Every timestep | Updates grain size, densification, and surface roughness |
 | `run_daily_routines(state, forcings)` | Once per day | Updates albedo-related daily trackers |
