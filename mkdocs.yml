@@ -51,6 +51,7 @@ nav:
     - Configuration: tutorial/configuration.md
     - DEM: tutorial/dem.md
     - Running a Simulation: tutorial/running.md
+    - Outputs: tutorial/outputs.md
   - API Reference:
     - Energy Balance: api/energybalance.md
     - Mass Balance: api/massbalance.md
