@@ -1,6 +1,6 @@
 # Digital Elevation Model (DEM)
 
-PEBSI uses a DEM to compute terrain shading, which affects the shortwave radiation reaching the glacier surface.
+PEBSI uses a DEM to compute terrain shading, which affects the shortwave radiation reaching the glacier surface. The DEM must cover not just the glacier outline but also the surrounding terrain so that ridge shading is computed correctly.
 
 ## Using an existing DEM
 
@@ -17,5 +17,3 @@ If you don't have a DEM, use the provided script to download a Copernicus DEM ti
 ```bash
 python shading/get_cop.py
 ```
-
-The DEM must cover not just the glacier outline but also the surrounding terrain so that ridge shading is computed correctly.
