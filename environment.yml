@@ -4,9 +4,9 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  - pip
   - jax
-  - numpy
+  - optax
+  - numpy<2
   - pandas
   - xarray
   - rioxarray
@@ -24,5 +24,4 @@ dependencies:
   - matplotlib
   - tqdm
   - pytest
-  - pip:
-    - equinox
+  - equinox
