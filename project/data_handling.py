@@ -7,8 +7,8 @@ pd.options.mode.string_storage = "python"
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import seaborn as sns
 from pyproj import Transformer
+import rioxarray
 import socket
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'

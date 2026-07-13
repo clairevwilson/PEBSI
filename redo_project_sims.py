@@ -39,10 +39,13 @@ for glacier in site_dict:
         except:
             wind_factor = 1
 
-        df = pd.read_csv(f'data/by_glacier/{glacier}/site_constants.csv', index_col='site')
-        kp = float(df.loc[site, 'kp'])
-        a_ice = float(df.loc[site, 'a_ice'])
         gid = translate_rgi[glacier]['6']
+
+        df = pd.read_csv(f'data/glacier_metadata.csv', dtype=str)
+        df_glac = df[df['rgiid'] == gid].set_index('site')
+
+        kp = float(df_glac.loc[site, 'kp'])
+        a_ice = float(df_glac.loc[site, 'a_ice'])
 
         sites.append(site)
         gids.append(gid)

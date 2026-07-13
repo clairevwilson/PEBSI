@@ -22,16 +22,6 @@ temporal_chunks: 384
 
 rgi_ids: ['01.00570'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
 method_distribute: 'scatter'
-n_points: 300 
-# rgi_ids: ['01.09162'] #
-# sites: ['N']
-n_spinup_years: 1
-# sites: ['D']
-kp: 2.1
-wind_factor: 1.75
-# kp: [2.0588, 2.7100, 3.190, 0.9877, 1.1478, 2.0991]
-# wind_factor: [1.5, 2, 2, 1, 1,1]
-# bias_vars: ['temp'] # , 'wind']
 store_vars: ['MB','EB','climate']
 
 # deposition_data: 'UKESM'
