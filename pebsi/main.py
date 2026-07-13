@@ -17,6 +17,7 @@ Executed in the following order:
 """
 # Internal libraries
 from types import SimpleNamespace
+import functools
 # External libraries
 import jax 
 import jax.numpy as jnp
@@ -25,9 +26,9 @@ from pebsi.energybalance import EnergyBalanceDriver
 from pebsi.massbalance import MassBalanceDriver
 from pebsi.forcing import domain_expansion
 from util.layers import *
-from pebsi.state import StepOutputs
+from pebsi.state import make_step_outputs_class, OUTPUT_GROUPS
 
-@jax.jit(static_argnames=['static_args'])
+@functools.partial(jax.jit, static_argnames=['static_args'])
 def main(
     initial_state, 
     all_forcings, 
@@ -40,6 +41,10 @@ def main(
     calculations.
     """
     params = SimpleNamespace(**{**dynamic_args._asdict(), **static_args._asdict()})
+
+    # build output class from store_vars
+    StepOutputs = make_step_outputs_class(params.store_vars)
+    requested_fields = set(StepOutputs._fields)
 
     # initiate drivers
     mb = MassBalanceDriver(params)
@@ -129,52 +134,45 @@ def main(
         )
 
         # ===================== OUTPUTS =====================
-        # define the next state
         next_state = current_state
+        out = {}
 
-        # pack climate outputs manually
-        out = {
-            'airtemp': current_forcings.temp, 
+        # climate fields
+        climate_map = {
+            'airtemp': current_forcings.temp,
             'rh': current_forcings.rh,
             'wind': current_forcings.wind,
             'winddir': current_forcings.winddir,
             'tp': current_forcings.tp,
             'sp': current_forcings.sp,
-            'albedo': current_state.albedo
+            'albedo': current_state.albedo,
         }
+        for field, value in climate_map.items():
+            if field in requested_fields:
+                out[field] = value
 
-        # get all the fields from energy balance fluxes
-        for field in fluxes:
-            if field in StepOutputs._fields:
-                out[field] = fluxes[field]
+        # energy balance fields
+        for field, value in fluxes.items():
+            if field in requested_fields:
+                out[field] = value
 
-        # get all the fields from mass fluxes
-        for field in mass_fluxes:
-            if field in StepOutputs._fields:
-                # store them in m w.e.
-                out[field] = mass_fluxes[field] / params.density_water
+        # mass balance fields (convert to m w.e.)
+        for field, value in mass_fluxes.items():
+            if field in requested_fields:
+                out[field] = value / params.density_water
 
-        # get all the layer fields
-        for field in StepOutputs._fields:
-            if field.startswith('layer'):
+        # layer fields
+        for field in OUTPUT_GROUPS['layers']:
+            if field in requested_fields:
                 state_field = field.replace('layer', 'l')
                 values = getattr(next_state, state_field)
-
-                if field in ['layerBC','layerOC','layerdust']:
+                if field in ['layerBC', 'layerOC', 'layerdust']:
                     lheight = next_state.lheight
                     safe_height = jnp.where(lheight > 0, lheight, 1e-6)
                     concentration = values / safe_height
-
-                    # put into interpretable units (ppb / ppm)
-                    if field in ['layerBC','layerOC']:
-                        values = concentration * 1e6
-                    else:
-                        values = concentration * 1e3
-
-                # store the values to output dictionary
+                    values = concentration * (1e6 if field in ['layerBC', 'layerOC'] else 1e3)
                 out[field] = values
 
-        # store records
         step_records = StepOutputs(**out)
         return next_state, step_records
     

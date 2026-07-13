@@ -30,7 +30,7 @@ import util.defaults as defaults
 # make choices in the compilation (e.g., options / methods)
 
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars',
+    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 'store_vars',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
 
@@ -64,7 +64,7 @@ dynamic_fields = ['kp','wind_factor','precgrad',
 
 external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
-    'store_vars', 'bias_vars', 'station_elevation',
+    'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
     'testing', 'progress_bar', 'debug'
 ]

@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import zarr
+# Local libraries
+from pebsi.state import OUTPUT_GROUPS
 
 class Output():
     """
@@ -32,26 +34,13 @@ class Output():
         self.N_LAYERS = params.max_nlayers
         self.N_POINTS = terrain.N_POINTS
 
-        # define all the variables to be saved
-        self.all_vars = all_variables = {
-            'EB':['shortwave_in','shortwave_ref','longwave_in','longwave_out',
-                  'rain_heat','ground_heat', 'sensible_heat','latent_heat',
-                   'melt_energy','albedo','surftemp'],
-            'MB':['melt','refreeze','runoff','cumrefreeze','dh',
-                  'sublimation','deposition','evaporation','condensation',
-                  'accumulation','rainfall','error'],
-            'layers':['layertemp','layerdensity','layerwater','layerheight',
-                      'layerage','layertype','layergrainsize','layerrefreeze',
-                      'layerBC','layerOC','layerdust'],
-            'SW':['vis_albedo','SWin_sky','SWin_terr'],
-            'climate':['airtemp','rh','wind','winddir','sp','tp']
-        }
+        self.all_vars = OUTPUT_GROUPS
 
         # make sure the requested storage variables are valid
-        for v in params.store_vars: assert v in all_variables, f'Invalid output group: {v}'
+        for v in params.store_vars: assert v in OUTPUT_GROUPS, f'Invalid output group: {v}'
 
         # extract the actual variables to store
-        self.store = [v for g in params.store_vars for v in all_variables[g]]
+        self.store = [v for g in params.store_vars for v in OUTPUT_GROUPS[g]]
 
         # find the filepath to store the data 
         self.get_output_names()
@@ -313,9 +302,6 @@ class Output():
                 time_elapsed=time_elapsed,
                 run_by=params.machine
             )
-
-            if params.task_id > -1:
-                attrs['task_id'] = str(params.task_id)
 
             # list variables from config that can be skipped
             skip = ['store_data','progress_bar','debug', 'fff',

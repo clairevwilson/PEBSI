@@ -120,7 +120,7 @@ temp_perturb = 0                            # Additive factor to apply to model 
 tp_perturb = 1                              # Multiplicative factor to apply to precipitation
 
 # ====================================================================================================================
-#                                            MODEL PHYSICS OPTIONS
+#                                            MODEL OPTIONS
 # ====================================================================================================================
 # INITIALIATION
 initialize_temp = 'interpolate'         # 'interpolate' or 'ripe'
