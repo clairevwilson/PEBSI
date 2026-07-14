@@ -30,7 +30,8 @@ import util.defaults as defaults
 # make choices in the compilation (e.g., options / methods)
 
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 'store_vars',
+    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 
+    'store_vars', 'differentiable',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
 
@@ -209,11 +210,11 @@ class Config():
         
         # create interpolation functions for each lookup variable
         args.interp_tau = RegularGridInterpolator(
-            grain_size_dims, ds.taumat.values, method='linear')
+            grain_size_dims, ds.taumat.values, method='linear', fill_value=0.0)
         args.interp_kap = RegularGridInterpolator(
-            grain_size_dims, ds.kapmat.values, method='linear')
+            grain_size_dims, ds.kapmat.values, method='linear', fill_value=1.0)
         args.interp_dr0 = RegularGridInterpolator(
-            grain_size_dims, ds.dr0mat.values, method='linear')
+            grain_size_dims, ds.dr0mat.values, method='linear', fill_value=0.0)
 
         self.args = args
         return

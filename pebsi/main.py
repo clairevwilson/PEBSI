@@ -176,9 +176,10 @@ def main(
         step_records = StepOutputs(**out)
         return next_state, step_records
     
-    # execute model with jax.lax.scan
+    # execute the model (need to use checkpoint for forward/backward solving)
+    scan_step = jax.checkpoint(step) if static_args.differentiable else step
     final_state, records = jax.lax.scan(
-        step, initial_state, all_forcings, unroll=1
+        scan_step, initial_state, all_forcings, unroll=1
     )
 
     # ===== COMPLETED SIMULATION: STORE DATA =====

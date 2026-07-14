@@ -470,10 +470,10 @@ def add_bottom_layer(state, mask, params):
             properties[merge_var]
         )
 
-    # recalculate layer heights for both case 1 and case 2
+    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
     properties['lheight'] = jnp.where(
         (redistribute | collapse_to_single)[:, None] & ice_mask,
-        properties['lice'] / properties['ldensity'],
+        properties['lice'] / safe_ldensity,
         properties['lheight']
     )
 
@@ -501,8 +501,8 @@ def add_bottom_layer(state, mask, params):
     )
 
     # re-calculate the layer height in case mass changed
-    new_bottom_layer['lheight'] = new_bottom_layer['lice'] \
-                                 / new_bottom_layer['ldensity']
+    safe_bot_density = jnp.where(new_bottom_layer['ldensity'] > 0, new_bottom_layer['ldensity'], 1.0)
+    new_bottom_layer['lheight'] = new_bottom_layer['lice'] / safe_bot_density
 
     for var in params.all_layer_vars:
         data = properties[var]
@@ -645,7 +645,8 @@ def split_layer(state, mask, idx, params):
         )
 
     # recalculate lheight directly
-    properties['lheight'] = properties['lice'] / properties['ldensity']
+    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    properties['lheight'] = properties['lice'] / safe_ldensity
 
     # write these properties to state
     state = state._replace(**properties)
@@ -740,21 +741,22 @@ def merge_existing_layers(state, mask, idx, params):
 
     # update ice mask and layer height
     properties['ice_mask'] = properties['ltype'].astype(jnp.int32) == 2
-    properties['lheight'] = properties['lice'] / properties['ldensity']
-    
+    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    properties['lheight'] = properties['lice'] / safe_ldensity
+
     # write these properties to state 
     state = state._replace(**properties)
     
     # add bottom layer to replaced removed
     state = add_bottom_layer(state, mask, params)
 
-    # recalculate layer heights
-    updated_lheight = state.lice / state.ldensity 
+    safe_ldensity = jnp.where(state.ldensity > 0, state.ldensity, 1.0)
+    updated_lheight = state.lice / safe_ldensity
     state = state._replace(lheight=updated_lheight)
 
     # finally, send state through the profile updates utility
     state = update_layer_props(state, params.density_ice)
-    
+
     return state
 
 def merge_new_layer(state, mask, new_layer, params):
@@ -817,13 +819,13 @@ def merge_new_layer(state, mask, new_layer, params):
     # write these properties to state 
     state = state._replace(**properties)
 
-    # recalculate layer heights
-    updated_lheight = state.lice / state.ldensity 
+    safe_ldensity = jnp.where(state.ldensity > 0, state.ldensity, 1.0)
+    updated_lheight = state.lice / safe_ldensity
     state = state._replace(lheight=updated_lheight)
 
     # finally, send state through the profile updates utility
     state = update_layer_props(state, params.density_ice)
-    
+
     return state
 
 def check_layer_sizes(state, params):
@@ -944,8 +946,9 @@ def update_layer_types(state, DENSITY_ICE):
     # apply the ice transformation
     new_ltype = jnp.where(trans_mask, 2, state.ltype)
     new_ldensity = jnp.where(trans_mask, DENSITY_ICE, state.ldensity)
+    safe_new_ldensity = jnp.where(new_ldensity > 0, new_ldensity, 1.0)
     new_lheight = jnp.where(
-        trans_mask, state.lice / new_ldensity, state.lheight
+        trans_mask, state.lice / safe_new_ldensity, state.lheight
     )
 
     # update state
