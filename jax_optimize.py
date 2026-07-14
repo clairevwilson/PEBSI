@@ -20,7 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # netCDF4 must load before JAX to avoid numpy ABI conflict
 import simulation as sim
 
+import time
 import jax
+jax.config.update("jax_traceback_filtering", "off")
 import jax.numpy as jnp
 import optax
 import numpy as np
@@ -30,12 +32,12 @@ from project.data_handling import MassBalance
 from pebsi.main import main as pebsi_main
 
 site_dict = {
-    'wolverine': ['N', 'B', 'EC'],
-    'kahiltna': ['K53', 'K17b'],
-    'kennicott': ['GTL', 'GTH'],
-    'lemon_creek': ['B', 'C', 'D'],
-    'taku': ['NWB1', 'TKG3'],
-    'gulkana': ['AU', 'B', 'D'],
+    'wolverine':['N','B','EC'],
+    'kahiltna':['K53','K17b'], 
+    'kennicott':['GTL','GTH'],
+    'lemon_creek':['B','C','D'],
+    'taku':['NWB1','TKG3'],
+    'gulkana':['AU','B','D']
 }
 
 # ---------------------------------------------------------------------------
@@ -59,7 +61,7 @@ def load_all_observations(site_dict):
     for glacier in site_dict:
         for site in site_dict[glacier]:
             try:
-                obs = MassBalance(glacier, site, use='benchmark')
+                obs = MassBalance(glacier, site, use='benchmark', min_n_winter=1)
                 site_labels.append((glacier, site))
                 meas_list.append(obs.data.astype(np.float32))
                 period_starts_list.append(obs.period_starts)
@@ -134,9 +136,16 @@ def init_pebsi(config_fn):
     model = sim.PEBSI(args)
     
     # only compute MB fields during optimization to keep memory bounded
-    model.config.static_args = model.config.static_args._replace(store_vars=('minimal',))
+    model.config.static_args = model.config.static_args._replace(store_vars=('minimal',), differentiable=True)
     model.config.params.store_vars = ('minimal',)
     model.initialize()
+
+    # run spinup once here so every optimization step starts from a
+    # spun-up state without re-running it each forward pass
+    print("Running spinup...")
+    spun_up_state = model.spinup(model.initial_state)
+    model.initial_state = spun_up_state
+
     return model
 
 
@@ -161,65 +170,67 @@ def make_loss_fn(model, period_idx, meas_batch, mask_batch):
     dynamic_args = model.config.dynamic_args
     params = model.config.params
     chunk_size = params.temporal_chunks
-    total_steps = len(model.dates)
+    # truncate dates to a multiple of chunk_size so chunks are always full
+    total_steps = (len(model.dates) // chunk_size) * chunk_size
     S, N_max = meas_jax.shape
 
-    # Pre-load forcings per chunk (numpy, not JAX — stays on CPU until needed)
-    chunks = [
-        model.pack_forcings(params, model.dates[start:start + chunk_size], start)
+    # Stack all chunk forcings into a single JAX array so lax.scan can
+    # iterate over them — this is the key to bounded memory during autodiff.
+    # Each leaf of the forcing namedtuple gets an extra leading chunk dimension.
+    chunk_list = [
+        jax.tree.map(lambda x: jnp.nan_to_num(x, nan=0.0),
+                     model.pack_forcings(params, model.dates[start:start + chunk_size], start))
         for start in range(0, total_steps, chunk_size)
     ]
+    n_chunks = len(chunk_list)
+    stacked_forcings = jax.tree.map(lambda *xs: jnp.stack(xs), *chunk_list)
 
-    # static_args and point_attrs are captured in the closure so that
-    # jax.checkpoint only sees JAX-traceable arguments
+    # static_args and point_attrs captured in closure — jax.checkpoint only
+    # sees JAX-traceable arguments
     def _run_chunk(state, chunk_forcings, new_dynamic_args):
         return pebsi_main(state, chunk_forcings, model.point_attrs, static_args, new_dynamic_args)
 
-    checkpointed_chunk = jax.checkpoint(_run_chunk)
+    # chunk_size is static, so period index offsets are known at trace time
+    chunk_offsets = jnp.arange(n_chunks) * chunk_size
 
     def loss_fn(log_wind_factor):
         wind_factor = jnp.exp(log_wind_factor)
         new_dynamic_args = dynamic_args._replace(wind_factor=wind_factor)
 
-        # Accumulate per-period MB sums across chunks rather than storing
-        # the full (T, N_POINTS) timeseries. period_sums[s, p] holds the
-        # running MB total for site s, period p so far.
-        period_sums = jnp.zeros((S, N_max))
-        state = model.initial_state
-        t_offset = 0
+        def scan_chunk(carry, xs):
+            state, period_sums = carry
+            chunk_forcings, t_offset = xs
 
-        for chunk_forcings in chunks:
-            state, records = checkpointed_chunk(state, chunk_forcings, new_dynamic_args)
+            state, records = jax.checkpoint(_run_chunk)(state, chunk_forcings, new_dynamic_args)
             chunk_mb = records.accumulation + records.refreeze - records.melt  # (T_chunk, N_POINTS)
-            T_chunk = chunk_mb.shape[0]
 
-            # For each (site, period), sum the MB timesteps that fall in this chunk
-            def accumulate_chunk(period_sums, site_idx):
+            # accumulate MB into per-period sums for each site
+            def accumulate_site(period_sums, site_idx):
                 mb_site = chunk_mb[:, site_idx]  # (T_chunk,)
 
                 def add_period(carry, j):
                     p_start = period_idx_jax[site_idx, j, 0]
                     p_end = period_idx_jax[site_idx, j, 1]
-                    t = jnp.arange(T_chunk) + t_offset
-                    in_period = (t >= p_start) & (t < p_end)
-                    contrib = jnp.where(in_period, mb_site, 0.0).sum()
+                    t = jnp.arange(chunk_size) + t_offset
+                    contrib = jnp.where((t >= p_start) & (t < p_end), mb_site, 0.0).sum()
                     return carry.at[j].add(contrib), None
 
                 row, _ = jax.lax.scan(add_period, period_sums[site_idx], jnp.arange(N_max))
                 return period_sums.at[site_idx].set(row), None
 
-            period_sums, _ = jax.lax.scan(
-                accumulate_chunk,
-                period_sums,
-                jnp.arange(S)
-            )
-            t_offset += T_chunk
+            period_sums, _ = jax.lax.scan(accumulate_site, period_sums, jnp.arange(S))
+            return (state, period_sums), None
 
-        # Compute per-site RMSE from accumulated period sums
-        residuals = period_sums - meas_jax
+        init_carry = (model.initial_state, jnp.zeros((S, N_max)))
+        (_, period_sums), _ = jax.lax.scan(
+            scan_chunk, init_carry, (stacked_forcings, chunk_offsets)
+        )
+
+        safe_meas = jnp.where(mask_jax, meas_jax, 0.0)
+        residuals = period_sums - safe_meas
         sq = jnp.where(mask_jax, jnp.square(residuals), 0.0)
         counts = jnp.sum(mask_jax, axis=1).clip(min=1)
-        per_site_rmse = jnp.sqrt(jnp.sum(sq, axis=1) / counts)
+        per_site_rmse = jnp.sqrt(jnp.sum(sq, axis=1) / counts + 1e-8)
         return jnp.mean(per_site_rmse)
 
     return loss_fn
@@ -240,11 +251,12 @@ def run_optimization(loss_fn, n_sites, n_steps=100, lr=1e-2):
 
     print(f"{'Step':>6}  {'Mean RMSE':>10}")
     for i in range(n_steps):
+        t0 = time.time()
         loss, grads = grad_fn(log_wf)
+        jax.block_until_ready((loss, grads))
         updates, opt_state = optimizer.update(grads, opt_state)
         log_wf = optax.apply_updates(log_wf, updates)
-        if i % 10 == 0 or i == n_steps - 1:
-            print(f"{i:>6}  {float(loss):>10.4f}")
+        print(f"{i:>6}  {float(loss):>10.4f}  ({time.time()-t0:.1f}s)")
 
     return jnp.exp(log_wf)
 
@@ -261,15 +273,16 @@ if __name__ == '__main__':
     print(f"Loaded {S} sites\n")
 
     print("Initializing PEBSI...")
-    model = init_pebsi('config_redos.yaml')
+    model = init_pebsi('configs_opt.yaml')
 
     print("Building period index arrays...")
     period_idx = build_period_indices(model.dates, period_starts_list, period_ends_list)
+    print(f"  Valid periods found: {(period_idx[:, :, 0] >= 0).sum()} / {period_idx[:, :, 0].size}")
 
     loss_fn = make_loss_fn(model, period_idx, meas_padded, mask)
 
     print("Optimizing wind_factor for all sites...\n")
-    wind_factors = run_optimization(loss_fn, n_sites=S, n_steps=100, lr=1e-2)
+    wind_factors = run_optimization(loss_fn, n_sites=S, n_steps=2, lr=1e-2)
 
     print("\nOptimized wind factors:")
     print(f"{'Glacier':<14} {'Site':<6} {'wind_factor':>12}")
