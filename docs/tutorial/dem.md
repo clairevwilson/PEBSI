@@ -12,8 +12,8 @@ dem_fn: /path/to/your/dem.tif
 
 ## Downloading a DEM
 
-If you don't have a DEM, use the provided script to download a Copernicus DEM tile for your region:
+If you don't have a DEM, update the bounding box in the provided script and download a Copernicus DEM tile for your region:
 
 ```bash
-python shading/get_cop.py
+python shop/data_retrieval/get_cop.py
 ```

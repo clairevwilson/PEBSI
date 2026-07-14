@@ -18,9 +18,6 @@ conda env create -f environment.yaml
 conda activate pebsi-env
 ```
 
-!!! note
-    PEBSI should work on Python >= 3.10. Please [open an issue](https://github.com/clairevwilson/PEBSI/issues) if you find this is not the case.
-
 ## 3. Test the installation
 
 ### A. Unit tests
@@ -38,3 +35,6 @@ The model comes with one year of mock forcing data. Running with `--testing` use
 ```bash
 python simulation.py --testing
 ```
+
+!!! note
+    Please [open an issue](https://github.com/clairevwilson/PEBSI/issues) if you encounter any problems during testing. 

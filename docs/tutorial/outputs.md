@@ -16,6 +16,6 @@ The layer data, if included, explodes file size since the model stores 50 layers
 
 A simple notebook `visualize_output.ipynb` is available which provides a couple of example functions that are useful to inspect the output. Functions call from `shop/plotting_fxns` which includes:
 
-- simple_plot(ds, vars, time): a simple timeseries plot. Variables can be called within groups to plot within the same axis.
-- plot_hours(ds, vars, time): a plot which averages each var per hour of day. Variables can be called within groups to plot within the same axis.
-- layer_heatmap(ds, dates, vars): a heatmap of the layer distribution as stacked bar charts to visualize how the snowpack evolved.
+- `simple_plot(ds, vars, time)`: a simple timeseries plot. Variables can be called within groups to plot within the same axis.
+- `plot_hours(ds, vars, time)`: a plot which averages each var per hour of day. Variables can be called within groups to plot within the same axis.
+- `layer_heatmap(ds, dates, vars)`: a heatmap of the layer distribution as stacked bar charts to visualize how the snowpack evolved.

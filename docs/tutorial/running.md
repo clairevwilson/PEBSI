@@ -19,27 +19,6 @@ python simulation.py [options]
 | `-out` | `--output_fn` | str | Filename for the stored output. |
 | | `-use_aws` | bool | Use AWS (weather station) forcing data. |
 
-## Simulation set-up
-
-To set up the spatial grid of a simulation, there are currently two options.
-
-### 1. `method_distribute='sites'`
-
-This option is for simulating named, individual sites, such as mass balance index sites or the location of an automatic weather station. To access those sites by name, add new rows to the `data/glacier_metadata.csv` file. At minimum, specify the RGI ID, site name, and the point coordinates in decimal degrees. To run those sites, specify `sites` argument in the configuration file.
-
-The `glacier_metadata.csv` file can also store elevation (m.a.s.l.) and slope and aspect (degrees) if you have in situ measurements that are more accurate than what the DEM can provide.
-
-Also consider storing pre-processed parameters to columns in this file, such as local ice albedo. While PEBSI will not directly access those parameters, a simple simulation processing script can load arrays of individual site parameters into the `config.yaml` file.
-
-### 2. `method_distribute='scatter'`
-
-This option is for a distributed, gridded run across a glacier or region. The grid is uniform in space; i.e., the number of points per glacier is scaled to each glacier's area.
-
-Options within the scatter method:
-
-- `n_points`: approximate number of points to distribute across all glaciers in the simulation
-- `min_area`: for running an entire region, this sets the minimum area of glaciers to include
-
 ## Examples
 
 Run the built-in test simulation:
