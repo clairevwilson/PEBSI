@@ -226,10 +226,11 @@ class Config():
         # MODEL OPTIONS 
         # make sure temporal chunks is a fairly even multiplier of 1 year
         temporal_chunks = getattr(self.args, 'temporal_chunks')
-        threshold_hours = 10 * 24 
+        threshold_hours = 10 * 24
         hours_in_year = 365 * 24
-        remainder = hours_in_year % temporal_chunks 
-        to_next = temporal_chunks - remainder if remainder != 0 else 0
+        smaller, larger = sorted([temporal_chunks, hours_in_year])
+        remainder = larger % smaller
+        to_next = smaller - remainder if remainder != 0 else 0
         assert min(remainder, to_next) <= threshold_hours, \
             f'Temporal chunks should be an ~ even multiplier of 8760'
 
