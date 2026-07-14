@@ -251,7 +251,9 @@ class MassBalanceDriver:
             new_density = params.constant_snowfall_density
         else:
             # CROCUS formulation of density (Vionnet et al. 2012)
-            new_density = jnp.maximum(109 + 6 * (temp - 0.) + 26 * wind ** 0.5, 50)
+            new_density = jnp.maximum(
+                109 + 6 * (temp - 0.) + 26 * jnp.sqrt(
+                    jnp.maximum(wind, 1e-10)), 50)
         
         # check if using constant grain size for new snow
         if params.constant_freshgrainsize:
@@ -390,7 +392,8 @@ class MassBalanceDriver:
         new_annual_max_snow = jnp.maximum(current_snow, state.annual_max_snow)
         
         # get fraction of max annual snow at each point and scale albedo
-        snow_fraction = jnp.clip(current_snow / new_annual_max_snow, 0.0, 1.0)
+        safe_max_snow = jnp.where(new_annual_max_snow > 0, new_annual_max_snow, 1.0)
+        snow_fraction = jnp.clip(current_snow / safe_max_snow, 0.0, 1.0)
         new_albedo_surr = ALBEDO_GROUND + (ALBEDO_SNOW - ALBEDO_GROUND) * snow_fraction
 
         # === days since snowfall ===
@@ -890,7 +893,8 @@ class MassBalanceDriver:
         total_actual_loss = jnp.sum(mass_lost, axis=1)
 
         # recalculate layer heights due to sublimation
-        updated_lheight = jnp.maximum(0.0, updated_lice / ldensity)
+        safe_ldensity = jnp.where(ldensity > 0, ldensity, 1.0)
+        updated_lheight = jnp.maximum(0.0, updated_lice / safe_ldensity)
 
         # ice cannot hold water so it goes to runoff
         runoff_per_layer = jnp.where(ice_mask, updated_lwater, 0.0)
@@ -995,7 +999,8 @@ class MassBalanceDriver:
             flux_inter = k_inter * (temps[:, :-1] - temps[:, 1:]) / safe_dz
 
             # top layer update logic
-            safe_thermal_mass_0 = CP_ICE * ldensity[:, 0] * safe_lheight[:, 0]
+            raw_tm0 = CP_ICE * ldensity[:, 0] * safe_lheight[:, 0]
+            safe_thermal_mass_0 = jnp.where(raw_tm0 > 0, raw_tm0, 1.0)
             dT_0 = (flux_surf - flux_inter[:, 0]) * dt_heat / safe_thermal_mass_0
             
             # mid-layer Updates Logic
@@ -1014,7 +1019,9 @@ class MassBalanceDriver:
 
             # top layer numerical stability checker fallback
             # very small top layer can experience extreme cooling / heating
-            unstable_top = (next_temps[:, 0] > 0.0) | (next_temps[:, 0] < -50.0)
+            unstable_top = (next_temps[:, 0] > 0.0) | \
+                    (next_temps[:, 0] < -50.0) | \
+                    jnp.isnan(next_temps[:, 0])
             fallback_top_temp = 0.5 * (surftemp + next_temps[:, 1])
             next_temps = next_temps.at[:, 0].set(jnp.where(
                 unstable_top, fallback_top_temp, next_temps[:, 0]))
@@ -1123,8 +1130,9 @@ class MassBalanceDriver:
             dRho = ldensity * weight_above / NU_0 * exp_term
 
         # calculated updated properties 
-        new_ldensity = ldensity + dRho 
-        new_lheight = lice / new_ldensity 
+        new_ldensity = ldensity + dRho
+        safe_new_ldensity = jnp.where(new_ldensity > 0, new_ldensity, 1.0)
+        new_lheight = lice / safe_new_ldensity 
 
         # check if any water was squeezed out by densification
         if params.constant_irrwater:
@@ -1321,15 +1329,17 @@ class MassBalanceDriver:
                 tau + 1e-6, # avoid 0 denominator
                 tau + grainsize - FRESH_GRAINSIZE
             )
-            safe_base = jnp.where(denominator > 0, tau / denominator, 1e-6)
+            safe_base = jnp.maximum(jnp.where(denominator > 0, tau / denominator, 1e-6), 1e-10)
             
             # determine actual dry grain growth rate from parameters
-            drdrydt = dr0 * jnp.power(safe_base, 1.0 / kap) / dt
+            safe_kap = jnp.maximum(kap, 1e-6)
+            drdrydt = dr0 * jnp.power(safe_base, 1.0 / safe_kap) / dt
             drdry = drdrydt * dt
 
         # WET METAMORPHISM
         grainsize_m = grainsize / 1e6
-        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * (grainsize_m ** 2))
+        safe_grainsize_m_sq = jnp.where(grainsize_m > 0, grainsize_m ** 2, 1.0)
+        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * safe_grainsize_m_sq)
         drwet = drwetdt * dt * 1e6
         
         # accelerate grain growth?

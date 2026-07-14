@@ -30,7 +30,8 @@ import util.defaults as defaults
 # make choices in the compilation (e.g., options / methods)
 
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars',
+    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 
+    'store_vars', 'differentiable',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
 
@@ -64,7 +65,7 @@ dynamic_fields = ['kp','wind_factor','precgrad',
 
 external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
-    'store_vars', 'bias_vars', 'station_elevation',
+    'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
     'testing', 'progress_bar', 'debug'
 ]
@@ -209,11 +210,11 @@ class Config():
         
         # create interpolation functions for each lookup variable
         args.interp_tau = RegularGridInterpolator(
-            grain_size_dims, ds.taumat.values, method='linear')
+            grain_size_dims, ds.taumat.values, method='linear', fill_value=0.0)
         args.interp_kap = RegularGridInterpolator(
-            grain_size_dims, ds.kapmat.values, method='linear')
+            grain_size_dims, ds.kapmat.values, method='linear', fill_value=1.0)
         args.interp_dr0 = RegularGridInterpolator(
-            grain_size_dims, ds.dr0mat.values, method='linear')
+            grain_size_dims, ds.dr0mat.values, method='linear', fill_value=0.0)
 
         self.args = args
         return
@@ -225,10 +226,11 @@ class Config():
         # MODEL OPTIONS 
         # make sure temporal chunks is a fairly even multiplier of 1 year
         temporal_chunks = getattr(self.args, 'temporal_chunks')
-        threshold_hours = 10 * 24 
+        threshold_hours = 10 * 24
         hours_in_year = 365 * 24
-        remainder = hours_in_year % temporal_chunks 
-        to_next = temporal_chunks - remainder if remainder != 0 else 0
+        smaller, larger = sorted([temporal_chunks, hours_in_year])
+        remainder = larger % smaller
+        to_next = smaller - remainder if remainder != 0 else 0
         assert min(remainder, to_next) <= threshold_hours, \
             f'Temporal chunks should be an ~ even multiplier of 8760'
 

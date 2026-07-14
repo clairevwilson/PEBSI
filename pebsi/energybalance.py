@@ -145,7 +145,8 @@ class EnergyBalanceDriver():
         # calculate slope correction
         cos_theta = (jnp.cos(sun_zen)*jnp.cos(slope) + 
                     jnp.sin(sun_zen)*jnp.sin(slope)*jnp.cos(sun_az - aspect))
-        slope_correction = jnp.clip(cos_theta / jnp.cos(sun_zen), 0, 5)
+        safe_cos_zen = jnp.where(jnp.cos(sun_zen) > 1e-6, jnp.cos(sun_zen), 1.0)
+        slope_correction = jnp.clip(cos_theta / safe_cos_zen, 0, 5)
         
         # SWin needs to be corrected for shade
         # get sky (diffuse+direct) and terrain (diffuse) SWin
@@ -290,8 +291,8 @@ class EnergyBalanceDriver():
         # Psi stability factor (Beljaars & Holtslag)
         psi = jnp.where(
             RICHARDSON <= 0.0,
-            (1.0 - 15.0 * RICHARDSON) ** 0.5,  # Unstable branch
-            jnp.exp(-5.0 * RICHARDSON)         # Stable branch
+            jnp.sqrt(jnp.maximum(1.0 - 15.0 * RICHARDSON, 1e-10)),
+            jnp.exp(-5.0 * RICHARDSON)
         )
         
         # final flux calculation
@@ -355,9 +356,8 @@ class EnergyBalanceDriver():
         zen_term = jnp.cos(solar_zenith)
         rad_pot = SOLAR_CONSTANT * (1 + 0.033 * doy_term) * zen_term
 
-        # determine clearness index
-        CI = rad_glob / rad_pot
-        CI = jnp.clip(CI, 0, 1)
+        safe_rad_pot = jnp.where(rad_pot > 1e-6, rad_pot, 1.0)
+        CI = jnp.clip(rad_glob / safe_rad_pot, 0, 1)
 
         # empirical relationship for diffuse fraction
         diffuse_fraction = jnp.exp(-jnp.exp(P1-(P2-P3*CI)))*(1-P4)+P4

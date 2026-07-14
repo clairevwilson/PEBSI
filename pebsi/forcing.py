@@ -79,7 +79,8 @@ def adjust_longwave(forcings, point_attrs, params):
 
     def emissivity(t_C, rh):
         e_hPa = sat_vp(t_C) * (rh / 100) / 100
-        return 1.24 * (e_hPa / (t_C + CTOK)) ** (1.0 / 7.0)
+        safe_ratio = jnp.maximum(e_hPa / (t_C + CTOK), 1e-10)
+        return 1.24 * safe_ratio ** (1.0 / 7.0)
 
     eps_site = emissivity(forcings.temp, forcings.rh)
     eps_cell = emissivity(temp_cell, forcings.rh)
