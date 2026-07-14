@@ -61,8 +61,8 @@ class Terrain:
             self.elev_n = self.slope_n = self.aspect_n = None
             return
 
-        if self.params.method_distribute == 'scatter':
-            lats, lons, glaciers = self.scatter_points()
+        if self.params.method_distribute == 'grid':
+            lats, lons, glaciers = self.grid_points()
 
             self.elev_n = None
             self.slope_n = None 
@@ -129,7 +129,7 @@ class Terrain:
         self.rgi_gdf = gdf
         return
 
-    def scatter_points(self, tolerance=0.05):
+    def grid_points(self, tolerance=0.05):
         """
         Samples approximately n_points, evenly distributed 
         inside a polygon shapefile using an adaptive grid 

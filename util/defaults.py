@@ -136,7 +136,7 @@ store_vars = ['MB','EB','climate']      # Variables to store of the possible set
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS
-method_distribute = 'scatter'           # 'scatter', 'sites'
+method_distribute = 'grid'              # 'grid', 'sites'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 
