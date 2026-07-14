@@ -12,8 +12,39 @@ Contains the following state trackers:
     loop; contains all output attributes
 """
 # External libraries
+from collections import namedtuple
 from typing import NamedTuple
 import jax.numpy as jnp
+
+# define which variables belong to which output groups
+OUTPUT_GROUPS = {
+    'minimal':  ['accumulation', 'refreeze', 'melt'],
+    'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
+                 'sublimation', 'deposition', 'evaporation',
+                 'condensation', 'accumulation', 'rainfall', 'error'],
+    'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
+                 'longwave_in', 'longwave_out', 'sensible_heat',
+                 'latent_heat', 'rain_heat', 'ground_heat',
+                 'albedo', 'surftemp'],
+    'layers':   ['layertemp', 'layerdensity', 'layerwater', 'layerheight',
+                 'layerage', 'layertype', 'layergrainsize', 'layerrefreeze',
+                 'layerBC', 'layerOC', 'layerdust'],
+    'climate':  ['airtemp', 'rh', 'wind', 'winddir', 'sp', 'tp'],
+}
+
+
+def make_step_outputs_class(store_vars):
+    """
+    Builds a NamedTuple containing only the fields requested by store_vars.
+    Called at trace time (store_vars is static), so JAX recompiles when
+    the set of stored variables changes.
+    """
+    fields = []
+    for group in store_vars:
+        for f in OUTPUT_GROUPS[group]:
+            if f not in fields:
+                fields.append(f)
+    return namedtuple('StepOutputs', fields)
 
 class GlacierState(NamedTuple):
     """
@@ -140,9 +171,19 @@ class PointAttributes(NamedTuple):
     sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
     LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
 
+class MBOutputs(NamedTuple):
+    """Minimal per-timestep outputs for optimization — omits layer arrays."""
+    accumulation: jnp.ndarray
+    refreeze: jnp.ndarray
+    melt: jnp.ndarray
+
 class StepOutputs(NamedTuple):
     """
-    Energy balance and mass fluxes for a single timestep at every point.
+    Example, complete step outputs class including every energy balance and mass flux 
+    for documentation purposes.
+
+    The actual StepOutputs class created uses only a subset of these variables
+    depending on which variables were specified in store_vars.
 
     Array dimensions:
         - 1D properties: (N_POINTS,)

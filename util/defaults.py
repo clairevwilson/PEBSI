@@ -120,7 +120,7 @@ temp_perturb = 0                            # Additive factor to apply to model 
 tp_perturb = 1                              # Multiplicative factor to apply to precipitation
 
 # ====================================================================================================================
-#                                            MODEL PHYSICS OPTIONS
+#                                            MODEL OPTIONS
 # ====================================================================================================================
 # INITIALIATION
 initialize_temp = 'interpolate'         # 'interpolate' or 'ripe'
@@ -133,6 +133,7 @@ initial_firn_depth = 10                 # default amount of initial firn [m] (on
 
 # OUTPUT
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate']
+differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS
 method_distribute = 'scatter'           # 'scatter', 'sites'

@@ -474,6 +474,16 @@ class PEBSI():
          
         return state
 
+    def initialize(self):
+        """
+        Prepares spatial inputs, layer structure, and initial JAX state.
+        Results are stored on self so they can be accessed directly for
+        optimization or other uses without going through run().
+        """
+        self.prepare_spatial_inputs()
+        self.prepare_initial_state()
+        self.initial_state = self.pack_states()
+
     def run(self):
         """
         Executes model functions and stores the output data.
@@ -487,9 +497,8 @@ class PEBSI():
         params = self.config.params
 
         # prepare all the inputs
-        self.prepare_spatial_inputs()
-        self.prepare_initial_state()
-        initial_state = self.pack_states()
+        self.initialize()
+        initial_state = self.initial_state
 
         self.start_print()
 
