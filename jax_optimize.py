@@ -62,8 +62,12 @@ def load_all_observations(site_dict):
         for site in site_dict[glacier]:
             try:
                 obs = MassBalance(glacier, site, use='benchmark', min_n_winter=1)
+                start_doy = pd.to_datetime(obs.period_starts).day_of_year
+                end_doy = pd.to_datetime(obs.period_ends).day_of_year
+                summer_idx = end_doy - start_doy > 0
+                data = obs.data[summer_idx]
                 site_labels.append((glacier, site))
-                meas_list.append(obs.data.astype(np.float32))
+                meas_list.append(data.astype(np.float32))
                 period_starts_list.append(obs.period_starts)
                 period_ends_list.append(obs.period_ends)
             except Exception as e:
@@ -282,7 +286,7 @@ if __name__ == '__main__':
     loss_fn = make_loss_fn(model, period_idx, meas_padded, mask)
 
     print("Optimizing wind_factor for all sites...\n")
-    wind_factors = run_optimization(loss_fn, n_sites=S, n_steps=2, lr=1e-2)
+    wind_factors = run_optimization(loss_fn, n_sites=S, n_steps=10, lr=1e-2)
 
     print("\nOptimized wind factors:")
     print(f"{'Glacier':<14} {'Site':<6} {'wind_factor':>12}")
