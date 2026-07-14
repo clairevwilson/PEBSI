@@ -466,6 +466,12 @@ class Terrain:
             'aspect_n': np.full(self.N_POINTS, np.nan),
         }
 
+        dem_vars = np.array([self.elev_n, self.slope_n, self.aspect_n], dtype=float)
+        shade_exists = [os.path.exists(self.shade_fn.format(gid=gid)) for gid in self.rgiid_unique]
+        if np.all(~np.isnan(dem_vars)) and np.all(shade_exists):
+            # skip loading DEM if all the data is already confirmed
+            return
+
         # loop through DEM chunks and corresponding glacier subsets
         for sub_dem_ds, glaciers_in_block in self._get_dem_chunks(block_size_deg, buffer_meters):
             
