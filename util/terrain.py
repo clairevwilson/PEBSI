@@ -259,8 +259,8 @@ class Terrain:
         lon_xr = xr.DataArray(lons_in, dims='points')
 
         # reproject 2D datasets into lat/lon coordinates
-        dem = dem.rio.reproject('EPSG:4326')
-        slope = slope.rio.reproject('EPSG:4326')
+        dem = dem.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
+        slope = slope.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
         aspect = aspect.rio.reproject('EPSG:4326')
 
         # extract spatial attributes at lat and lon points
