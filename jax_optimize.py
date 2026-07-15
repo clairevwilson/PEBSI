@@ -146,8 +146,9 @@ def init_pebsi(config_fn):
 
     # run spinup once here so every optimization step starts from a
     # spun-up state without re-running it each forward pass
-    print("Running spinup...")
+    print("Running spinup...", flush=True)
     spun_up_state = model.spinup(model.initial_state)
+    print("Spinup complete.", flush=True)
     model.initial_state = spun_up_state
 
     return model
@@ -244,23 +245,25 @@ def make_loss_fn(model, period_idx, meas_batch, mask_batch):
 # 5. Optimization
 # ---------------------------------------------------------------------------
 
-def run_optimization(loss_fn, n_sites, n_steps=100, lr=1e-2):
-    # Start from wind_factor = 1 for all sites (log(1) = 0)
-    log_wf = jnp.zeros((n_sites,))
+def run_optimization(loss_fn, init_wind_factors, n_steps=100, lr=1e-2):
+    log_wf = jnp.log(jnp.array(init_wind_factors, dtype=jnp.float32))
 
     optimizer = optax.adam(lr)
     opt_state = optimizer.init(log_wf)
 
     grad_fn = jax.jit(jax.value_and_grad(loss_fn))
 
-    print(f"{'Step':>6}  {'Mean RMSE':>10}")
+    print(f"{'Step':>6}  {'Mean RMSE':>10}", flush=True)
     for i in range(n_steps):
         t0 = time.time()
         loss, grads = grad_fn(log_wf)
         jax.block_until_ready((loss, grads))
         updates, opt_state = optimizer.update(grads, opt_state)
         log_wf = optax.apply_updates(log_wf, updates)
-        print(f"{i:>6}  {float(loss):>10.4f}  ({time.time()-t0:.1f}s)")
+        grad_norm = float(jnp.linalg.norm(grads))
+        grad_min = float(jnp.min(jnp.abs(grads)))
+        grad_max = float(jnp.max(jnp.abs(grads)))
+        print(f"{i:>6}  {float(loss):>10.4f}  grad_norm={grad_norm:.3e}  min={grad_min:.3e}  max={grad_max:.3e}  ({time.time()-t0:.1f}s)", flush=True)
 
     return jnp.exp(log_wf)
 
@@ -285,8 +288,12 @@ if __name__ == '__main__':
 
     loss_fn = make_loss_fn(model, period_idx, meas_padded, mask)
 
-    print("Optimizing wind_factor for all sites...\n")
-    wind_factors = run_optimization(loss_fn, n_sites=S, n_steps=10, lr=1e-2)
+    wf_init = model.config.dynamic_args.wind_factor
+    print(f"wind_factor shape={jnp.asarray(wf_init).shape}  value={wf_init}", flush=True)
+
+    print("Optimizing wind_factor for all sites...\n", flush=True)
+    init_wf = list(model.config.dynamic_args.wind_factor)
+    wind_factors = run_optimization(loss_fn, init_wind_factors=init_wf, n_steps=10, lr=1e-2)
 
     print("\nOptimized wind factors:")
     print(f"{'Glacier':<14} {'Site':<6} {'wind_factor':>12}")

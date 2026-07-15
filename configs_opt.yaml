@@ -31,11 +31,11 @@ sites:
 - B
 - D
 n_points: 15
-temporal_chunks: 17520
+temporal_chunks: 8760 # 35040
 bias_vars:
 - temp
-start_date: '2000-04-01'
-end_date: '2025-08-31'
+start_date: '2014-04-01'
+end_date: '2016-04-01' # '2026-03-29'
 dust_factor: 20
 ksp_BC: 1
 ksp_OC: 1
