@@ -470,8 +470,9 @@ class PEBSI():
         state = state._replace(
             annual_min_albedo=jnp.ones_like(state.annual_min_albedo),
             annual_firn_converted=jnp.zeros_like(state.annual_firn_converted),
+            last_snow=state.last_snow - n_spinup_steps,
         )
-         
+
         return state
 
     def initialize(self):

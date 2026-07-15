@@ -398,7 +398,7 @@ class MassBalanceDriver:
 
         # === days since snowfall ===
         time_idx = jnp.full(state.lice.shape[0], forcings.time_idx)
-        hours_since_snowfall = time_idx - state.last_snow
+        hours_since_snowfall = jnp.maximum(time_idx - state.last_snow, 0)
         new_days_since_snowfall = jnp.round(hours_since_snowfall / 24).astype(jnp.int32)
 
         # only update the properties requested based on hour of day
