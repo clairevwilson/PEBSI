@@ -1,3 +1,9 @@
+climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
+rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'
+output_fp: '/trace/group/rounce/cvwilson/Output/recalibrate/'
+cop30_vrt_path: '/trace/group/rounce/cvwilson/dems/RGI1_DEM/rgi_dem.vrt'
+shading_fp: '/trace/group/rounce/cvwilson/shading/'
+
 rgi_ids:
 - '01.09162'
 - '01.09162'
@@ -9,8 +15,6 @@ rgi_ids:
 - '01.01104'
 - '01.01104'
 - '01.01104'
-- '01.01390'
-- '01.01390'
 - '01.00570'
 - '01.00570'
 - '01.00570'
@@ -25,8 +29,6 @@ sites:
 - B
 - C
 - D
-- NWB1
-- TKG3
 - AU
 - B
 - D
@@ -50,8 +52,6 @@ kp:
 - 1.4230809067903878
 - 1.5168359512504206
 - 1.5903339881579404
-- 1.5
-- 1.5
 - 2.0588026401017103
 - 2.710018518732716
 - 3.1900623202381246
@@ -66,8 +66,6 @@ albedo_ice:
 - 0.2860248722963863
 - 0.3504866398870945
 - 0.3473105604449908
-- 0.4088685810565948
-- 0.397268275419871
 - 0.2384921981091611
 - 0.3315056238104315
 - 0.4490959942340851
@@ -82,8 +80,6 @@ wind_factor:
 - 1.5
 - 1.5
 - 2.0
-- 1.5
-- 1.0
 - 1.5
 - 2.0
 - 2.0

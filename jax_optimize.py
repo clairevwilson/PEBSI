@@ -36,7 +36,6 @@ site_dict = {
     'kahiltna':['K53','K17b'], 
     'kennicott':['GTL','GTH'],
     'lemon_creek':['B','C','D'],
-    'taku':['NWB1','TKG3'],
     'gulkana':['AU','B','D']
 }
 
@@ -68,8 +67,8 @@ def load_all_observations(site_dict):
                 data = obs.data[summer_idx]
                 site_labels.append((glacier, site))
                 meas_list.append(data.astype(np.float32))
-                period_starts_list.append(obs.period_starts)
-                period_ends_list.append(obs.period_ends)
+                period_starts_list.append(obs.period_starts[summer_idx])
+                period_ends_list.append(obs.period_ends[summer_idx])
             except Exception as e:
                 failed.append((glacier, site, str(e)))
 
@@ -168,8 +167,11 @@ def make_loss_fn(model, period_idx, meas_batch, mask_batch):
     mask_batch : (S, N_max) bool
     """
     meas_jax = jnp.array(meas_batch)
-    mask_jax = jnp.array(mask_batch)
     period_idx_jax = jnp.array(period_idx)
+    # a period only contributes to the loss if it actually falls inside the
+    # simulated date range — otherwise period_sums is left at its zero init
+    # and would be wrongly scored against a real (nonzero) measurement
+    mask_jax = jnp.array(mask_batch) & (period_idx_jax[:, :, 0] >= 0)
 
     static_args = model.config.static_args
     dynamic_args = model.config.dynamic_args
@@ -183,8 +185,7 @@ def make_loss_fn(model, period_idx, meas_batch, mask_batch):
     # iterate over them — this is the key to bounded memory during autodiff.
     # Each leaf of the forcing namedtuple gets an extra leading chunk dimension.
     chunk_list = [
-        jax.tree.map(lambda x: jnp.nan_to_num(x, nan=0.0),
-                     model.pack_forcings(params, model.dates[start:start + chunk_size], start))
+        model.pack_forcings(params, model.dates[start:start + chunk_size], start)
         for start in range(0, total_steps, chunk_size)
     ]
     n_chunks = len(chunk_list)
