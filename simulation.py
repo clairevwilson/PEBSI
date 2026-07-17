@@ -9,6 +9,7 @@ and runs the main() function.
 """
 # Built-in libraries
 import os
+import sys
 import shutil
 import argparse
 import itertools
@@ -376,12 +377,16 @@ class PEBSI():
 
     def _run_chunk(self, state,
                    static_args, dynamic_args,
-                   chunk_dates, start, spinup=False):
+                   chunk_dates, start, chunk_size, spinup=False):
         """
         Packs forcings for one temporal chunk, runs main(), and returns
         the updated state and trimmed output records.
+
+        chunk_size is a free variable for the case where temporal_chunks
+        are longer than the spinup period. In this case, the user should specify
+        a different chunk size (e.g., if n_spinup_years is 1, use 8760 steps 
+        for the spinup chunk). 
         """
-        chunk_size = self.params.temporal_chunks
         actual_length = len(chunk_dates)
 
         # pack the forcings for this temporal chunk
@@ -431,11 +436,14 @@ class PEBSI():
         defined, can initialize firnpack in accumulation areas.
         """
         params = self.params
-        chunk_size = params.temporal_chunks
-
-        # round spin-up to nearest chunk_size multiple of n_spinup_years * 8760 hours
         n_spinup_years = params.n_spinup_years
-        n_spinup_steps = max(chunk_size, round(n_spinup_years * 8760 / chunk_size) * chunk_size)
+        n_spinup_steps = n_spinup_years * 8760
+
+        # avoid a short final chunk, which _run_chunk would pad with zeros
+        chunk_size = params.temporal_chunks
+        if n_spinup_steps > 0 and (chunk_size > n_spinup_steps or n_spinup_steps % chunk_size != 0):
+            chunk_size = n_spinup_steps
+
         spinup_dates = pd.date_range(self.dates[0], periods=n_spinup_steps, freq='h')
 
         if n_spinup_years == 0:
@@ -447,21 +455,26 @@ class PEBSI():
         n_spinup_chunks = n_spinup_steps // chunk_size
         spinup_start = time.time()
         spinup_chunk = [0]  # list so the animation thread can read updates
-        spinup_done, spinup_thread = self._start_spinner(
-            lambda f: f'~ Spinning up {f} ({spinup_chunk[0]}/{n_spinup_chunks} chunks)'
-        )
+        if sys.stdout.isatty():
+            spinup_done, spinup_thread = self._start_spinner(
+                lambda f: f'~ Spinning up {f} ({spinup_chunk[0]}/{n_spinup_chunks} chunks)'
+            )
+        else:
+            print(f'~ Spinning up ({n_spinup_chunks} chunks) ~', flush=True)
+            spinup_done, spinup_thread = threading.Event(), None
 
         # loop through temporal chunks for first year
         for i, start in enumerate(range(0, len(spinup_dates), chunk_size)):
             chunk_dates = spinup_dates[start:start + chunk_size]
             state, _ = self._run_chunk(state,
                                        self.config.static_args, self.config.dynamic_args,
-                                       chunk_dates, start, spinup=True)
+                                       chunk_dates, start, chunk_size, spinup=True)
             spinup_chunk[0] = i + 1
 
         # print final spinup timer
         spinup_done.set()
-        spinup_thread.join()
+        if spinup_thread is not None:
+            spinup_thread.join()
         self.spinup_time = time.time() - spinup_start
         msg = f'~ Spun up and compiled in {self.spinup_time:.1f} s ~'
         print(f'\r{msg:<70}')
@@ -528,7 +541,11 @@ class PEBSI():
 
         # single-chunk runs: spinner only (progress bar is meaningless with no prior timing)
         if n_chunks == 1 and params.progress_bar:
-            sim_done, sim_thread = self._start_spinner(lambda f: f'~ Simulating {f}')
+            if sys.stdout.isatty():
+                sim_done, sim_thread = self._start_spinner(lambda f: f'~ Simulating {f}')
+            else:
+                print('~ Simulating ~', flush=True)
+                sim_done, sim_thread = threading.Event(), None
 
         # seed duration estimate from spin-up
         prev_duration = self.spinup_time * 3
@@ -548,7 +565,7 @@ class PEBSI():
             chunk_start = time.time()
 
             # simulate one chunk
-            state, chunk_records = self._run_chunk(state, static_args, dynamic_args, chunk_dates, start)
+            state, chunk_records = self._run_chunk(state, static_args, dynamic_args, chunk_dates, start, chunk_size)
 
             # update progress bar
             chunk_end = time.time()
@@ -565,7 +582,8 @@ class PEBSI():
 
         if n_chunks == 1 and params.progress_bar:
             sim_done.set()
-            sim_thread.join()
+            if sim_thread is not None:
+                sim_thread.join()
             print('\033[2K', end='\r', flush=True)
 
         if not self.params.progress_bar:
