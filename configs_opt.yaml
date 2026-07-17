@@ -1,8 +1,10 @@
-climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
-rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'
-output_fp: '/trace/group/rounce/cvwilson/Output/recalibrate/'
-cop30_vrt_path: '/trace/group/rounce/cvwilson/dems/RGI1_DEM/rgi_dem.vrt'
-shading_fp: '/trace/group/rounce/cvwilson/shading/'
+# /trace/group/rounce/cvwilson/
+# /ocean/projects/ees260009p/cwilson4
+climate_fp: '/ocean/projects/ees260009p/cwilson4/climate_data/'
+rgi_fp: '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
+output_fp: '/ocean/projects/ees260009p/cwilson4/Output/recalibrate/'
+cop30_vrt_path: '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
+shading_fp: '/ocean/projects/ees260009p/cwilson4/data/shading/'
 
 rgi_ids:
 - '01.09162'
@@ -33,11 +35,11 @@ sites:
 - B
 - D
 n_points: 15
-temporal_chunks: 8760 # 35040
+temporal_chunks: 8760
 bias_vars:
 - temp
-start_date: '2014-04-01'
-end_date: '2016-04-01' # '2026-03-29'
+start_date: '2000-04-01'
+end_date: '2025-04-01' # '2026-03-29'
 dust_factor: 20
 ksp_BC: 1
 ksp_OC: 1

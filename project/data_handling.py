@@ -13,6 +13,9 @@ import socket
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
     home_fp = '/trace/home/cvwilson/research/'
+if 'bridges' in socket.gethostname():
+    base_fp = '/ocean/projects/ees260009p/cwilson4/Output/ddf/'
+    home_fp = '/jet/home/cwilson4/'
 elif 'lantern' in socket.gethostname():
     base_fp = '/Users/cvw/local/Output/'
     home_fp = '/Users/cvw/local/'
@@ -47,7 +50,7 @@ class MassBalance():
             Dataset to use from ['WGMS','benchmark']
         """
         # open dataframes
-        wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
+        # wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
         benchmark_fp = base_fp + '../../MB_data/'
 
         # store input attributes
@@ -62,11 +65,11 @@ class MassBalance():
 
         # types of data we have
         benchmark_glaciers = [f.lower() for f in os.listdir(benchmark_fp)]
-        wgms_glaciers = wgms_df['glacier_name'].unique()
+        # wgms_glaciers = wgms_df['glacier_name'].unique()
 
-        # determine which type of data we have and put it in standard format
-        if self.name.upper() in wgms_glaciers or 'wgms' in use:
-            self.get_wgms_data(wgms_df)
+        # # determine which type of data we have and put it in standard format
+        # if self.name.upper() in wgms_glaciers or 'wgms' in use:
+        #     self.get_wgms_data(wgms_df)
         if self.name.replace('_','') in benchmark_glaciers or 'benchmark' in use:
             self.get_benchmark_data(benchmark_fp, min_n_winter)
 
