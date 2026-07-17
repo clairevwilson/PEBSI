@@ -175,6 +175,9 @@ class Config():
         if args.rgi_region == 0:
             args.use_aws = True
             args.aws_elev = 1232
+            args.start_date = '2024-04-20 00:00'
+            args.end_date = '2025-04-19 23:00'
+            print("Test simulation: using sample AWS data for 2024-04-20 to 2025-04-19")
 
         # set method_distribute to points if specified sites
         if args.sites is not None:
