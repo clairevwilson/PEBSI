@@ -20,7 +20,7 @@ from pyproj import CRS, Transformer
 import shapely.geometry as geom
 from rasterio.enums import Resampling
 # Local libraries
-from shading.shading import Shading
+from pebsi.shading.shading import Shading
 
 class Terrain:
     """

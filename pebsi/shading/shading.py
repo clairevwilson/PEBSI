@@ -32,7 +32,7 @@ class Shading:
         kernel_path : str
             Path to the azimuth_trace CUDA kernel source (.cu). 
             Ignored when running on CPU. Defaults to the bundled 
-            kernel at shading/cuda/azimuth_trace.cu.
+            kernel at pebsi/shading/cuda/azimuth_trace.cu.
         """
         self.gpu = use_gpu
 

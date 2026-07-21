@@ -23,12 +23,12 @@ import pandas as pd
 import jax.numpy as jnp
 import netCDF4
 # Internal libraries
-import util.defaults as defaults
-from util.config import *
-from util.terrain import Terrain
-from util.output import Output
-from util.climate import Climate
-from util.layers import Layers
+import pebsi.defaults as defaults
+from pebsi.config import *
+from pebsi.io.terrain import Terrain
+from pebsi.io.output import Output
+from pebsi.io.climate import Climate
+from pebsi.physics.layers import Layers
 from pebsi.state import *
 from pebsi.main import main
 

@@ -19,7 +19,7 @@ Open TODOs (need a decision before this runs end-to-end)
    raster and an initial ice-thickness raster covering the bounding box
    of every glacier in an O2 sub-region, in a shared metric CRS. PEBSI's
    Terrain class already loads a surface DEM per glacier (see
-   util/terrain.py: yield_single_dem / yield_dem_chunks, self.dem_crs,
+   pebsi/io/terrain.py: yield_single_dem / yield_dem_chunks, self.dem_crs,
    Terrain._get_metric_crs) but nowhere loads ice thickness, and nothing
    currently mosaics DEM tiles across a whole O2 region. Either:
      (a) point this at a prepared per-region thickness raster (e.g.
@@ -148,7 +148,7 @@ class GlideCoupler:
         """
         Maps each RGI ID present in this run to its O2Region, using the
         attribute table PEBSI already loads in Terrain.get_rgi_data()
-        (util/terrain.py -> self.rgi_df, read from
+        (pebsi/io/terrain.py -> self.rgi_df, read from
         00_rgi60_attribs/{region}.csv, which includes an O2Region column).
 
         terrain.rgiid_n entries are the bare RGI ID (e.g. "01.00570", no
@@ -215,7 +215,7 @@ class GlideCoupler:
 
         Parameters
         ----------
-        terrain : util.terrain.Terrain
+        terrain : pebsi.io.terrain.Terrain
             Current PEBSI terrain object (point coordinates + elevation).
         point_attrs : pebsi.state.PointAttributes
             Current PEBSI point attributes; `elevation` is replaced.
@@ -233,7 +233,7 @@ class GlideCoupler:
 
         Returns
         -------
-        terrain : util.terrain.Terrain
+        terrain : pebsi.io.terrain.Terrain
             Same object, `elev_n` updated in place.
         point_attrs : pebsi.state.PointAttributes
             New NamedTuple with updated `elevation`.

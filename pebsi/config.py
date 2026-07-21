@@ -22,8 +22,8 @@ import pandas as pd
 import xarray as xr
 import jax
 from jax.scipy.interpolate import RegularGridInterpolator
-# Local lbiraries
-import util.defaults as defaults
+# Local libraries
+import pebsi.defaults as defaults
 
 # Fields must be broken into static and dynamic for JAX. 
 # Statics args are needed to initialize the model and

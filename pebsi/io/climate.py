@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 # Internal libraries
-from util.config import ConfigError
+from pebsi.config import ConfigError
 
 class Climate():
     """

@@ -9,8 +9,8 @@ refreezing,and percolation.
 import jax
 import jax.numpy as jnp
 # Local libraries
-import util.layers as layers
-import pebsi.albedo as albedo
+import pebsi.physics.layers as layers
+import pebsi.physics.albedo as albedo
 
 class MassBalanceDriver:
     def __init__(self, params):

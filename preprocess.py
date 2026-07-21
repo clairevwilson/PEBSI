@@ -22,9 +22,9 @@ jax.config.update("jax_enable_x64", True)
 import argparse
 import time
 # Internal libraries
-import util.defaults as defaults
-from util.config import Config
-from util.terrain import Terrain
+import pebsi.defaults as defaults
+from pebsi.config import Config
+from pebsi.io.terrain import Terrain
 
 # START TIMER
 start_time = time.time()

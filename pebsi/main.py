@@ -22,10 +22,10 @@ import functools
 import jax 
 import jax.numpy as jnp
 # Local libraries
-from pebsi.energybalance import EnergyBalanceDriver
-from pebsi.massbalance import MassBalanceDriver
+from pebsi.physics.energybalance import EnergyBalanceDriver
+from pebsi.physics.massbalance import MassBalanceDriver
 from pebsi.forcing import domain_expansion
-from util.layers import *
+from pebsi.physics.layers import *
 from pebsi.state import make_step_outputs_class, OUTPUT_GROUPS
 
 @functools.partial(jax.jit, static_argnames=['static_args'])
