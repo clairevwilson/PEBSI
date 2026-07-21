@@ -11,10 +11,10 @@ import jax.numpy as jnp
 import numpy as np
 from types import SimpleNamespace
 
-import util.defaults as D
+import pebsi.defaults as D
 from pebsi.state import GlacierState, ClimateState, PointAttributes
-from pebsi.massbalance import MassBalanceDriver
-from pebsi.energybalance import EnergyBalanceDriver
+from pebsi.physics.massbalance import MassBalanceDriver
+from pebsi.physics.energybalance import EnergyBalanceDriver
 
 jax.config.update("jax_enable_x64", True)
 

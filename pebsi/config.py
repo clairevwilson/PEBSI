@@ -22,8 +22,8 @@ import pandas as pd
 import xarray as xr
 import jax
 from jax.scipy.interpolate import RegularGridInterpolator
-# Local lbiraries
-import util.defaults as defaults
+# Local libraries
+import pebsi.defaults as defaults
 
 # Fields must be broken into static and dynamic for JAX. 
 # Statics args are needed to initialize the model and
@@ -175,9 +175,6 @@ class Config():
         if args.rgi_region == 0:
             args.use_aws = True
             args.aws_elev = 1232
-            args.start_date = '2024-04-20 00:00'
-            args.end_date = '2025-04-19 23:00'
-            print("Test simulation: using sample AWS data for 2024-04-20 to 2025-04-19")
 
         # set method_distribute to points if specified sites
         if args.sites is not None:

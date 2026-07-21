@@ -9,7 +9,7 @@ import json
 import numpy as np
 import jax.numpy as jnp
 import jax
-from util.defaults import emulator_fn as _NPZ_PATH
+from pebsi.defaults import emulator_fn as _NPZ_PATH
 
 # ── Load emulator weights once at import time ──────────────────────────────
 

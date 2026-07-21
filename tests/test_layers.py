@@ -1,5 +1,5 @@
 """
-Tests for layer utility functions in util/layers.py.
+Tests for layer utility functions in pebsi/physics/layers.py.
 
 Every function that structurally modifies the column (add, remove, split,
 merge, check sizes) should:
@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-import util.layers as layers
+import pebsi.physics.layers as layers
 from conftest import _make_state
 
 _LAYER_FIELDS = [

@@ -23,12 +23,12 @@ import pandas as pd
 import jax.numpy as jnp
 import netCDF4
 # Internal libraries
-import util.defaults as defaults
-from util.config import *
-from util.terrain import Terrain
-from util.output import Output
-from util.climate import Climate
-from util.layers import Layers
+import pebsi.defaults as defaults
+from pebsi.config import *
+from pebsi.io.terrain import Terrain
+from pebsi.io.output import Output
+from pebsi.io.climate import Climate
+from pebsi.physics.layers import Layers
 from pebsi.state import *
 from pebsi.main import main
 
@@ -196,7 +196,7 @@ class PEBSI():
             albedo=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
             albedo_surr=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
             surftemp=jnp.full((N_POINTS,), params.surftemp_guess, dtype=jnp.float64),
-            roughness=jnp.full((N_POINTS,), params.roughness_fresh_snow, dtype=jnp.float64),
+            roughness=jnp.full((N_POINTS,), params.roughness_fresh_snow / 1000, dtype=jnp.float64),
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 
             # trackers
@@ -313,7 +313,7 @@ class PEBSI():
             winddir=jnp.array(climate.winddir, dtype=jnp.float64).T,
             rh=jnp.array(climate.rh, dtype=jnp.float64).T,
             sp=jnp.array(climate.sp, dtype=jnp.float64).T,
-            tcc=jnp.array(climate.tcc, dtype=jnp.float64).T,
+            tcc=jnp.array(np.nan_to_num(climate.tcc, nan=0.0), dtype=jnp.float64).T,
 
             # deposition fluxes for light-absorbing particles
             bcwet=jnp.array(climate.bcwet, dtype=jnp.float64).T,
