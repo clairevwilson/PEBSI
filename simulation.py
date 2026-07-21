@@ -313,7 +313,7 @@ class PEBSI():
             winddir=jnp.array(climate.winddir, dtype=jnp.float64).T,
             rh=jnp.array(climate.rh, dtype=jnp.float64).T,
             sp=jnp.array(climate.sp, dtype=jnp.float64).T,
-            tcc=jnp.array(climate.tcc, dtype=jnp.float64).T,
+            tcc=jnp.array(np.nan_to_num(climate.tcc, nan=0.0), dtype=jnp.float64).T,
 
             # deposition fluxes for light-absorbing particles
             bcwet=jnp.array(climate.bcwet, dtype=jnp.float64).T,
