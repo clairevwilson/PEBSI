@@ -43,6 +43,10 @@ static_fields = [
     'option_uniform_ice', 'option_uniform_snow',
     'option_flat_plates', 'option_dynamics',
 
+    'dynamics_dx', 'dynamics_margin', 'dynamics_n_levels',
+    'dynamics_rheology_B', 'dynamics_rheology_n', 'dynamics_rheology_eps_reg',
+    'dynamics_sliding_beta', 'dynamics_sliding_m',
+
     'constant_snowfall_density','constant_freshgrainsize',
     'constant_drdry','constant_irrwater',
 ]

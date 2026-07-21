@@ -249,6 +249,15 @@ Sr = 0.05                   # Fraction of irreducible water content for percolat
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
 Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
 albedo_ground = 0.2         #* Albedo of surrounding bedrock [-]
+# <<<<<< Glacier dynamics (GLIDE coupling, only used if option_dynamics) >>>>>>
+dynamics_dx = 100.0                    # GLIDE grid cell size [m]
+dynamics_margin = 2000.0               # Ice-free buffer around glacier outlines for the GLIDE grid [m]
+dynamics_n_levels = 5                  # GLIDE multigrid levels (grid ny/nx rounded up to a multiple of 2**(n_levels-1))
+dynamics_rheology_B = 1e-17 ** (-1.0 / 3.0) / (density_ice * gravity)  # Glen's law B
+dynamics_rheology_n = 3.0              # Glen's law n
+dynamics_rheology_eps_reg = 1e-6       # Strain-rate regularizer
+dynamics_sliding_beta = 2.5            # Basal sliding coefficient
+dynamics_sliding_m = 1.0 / 3.0         # Sliding law exponent
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
 diffuse_cloud_limit = 0.6   # Threshold to consider cloudy vs clear-sky in SNICAR [-]
