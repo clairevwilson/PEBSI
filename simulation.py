@@ -140,6 +140,10 @@ class PEBSI():
         # ================== SHADING ==================
         terrain.load_shading()
 
+        # ============ GLACIER DYNAMICS (optional) ============
+        if params.option_dynamics:
+            terrain.get_initial_ice_thickness()
+
         # ============= CLIMATE DATA GRID =============
         # build a lightweight Climate object to get cell mapping
         _cl = Climate.__new__(Climate)

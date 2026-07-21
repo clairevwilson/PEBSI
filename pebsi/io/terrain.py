@@ -653,6 +653,38 @@ class Terrain:
         self.shading_lookup = shading_lookup
         return
 
+    def get_initial_ice_thickness(self):
+        """
+        Samples each point's initial ice thickness from a per-glacier
+        ice-thickness GeoTIFF (params.thickness_fn) and derives a fixed 
+        bed elevation (elev_n - thickness_n).
+
+        Only called when params.option_dynamics is True.
+        """
+        N_POINTS = self.N_POINTS
+        thickness_n = np.zeros(N_POINTS)
+
+        for gid in np.unique(self.rgiid_n):
+            gid_idx = np.where(self.rgiid_n == gid)[0]
+
+            fn = self.params.thickness_fn.format(gid=gid)
+            da = rxr.open_rasterio(fn).squeeze().drop_vars('band')
+
+            transformer = Transformer.from_crs("EPSG:4326", da.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
+            target_x = xr.DataArray(x_pts, dims='points')
+            target_y = xr.DataArray(y_pts, dims='points')
+
+            selected = da.sel(x=target_x, y=target_y, method='nearest')
+            thickness_n[gid_idx] = np.nan_to_num(selected.values, nan=0.0)
+
+            da.close()
+
+        # fixed for the whole run: initial ice volume and bedrock topography
+        self.thickness_n = np.maximum(thickness_n, 0.0)
+        self.bed_n = self.elev_n - self.thickness_n
+        return
+
     def validate_terrain_data(self):
         """
         Validates the spatial inputs do not

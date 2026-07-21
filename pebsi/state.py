@@ -21,7 +21,8 @@ OUTPUT_GROUPS = {
     'minimal':  ['accumulation', 'refreeze', 'melt'],
     'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
                  'sublimation', 'deposition', 'evaporation',
-                 'condensation', 'accumulation', 'rainfall', 'error'],
+                 'condensation', 'accumulation', 'rainfall', 'error',
+                 'total_mass'],
     'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
                  'longwave_in', 'longwave_out', 'sensible_heat',
                  'latent_heat', 'rain_heat', 'ground_heat',
@@ -217,6 +218,7 @@ class StepOutputs(NamedTuple):
     evaporation: jnp.ndarray        # Evaporation (water->vapor) [m w.e.]
     condensation: jnp.ndarray       # Condensation (vapor->water) [m w.e.]
     cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
+    total_mass: jnp.ndarray         # Total mass: layers (ice+water) + basal_reservoir [m w.e.]
 
     # ============================= Climate ==============================
     airtemp: jnp.ndarray            # Air temperature [C]

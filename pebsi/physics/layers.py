@@ -45,7 +45,11 @@ class Layers():
 
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
-        
+
+        # reconcile ice thickness differences from dynamics
+        if params.option_dynamics:
+            self.apply_initial_ice_thickness(terrain)
+
         if params.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
         return
@@ -129,6 +133,36 @@ class Layers():
         self.snow_mask = ltype==0       # type 0 = snow
         self.firn_mask = ltype==1       # type 1 = firn
         self.ice_mask = ltype==2        # type 2 = ice
+        return
+
+    def apply_initial_ice_thickness(self, terrain):
+        """
+        Reconciles the ice-typed portion of the column to each point's
+        real initial ice thickness (terrain.thickness_n). Only needed
+        when option_dynamics=True, otherwise ice thickness is an 
+        arbitrary variable. 
+
+        Assumes the ice thickness in the dataset is representative
+        of firn and ice. Since firn layers are initialized separately,
+        this function ONLY applies height changes to ice. Ice layers 
+        are resized such that every layer is the same height and all
+        ice + firn layers add up to the actual initial ice thickness.
+        """
+        min_height = self.params.min_dz
+
+        n_ice_layers = np.sum(self.ice_mask, axis=1)  # (N_POINTS,)
+        ice_only_thickness = np.maximum(terrain.thickness_n - self.dz_firn, 0.0)
+
+        per_layer_height = np.where(
+            n_ice_layers > 0, ice_only_thickness / np.maximum(n_ice_layers, 1), 0.0
+        )
+        per_layer_height = np.maximum(per_layer_height, min_height)
+
+        self.lheight = np.where(self.ice_mask, per_layer_height[:, np.newaxis], self.lheight)
+
+        # depths need recomputing everywhere since every ice layer's height changed
+        cum_height = np.cumsum(self.lheight, axis=1)
+        self.ldepth = cum_height - (self.lheight / 2.0)
         return
 
     def initialize_layers(self):
@@ -898,6 +932,67 @@ def check_layer_sizes(state, params):
     state, _ = jax.lax.scan(_scan_splits, state, layers_idx)
 
     return state, dead_mass
+
+def apply_dynamics_mass_change(state, mask, dmass, params):
+    """
+    Reconciles a per-point ice-dynamics-only mass change into state. 
+    dmass is the DYNAMICS-ONLY change in mass (excluding SMB which 
+    is already accounted for in PEBSI).)
+
+    Mass GAINED from dynamics (dmass > 0) goes entirely into
+    basal_reservoir, uncapped.
+
+    Mass LOST from dynamics (dmass < 0) is taken from basal_reservoir
+    first, down to 0. Only once the reservoir is exhausted does the
+    remainder come out of the ice-typed layers themselves, which are
+    then redistributed with even heights.
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS,)
+        Boolean mask for points to reconcile this coupling step
+    dmass : jnp.Array (N_POINTS,)
+        Ice-dynamics-only mass change, kg m-2 (positive = gain)
+    """
+    properties = state._asdict()
+    ice_mask = properties['ice_mask']
+    DENSITY_ICE = params.density_ice
+
+    gain = jnp.maximum(dmass, 0.0)
+    loss = jnp.maximum(-dmass, 0.0)
+
+    # gains: straight into the reservoir
+    reservoir = jnp.where(mask, properties['basal_reservoir'] + gain, properties['basal_reservoir'])
+
+    # losses: deplete the reservoir first (down to 0)
+    from_reservoir = jnp.minimum(loss, reservoir)
+    reservoir = jnp.where(mask, reservoir - from_reservoir, reservoir)
+    remaining_loss = loss - from_reservoir  # (N_POINTS,), 0 unless reservoir was exhausted
+
+    # remainder: thin the ice layers themselves, evenly redistributed
+    n_ice_layers = jnp.sum(ice_mask, axis=1)
+    point_ice_mass = jnp.sum(jnp.where(ice_mask, properties['lice'], 0.0), axis=1)
+    new_total_ice_mass = jnp.maximum(point_ice_mass - remaining_loss, 0.0)
+    per_layer_mass = new_total_ice_mass / jnp.maximum(n_ice_layers, 1)
+
+    thin_mask = mask & (remaining_loss > 0)
+    properties['lice'] = jnp.where(
+        thin_mask[:, None] & ice_mask, per_layer_mass[:, None], properties['lice']
+    )
+    properties['ldensity'] = jnp.where(
+        thin_mask[:, None] & ice_mask, DENSITY_ICE, properties['ldensity']
+    )
+    safe_density = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    properties['lheight'] = jnp.where(
+        thin_mask[:, None] & ice_mask,
+        properties['lice'] / safe_density,
+        properties['lheight']
+    )
+
+    properties['basal_reservoir'] = reservoir
+    state = state._replace(**properties)
+    state = update_layer_props(state, DENSITY_ICE)
+    return state
 
 def update_layer_props(state, DENSITY_ICE):
     """

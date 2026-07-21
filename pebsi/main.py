@@ -132,6 +132,7 @@ def main(
         mass_fluxes['error'] = mass_conservation(
             current_mass, next_mass, mass_fluxes
         )
+        mass_fluxes['total_mass'] = next_mass
 
         # ===================== OUTPUTS =====================
         next_state = current_state

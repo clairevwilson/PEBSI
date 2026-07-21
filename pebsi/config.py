@@ -39,9 +39,9 @@ static_fields = [
     'method_heateq', 'method_densification', 'method_cooling',
     'method_ground', 'method_conductivity',
 
-    'option_SWpen', 'option_accel_grains', 
+    'option_SWpen', 'option_accel_grains',
     'option_uniform_ice', 'option_uniform_snow',
-    'option_flat_plates',
+    'option_flat_plates', 'option_dynamics',
 
     'constant_snowfall_density','constant_freshgrainsize',
     'constant_drdry','constant_irrwater',
