@@ -28,10 +28,12 @@ import cupy as cp
 import jax.numpy as jnp
 from scipy.interpolate import griddata, RegularGridInterpolator
 from pyproj import Transformer
-
+import sys, os
+sys.path.append(os.path.join(os.getcwd(), '../glide/'))
 from glide.model import IceDynamics
 from pebsi.physics.layers import apply_dynamics_mass_change
 
+import jax
 
 # --------------------------------------------------------------------- #
 #                     coordinate / regridding helpers
@@ -214,8 +216,8 @@ class GlideCoupler:
 
         # pull the grid's actual coordinates back out so everything downstream
         # uses exactly what GLIDE built, rather than a separately-computed copy
-        x = cp.asnumpy(model.mg.levels[0].grid.x_cell)
-        y = cp.asnumpy(model.mg.levels[0].grid.y_cell)
+        x = cp.asnumpy(model.mg.levels[0].x_cell)
+        y = cp.asnumpy(model.mg.levels[0].y_cell)
 
         region_idx = np.where(np.isin(terrain.rgiid_n, gids_in_region))[0]
         x_pts, y_pts = latlon_to_glacier_crs(
@@ -243,13 +245,18 @@ class GlideCoupler:
         grid_info = {'x': x, 'y': y, 'crs': crs}
         return model, grid_info
 
-    # ------------------------- per-year coupling ----------------------- #
+    # -------------------------- period coupling -------------------------- #
 
-    def couple_annual_step(self, terrain, point_attrs, state, annual_mb_mwe, year, dt_years=1.0):
+    def couple_step(self, terrain, point_attrs, state, period_mb_mwe, t_years, dt_years):
         """
-        Advance every O2 region's GLIDE model by one year using this
-        year's PEBSI-computed surface mass balance, then push the
+        Advance every O2 region's GLIDE model by `dt_years` using PEBSI's
+        surface mass balance accumulated over that period, then push the
         updated geometry and ice-dynamics mass changes back onto PEBSI.
+
+        The coupling period is independent of temporal_chunks and may
+        span multiple chunks or vice versa -- see simulation.py's main
+        loop, which accumulates period_mb_mwe/dt_years across chunks
+        until dynamics_period_years worth of time has passed.
 
         Parameters
         ----------
@@ -259,17 +266,19 @@ class GlideCoupler:
             Current PEBSI point attributes; `elevation` is replaced.
         state : pebsi.state.GlacierState
             Current PEBSI glacier state
-        annual_mb_mwe : (N_POINTS,) array
-            Net surface mass balance per point for the year just run, in
-            m w.e. (accumulation + refreeze - melt, summed over the year).
+        period_mb_mwe : (N_POINTS,) array
+            Net surface mass balance per point accumulated over the
+            whole `dt_years`-long coupling period, in m w.e.
+            (accumulation + refreeze - melt, summed over that period).
             Aggregating this from StepOutputs across chunks is the
             caller's (simulation.py's) responsibility.
-        year : int
-            Calendar year just completed; passed to GLIDE as `t`, in years.
-            Must be used consistently across calls.
+        t_years : float
+            Cumulative simulated time elapsed so far; passed to GLIDE as
+            `t`. Must be used consistently across calls (i.e. always
+            incremented by the `dt_years` actually used each call).
         dt_years : float
-            Coupling interval in years (default 1.0, per the annual
-            coupling decision this connector was designed around).
+            Length of the period `period_mb_mwe` covers, in years (>= 1;
+            see pebsi.defaults.dynamics_period_years).
 
         Returns
         -------
@@ -295,13 +304,16 @@ class GlideCoupler:
             H_old_grid = self._extract_ice_thickness(region)
             H_old_pts = grid_to_points(grid["x"], grid["y"], H_old_grid, x_pts, y_pts)
 
-            # push this year's SMB and advance
-            smb_ice_pts = mwe_to_ice_thickness(
-                annual_mb_mwe[region_idx], self.params.density_ice, self.params.density_water
+            # push this period's SMB as an annual RATE (GLIDE scales it by dt
+            # internally) and advance -- period_mb_mwe is a TOTAL over
+            # dt_years, so it must be divided down to a rate first
+            mb_rate_mwe = period_mb_mwe[region_idx] / dt_years  # m w.e. yr^-1
+            smb_ice_rate = mwe_to_ice_thickness(
+                mb_rate_mwe, self.params.density_ice, self.params.density_water
             )  # m ice yr^-1
-            smb_grid = points_to_grid(x_pts, y_pts, smb_ice_pts, grid["x"], grid["y"])
+            smb_grid = points_to_grid(x_pts, y_pts, smb_ice_rate, grid["x"], grid["y"])
             self._push_forcing(region, smb_grid)
-            self._advance(region, t=float(year), dt=dt_years)
+            self._advance(region, t=float(t_years), dt=dt_years)
 
             # ice thickness / surface after this step's dynamics
             H_new_grid = self._extract_ice_thickness(region)
@@ -313,10 +325,10 @@ class GlideCoupler:
             )
 
             # dynamics-only mass change: total change minus what SMB alone
-            # already explains (PEBSI's own layers already applied the SMB
-            # part -- see module docstring)
+            # already explains over the whole period (PEBSI's own layers
+            # already applied the SMB part -- see module docstring)
             dH_total = H_new_pts - H_old_pts
-            dH_smb = smb_ice_pts * dt_years
+            dH_smb = smb_ice_rate * dt_years
             dH_dynamics = dH_total - dH_smb
             dmass_pts = dH_dynamics * self.params.density_ice  # kg m-2
 
@@ -328,6 +340,7 @@ class GlideCoupler:
             state = apply_dynamics_mass_change(
                 state, jnp.array(mask_full), jnp.array(dmass_full), self.params
             )
+            jax.debug.print('dmass: {}', jnp.array(dmass_full))
 
         terrain.elev_n = new_elev_n
         point_attrs = point_attrs._replace(elevation=jnp.array(new_elev_n))

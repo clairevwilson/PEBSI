@@ -97,6 +97,7 @@ end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulati
 temporal_chunks = 8760                      # Number of chunks to split up simulation into
                                             # chunk size should be close to divisible by 8760 for clean spin-up
 n_spinup_years = 1                          # Number of years to repeat forcings to spin-up the model
+dynamics_period_years = 1                   # Interval (whole years) between GLIDE coupling steps, if option_dynamics
 
 # SPATIAL 
 n_points = 6                                # Number of points to divide domain into

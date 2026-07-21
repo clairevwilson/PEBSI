@@ -502,6 +502,16 @@ class PEBSI():
         self.prepare_initial_state()
         self.initial_state = self.pack_states()
 
+        # glacier dynamics (GLIDE) coupling, if enabled
+        if self.params.option_dynamics:
+            from pebsi.connectors.pebsi_glide_connector import GlideCoupler
+            self.glide_coupler = GlideCoupler(self.terrain, self.params)
+            self._glide_t_years = 0.0
+            
+            # accumulates mass balance + elapsed hours across chunks
+            self._glide_pending_mb = np.zeros(self.terrain.N_POINTS)
+            self._glide_pending_hours = 0
+
     def run(self):
         """
         Executes model functions and stores the output data.
@@ -523,6 +533,10 @@ class PEBSI():
         # ========== CHECKPOINT / SPIN-UP ==========
         resume_from = getattr(params, 'resume_from', None)
         if resume_from:
+            assert not params.option_dynamics, (
+                'Resuming a run (-resume_from) with'
+                'option_dynamics=True is not supported'
+            )
             state, start_from = self.load_checkpoint(resume_from)
             resume_fp = resume_from
             self.spinup_time = 30.0  # fallback seed for progress bar
@@ -575,6 +589,25 @@ class PEBSI():
             chunk_end = time.time()
             prev_duration = chunk_end - chunk_start
             progress.finish_chunk(start, actual_size)
+
+            # glacier dynamics (GLIDE) coupling
+            if params.option_dynamics:
+                chunk_mb = np.array(
+                    chunk_records.accumulation + chunk_records.refreeze - chunk_records.melt
+                ).sum(axis=0)
+                self._glide_pending_mb += chunk_mb
+                self._glide_pending_hours += actual_size
+
+                period_hours = params.dynamics_period_years * 8760
+                if self._glide_pending_hours >= period_hours:
+                    dt_years = self._glide_pending_hours / 8760
+                    self.terrain, self.point_attrs, state = self.glide_coupler.couple_step(
+                        self.terrain, self.point_attrs, state,
+                        self._glide_pending_mb, self._glide_t_years, dt_years
+                    )
+                    self._glide_t_years += dt_years
+                    self._glide_pending_mb = np.zeros(self.terrain.N_POINTS)
+                    self._glide_pending_hours = 0
 
             # store data before checkpointing so the two are always in sync
             if params.store_data:

@@ -238,6 +238,17 @@ class Config():
         assert min(remainder, to_next) <= threshold_hours, \
             f'Temporal chunks should be an ~ even multiplier of 8760'
 
+        # GLACIER DYNAMICS
+        if getattr(self.args, 'option_dynamics'):
+            period = self.args.dynamics_period_years
+            assert period >= 1 and period == int(period), \
+                'dynamics_period_years must be a positive integer (sub-annual GLIDE coupling is not supported)'
+
+            chunks_year = int(temporal_chunks / hours_in_year)
+            if period < chunks_year:
+                print('! Temporal chunks span more years than the dynamics period:')
+                print(f'   Running dynamics once per temporal chunk ({chunks_year} years) instead of every {period} year(s)')
+
         # PHYSICAL CONSTANTS
         # parameters that must be positive
         must_be_positive = ['kp','wind_factor','dust_factor',

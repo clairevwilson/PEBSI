@@ -1,9 +1,10 @@
 name: gpu-env
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - python=3.11
+  - cuda-version=12.9
+  - jaxlib=*=cuda129*
   - jax
   - optax
   - numpy<2
