@@ -1,0 +1,92 @@
+climate_fp: '/trace/group/rounce/cvwilson/climate_data/'
+rgi_fp: '/trace/group/rounce/shared/RGI/rgi60/00_rgi60_attribs/'
+output_fp: '/trace/group/rounce/cvwilson/Output/recalibrate/'
+cop30_vrt_path: '/trace/group/rounce/cvwilson/dems/RGI1_DEM/rgi_dem.vrt'
+shading_fp: '/trace/group/rounce/cvwilson/shading/'
+
+rgi_ids:
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.22193'
+- '01.22193'
+- '01.15645'
+- '01.15645'
+- '01.01104'
+- '01.01104'
+- '01.01104'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+sites:
+- N
+- B
+- EC
+- K53
+- K17b
+- GTL
+- GTH
+- B
+- C
+- D
+- AU
+- B
+- D
+temporal_chunks: 8760
+bias_vars:
+- temp
+start_date: '2010-04-01'
+end_date: '2020-04-01'
+dust_factor: 20
+ksp_BC: 1
+ksp_OC: 1
+kp:
+- 0.9877200957743192
+- 1.1477651719827946
+- 2.099132202834925
+- 1.7068888637879764
+- 0.7023414238186757
+- 1.0094549347163355
+- 1.6634793010179634
+- 1.4230809067903878
+- 1.5168359512504206
+- 1.5903339881579404
+- 2.0588026401017103
+- 2.710018518732716
+- 3.1900623202381246
+albedo_ice:
+- 0.3686268305841912
+- 0.4034878838186462
+- 0.4527326822280884
+- 0.2541263779265839
+- 0.4838696718215942
+- 0.366785105348118
+- 0.4524494856595993
+- 0.2860248722963863
+- 0.3504866398870945
+- 0.3473105604449908
+- 0.2384921981091611
+- 0.3315056238104315
+- 0.4490959942340851
+wind_factor:
+- 1.5
+- 1.5
+- 1.5
+- 1.0
+- 1.0
+- 2.0
+- 3.5
+- 1.5
+- 1.5
+- 2.0
+- 1.5
+- 2.0
+- 2.0
+option_accel_grains: false
+option_flat_plates: true
+constant_freshgrainsize: 54.5
+debug: false
+progress_bar: false
+store_data: false
+store_vars:
+- minimal

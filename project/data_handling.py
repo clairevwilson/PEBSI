@@ -13,7 +13,7 @@ import socket
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
     home_fp = '/trace/home/cvwilson/research/'
-if 'bridges' in socket.gethostname():
+elif 'bridges' in socket.gethostname():
     base_fp = '/ocean/projects/ees260009p/cwilson4/Output/ddf/'
     home_fp = '/jet/home/cwilson4/'
 elif 'lantern' in socket.gethostname():

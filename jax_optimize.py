@@ -12,6 +12,11 @@ Steps:
      pebsi.main.main(), sums MB over observation periods, and returns RMSE.
   4. jax.grad + optax to optimize wind_factor per site simultaneously.
 """
+import socket
+if 'trace' in socket.gethostname():
+    config_fp = 'configs_opt_trace.yaml'
+elif 'bridges' in socket.gethostname():
+    config_fp = 'configs_opt_bridges.yaml'
 
 import sys
 import os
@@ -23,6 +28,7 @@ import simulation as sim
 import time
 import jax
 jax.config.update("jax_traceback_filtering", "off")
+jax.config.update("jax_debug_nans", True)
 import jax.numpy as jnp
 import optax
 import numpy as np
@@ -166,7 +172,7 @@ def make_loss_fn(model, period_idx, meas_batch, mask_batch):
     meas_batch : (S, N_max) float32 — observed MB
     mask_batch : (S, N_max) bool
     """
-    meas_jax = jnp.array(meas_batch)
+    meas_jax = jnp.array(np.nan_to_num(meas_batch, nan=0.0))
     period_idx_jax = jnp.array(period_idx)
     # a period only contributes to the loss if it actually falls inside the
     # simulated date range — otherwise period_sums is left at its zero init
@@ -265,6 +271,7 @@ def run_optimization(loss_fn, init_wind_factors, n_steps=100, lr=1e-2):
         grad_min = float(jnp.min(jnp.abs(grads)))
         grad_max = float(jnp.max(jnp.abs(grads)))
         print(f"{i:>6}  {float(loss):>10.4f}  grad_norm={grad_norm:.3e}  min={grad_min:.3e}  max={grad_max:.3e}  ({time.time()-t0:.1f}s)", flush=True)
+        print(f"  grads={np.asarray(grads)}", flush=True)
 
     return jnp.exp(log_wf)
 
@@ -281,7 +288,7 @@ if __name__ == '__main__':
     print(f"Loaded {S} sites\n")
 
     print("Initializing PEBSI...")
-    model = init_pebsi('configs_opt.yaml')
+    model = init_pebsi(config_fp)
 
     print("Building period index arrays...")
     period_idx = build_period_indices(model.dates, period_starts_list, period_ends_list)
@@ -291,6 +298,20 @@ if __name__ == '__main__':
 
     wf_init = model.config.dynamic_args.wind_factor
     print(f"wind_factor shape={jnp.asarray(wf_init).shape}  value={wf_init}", flush=True)
+
+    print("Checking post-spinup state for NaNs...", flush=True)
+    st = model.initial_state
+    any_nan = False
+    for field, value in st._asdict().items():
+        arr = np.asarray(value)
+        if not np.issubdtype(arr.dtype, np.floating):
+            continue
+        nan_sites = np.isnan(arr).reshape(arr.shape[0], -1).any(axis=-1)
+        if nan_sites.any():
+            any_nan = True
+            print(f"  NaN in '{field}': site(s) {np.where(nan_sites)[0].tolist()}", flush=True)
+    if not any_nan:
+        print("  No NaNs found in any post-spinup state field.", flush=True)
 
     print("Optimizing wind_factor for all sites...\n", flush=True)
     init_wf = list(model.config.dynamic_args.wind_factor)
