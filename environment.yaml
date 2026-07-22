@@ -1,4 +1,4 @@
-name: gpu-env
+name: pebsi-env
 channels:
   - conda-forge
   - defaults
