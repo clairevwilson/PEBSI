@@ -888,7 +888,14 @@ def check_layer_sizes(state, params):
 
     layer_indices = jnp.arange(n_layers)
     curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
-    min_height_by_depth = jnp.maximum(curve_snow / 2, params.min_dz)
+    min_height_by_depth = jnp.maximum(curve_snow, params.min_dz)
+
+    # ice has stricter height requirement for numerical stability
+    dt_heat = params.dt / params.n_heat_steps
+    ice_stability_min = 2.0 * jnp.sqrt(
+        4 * params.k_ice * dt_heat / (params.Cp_ice * params.density_ice)
+    )
+    min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
 
     # define function to scan for layers to merge
     def _scan_merge(current_state, idx):
@@ -899,7 +906,7 @@ def check_layer_sizes(state, params):
 
         # determine if layer is too thin for its position
         is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
-        is_thin_any = (dz < params.min_dz)
+        is_thin_any = (dz < min_height_ice)
         
         # determine which spatial columns need a merge at this specific vertical index
         is_snow = curr_type == 0
