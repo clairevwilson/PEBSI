@@ -133,6 +133,12 @@ class PEBSI():
 
         # run DEM functions for shading, elevation, etc.
         terrain.run_dem_functions()
+        if params.option_ice_albedo_tif:
+            albedo_ice_n = terrain.get_ice_albedo()
+            self.params.albedo_ice = albedo_ice_n
+            self.config.dynamic_args = self.config.dynamic_args._replace(
+                albedo_ice=jnp.array(albedo_ice_n, dtype=jnp.float64)
+            )
 
         # validate spatial inputs
         terrain.validate_terrain_data()
@@ -520,13 +526,15 @@ class PEBSI():
         The main() function is chunked so JAX compiles once and
         memory use stays bounded.
         """
-        static_args = self.config.static_args
-        dynamic_args = self.config.dynamic_args
         params = self.config.params
 
         # prepare all the inputs
         self.initialize()
         initial_state = self.initial_state
+
+        # grab static/dynamic args
+        static_args = self.config.static_args
+        dynamic_args = self.config.dynamic_args
 
         self.start_print()
 

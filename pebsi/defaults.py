@@ -60,6 +60,7 @@ shading_fp = '../data/shading/'                             # Shading data filep
 sample_shading_fp = 'data/sample_data/'                     # Shading filepath for the test glacier (region 00)
 shading_fn = '{gid}_shadows.zarr'                           # Shading data filename template
 thickness_fn = '../data/ice_thickness/RGI60-{gid}_thickness.tif' # Ice thickness filename template
+ice_albedo_fn = '../data/ice_albedo/{gid}_albedo.tif'       # Ice albedo filename template
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
@@ -147,6 +148,7 @@ option_SWpen = True                     # Calculate penetration of shortwave rad
 option_flat_plates = False              # Use flat grain shapes in SNICAR emulator or only spherical?
 option_accel_grains = False             # Accelerate wet grain metamorphosis?
 option_dynamics = False                 # Run glacier dynamics with GLIDE?
+option_ice_albedo_tif = False           # Take ice albedo from preprocessed .tif?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]

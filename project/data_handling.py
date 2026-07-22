@@ -544,7 +544,7 @@ class Albedo():
                 use_list = self.use
 
         # get filename for this glac_no
-        albedo_fns = [self.albedo_fp + f'{num}/{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
+        albedo_fns = [self.albedo_fp + f'{num}/RGI2000-v7.0-G-01-{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
 
         # build dataset
         self.data = []

@@ -589,12 +589,17 @@ class Terrain:
                 pass
 
         # store compiled inputs to self, if they were not already specified
-        if self.elev_n is None:
-            self.elev_n = compiled_inputs['elev_n']
-        if self.aspect_n is None:
-            self.aspect_n = compiled_inputs['aspect_n']
-        if self.slope_n is None:
-            self.slope_n = compiled_inputs['slope_n']
+        for var in ['elev_n','aspect_n','slope_n']:
+            existing = getattr(self, var, None)
+            new = compiled_inputs[var] 
+
+            if existing is None:
+                setattr(self, var, new)
+            else:
+                idx_nan = np.isnan(existing)
+                existing[idx_nan] = new[idx_nan]
+                setattr(self, var, existing)
+
         return
     
     def load_shading(self):
@@ -652,6 +657,37 @@ class Terrain:
         self.shadow_mask = masks.astype(bool)
         self.shading_lookup = shading_lookup
         return
+
+    def get_ice_albedo(self):
+        """
+        Samples each point's ice albedo from a per-glacier
+        ice albedo GeoTIFF (params.ice_albedo_fn).
+
+        Only called when params.option_ice_albedo_tif is True.
+        """
+        if self.params.debug:
+            print('~ Loading ice albedo from preprocessed tifs . . .')
+
+        N_POINTS = self.N_POINTS
+        ice_albedo_n = np.zeros(N_POINTS)
+
+        for gid in np.unique(self.rgiid_n):
+            gid_idx = np.where(self.rgiid_n == gid)[0]
+
+            fn = self.params.ice_albedo_fn.format(gid=gid)
+            da = rxr.open_rasterio(fn).squeeze().drop_vars('band')
+
+            transformer = Transformer.from_crs("EPSG:4326", da.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
+            target_x = xr.DataArray(x_pts, dims='points')
+            target_y = xr.DataArray(y_pts, dims='points')
+
+            selected = da.sel(x=target_x, y=target_y, method='nearest')
+            ice_albedo_n[gid_idx] = np.nan_to_num(selected.values, nan=self.params.albedo_ice)
+
+            da.close()
+
+        return ice_albedo_n
 
     def get_initial_ice_thickness(self):
         """

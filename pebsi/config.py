@@ -42,6 +42,7 @@ static_fields = [
     'option_SWpen', 'option_accel_grains',
     'option_uniform_ice', 'option_uniform_snow',
     'option_flat_plates', 'option_dynamics',
+    'option_ice_albedo_tif',
 
     'dynamics_dx', 'dynamics_margin', 'dynamics_n_levels',
     'dynamics_rheology_B', 'dynamics_rheology_n', 'dynamics_rheology_eps_reg',
