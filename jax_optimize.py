@@ -28,7 +28,6 @@ import simulation as sim
 import time
 import jax
 jax.config.update("jax_traceback_filtering", "off")
-jax.config.update("jax_debug_nans", True)
 import jax.numpy as jnp
 import optax
 import numpy as np
@@ -271,7 +270,6 @@ def run_optimization(loss_fn, init_wind_factors, n_steps=100, lr=1e-2):
         grad_min = float(jnp.min(jnp.abs(grads)))
         grad_max = float(jnp.max(jnp.abs(grads)))
         print(f"{i:>6}  {float(loss):>10.4f}  grad_norm={grad_norm:.3e}  min={grad_min:.3e}  max={grad_max:.3e}  ({time.time()-t0:.1f}s)", flush=True)
-        print(f"  grads={np.asarray(grads)}", flush=True)
 
     return jnp.exp(log_wf)
 

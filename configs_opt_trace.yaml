@@ -35,8 +35,8 @@ sites:
 temporal_chunks: 8760
 bias_vars:
 - temp
-start_date: '2010-04-01'
-end_date: '2020-04-01'
+start_date: '2000-04-01'
+end_date: '2025-04-01'
 dust_factor: 20
 ksp_BC: 1
 ksp_OC: 1
