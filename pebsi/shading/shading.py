@@ -116,7 +116,7 @@ class Shading:
             di = -float(np.cos(az_rad))  # row step (north = row 0)
 
             grid_res = self.grid_resolution
-            res = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1])**2)
+            self.grid_res_m = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1])**2)
 
             z_np = np.asarray(self.z)
             max_zenith = np.zeros((self.ny, self.nx), dtype=np.float32)
