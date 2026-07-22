@@ -13,9 +13,9 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '../Output/test_simulation_3/'
-plot_var = 'shortwave_in'
-cm = 'Reds'
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/recalibrate_4/'
+plot_var = 'MB'
+cm = 'RdBu'
 
 # ===================== LOAD DATA =====================
 fns = sorted(glob.glob(f'{output_dir}/*.zarr'))
@@ -23,6 +23,7 @@ assert len(fns) > 0, f'No zarr files found in {output_dir}'
 
 lats, lons, vals, rgi_ids = [], [], [], set()
 
+i = 0
 for fn in fns:
     ds = xr.open_zarr(fn, consolidated=False)
     if plot_var == 'MB':
@@ -39,6 +40,9 @@ for fn in fns:
     
     rgi_ids.add(ds.attrs['id'])
     ds.close()
+    i += 1 
+    if i % 100 == 0:
+        print(f'{i} / 1000')
 
 lats = np.array(lats)
 lons = np.array(lons)
@@ -93,10 +97,10 @@ glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
 ax.scatter(xs, ys, c=vals, cmap=cm, vmin=vmin, vmax=vmax,
            s=15, edgecolors='k', linewidths=0.3, zorder=5)
 
-cbar = fig.colorbar(im, ax=ax, label='Incoming shortwave [J m-2]', shrink=0.8)
+cbar = fig.colorbar(im, ax=ax, label='Annual mass balance [m w.e.]', shrink=0.8)
 ax.set_xlabel('Easting [m]')
 ax.set_ylabel('Northing [m]')
-ax.set_title(f'Incoming shortwave radiation — {len(fns)} points ({", ".join(rgi_ids)})')
+ax.set_title(f'Mass balance — {len(fns)} points ({", ".join(rgi_ids)})')
 ax.set_aspect('equal')
 
 plt.tight_layout()

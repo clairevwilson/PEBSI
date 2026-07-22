@@ -10,8 +10,8 @@
 # ================================================
 #               SIMULATION METADATA
 # ================================================
-store_data: true
-debug: false 
+store_data: false
+debug: true 
 progress_bar: true
 
 start_date: '2018-04-20 00:00'
@@ -19,18 +19,25 @@ end_date: '2021-04-20 00:00'
 # temporal_chunks: 384
 # dem_fn: '../DEMs/gulkana_dem.tif'
 
-rgi_ids: ['01.00570'] # ,'01.00570','01.00570'] # , '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
-method_distribute: 'scatter'
-n_points: 500
-store_vars: ['MB','EB','climate']
+# rgi_ids: ['01.22193', '01.15645'] # ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
+# method_distribute: 'scatter'
+# n_points: 10
 
-option_dynamics: true 
-thickness_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif'
+rgi_ids: ['01.00570','01.00570','01.00570']
+sites: ['A','AU','B']
+
+store_vars: ['minimal'] # ['MB','EB','climate']
+
+# option_ice_albedo_tif: true
+
+# option_dynamics: true 
+# thickness_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif'
 
 climate_fp: '/ocean/projects/ees260009p/cwilson4/climate_data/'
 rgi_fp: '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
 output_fp: '/ocean/projects/ees260009p/cwilson4/Output/recalibrate/'
 cop30_vrt_path: '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
 shading_fp: '/ocean/projects/ees260009p/cwilson4/data/shading/'
+ice_albedo_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
 
 # deposition_data: 'UKESM'
