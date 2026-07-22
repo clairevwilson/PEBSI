@@ -5,14 +5,16 @@ import simulation as sim
 
 config_fn = 'config_redos.yaml'
 
-site_dict = {
-    'wolverine':['N','B','EC'],
-    'kahiltna':['K53','K17b'], 
-    'kennicott':['GTL','GTH'], # ,'KC31'],
-    'lemon_creek':['B','C','D'],
-    'taku':['NWB1','TKG3'],
-    'gulkana':['AU','B','D']
-}
+# site_dict = {
+#     'wolverine':['N','B','EC'],
+#     'kahiltna':['K53','K17b'], 
+#     'kennicott':['GTL','GTH'], # ,'KC31'],
+#     'lemon_creek':['B','C','D'],
+#     'taku':['NWB1','TKG3'],
+#     'gulkana':['AU','B','D']
+# }
+with open('project/sites.pkl', 'rb') as f:
+    sites_by_id = pickle.load(f)
 
 translate_rgi = {
                  'gulkana':{'6': '01.00570', '7':'01.05299'},
@@ -32,14 +34,17 @@ wind_factors = []
 kps = []
 a_ices = []
 
-for glacier in site_dict:
-    for site in site_dict[glacier]:
+for glacier in translate_rgi:
+    if translate_rgi[glacier]['6'] not in sites_by_id:
+        continue 
+    else:
+        gid = translate_rgi[glacier]['6']
+
+    for site in sites_by_id[gid]:
         try:
             wind_factor = float(params[glacier][site])
         except:
             wind_factor = 1
-
-        gid = translate_rgi[glacier]['6']
 
         df = pd.read_csv(f'data/glacier_metadata.csv', dtype=str)
         df_glac = df[df['rgiid'] == gid].set_index('site')
@@ -59,28 +64,35 @@ configs = {
     'n_points': len(sites),
     'bias_vars': ['temp'],
 
-    'start_date': '2000-04-01',
+    'start_date': '2023-04-01',
     'end_date': '2025-09-01',
 
     'dust_factor': 20,
     'ksp_BC': 1,
     'ksp_OC': 1,
-    'kp': kps, 
-    'albedo_ice': a_ices,
-    'wind_factor': wind_factors, 
+    # 'kp': kps, 
+    # 'albedo_ice': a_ices,
+    # 'wind_factor': wind_factors, 
     'option_accel_grains': False,
     'option_flat_plates': True,
     'constant_freshgrainsize': 54.5, 
 
     'debug': True,
     'progress_bar': True,
-    'store_data': True,
+    'store_data': False, # True,
     'store_vars': ['MB','EB','layers','climate'],
 
     'output_fp': '../Output/check/',
 
     # 'deposition_data': 'UKESM',
     # 'ukesm_fp': '../UKESM/dw068_nofires/'
+
+    'climate_fp': '/ocean/projects/ees260009p/cwilson4/climate_data/',
+    'rgi_fp': '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/',
+    'output_fp': '/ocean/projects/ees260009p/cwilson4/Output/recalibrate/',
+    'cop30_vrt_path': '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt',
+    'shading_fp': '/ocean/projects/ees260009p/cwilson4/data/shading/',
+    'ice_albedo_fn': '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif',
 
 }
 
