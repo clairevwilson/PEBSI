@@ -60,6 +60,7 @@ class Climate():
         # set temporal metadata and shape = (N_UNIQUE, N_TIME)
         self.get_spatial_temporal_info(dates)
 
+        # get any AWS data and store the list of variables still needed
         self.bias_vars = []
         if not self.params.use_aws:
             self.measured_vars = []
@@ -198,12 +199,16 @@ class Climate():
         self.point_lons = xr.DataArray(self.unique_lons, dims='point')
 
         # get GCM geopotential elevation at each unique cell
-        z_fp = self.GCM_fp + self.var_dict['elev']['fn']
-        with xr.open_dataarray(z_fp) as zds:
-            zds = zds.sel({self.lat_vn: self.point_lats,
-                           self.lon_vn: self.point_lons}, method='nearest')
-            zds = self.check_units('elev', zds)
-            self.terrain.gcm_elev_n = zds.isel(time=0).values  # (N_UNIQUE,)
+        if self.params.testing:
+            self.terrain.gcm_elev_n = self.aws_elev
+
+        else:
+            z_fp = self.GCM_fp + self.var_dict['elev']['fn']
+            with xr.open_dataarray(z_fp) as zds:
+                zds = zds.sel({self.lat_vn: self.point_lats,
+                            self.lon_vn: self.point_lons}, method='nearest')
+                zds = self.check_units('elev', zds)
+                self.terrain.gcm_elev_n = zds.isel(time=0).values  # (N_UNIQUE,)
         
         # loop through vars
         for var in self.need_vars:
