@@ -14,6 +14,7 @@ from shapely.geometry import mapping
 import rasterio.features
 
 output_dir = '/ocean/projects/ees260009p/cwilson4/Output/recalibrate_4/'
+rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 plot_var = 'MB'
 cm = 'RdBu'
 
@@ -58,7 +59,6 @@ to_metric = Transformer.from_crs('EPSG:4326', metric_crs, always_xy=True)
 xs, ys = to_metric.transform(lons, lats)
 
 # ===================== SHAPEFILE =====================
-rgi_fp = '/Users/cvw/local/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 gdf = gpd.read_file(rgi_fp)
 glacier = gdf[gdf['RGIId'].isin(['RGI60-' + i for i in rgi_ids])].to_crs(metric_crs)
 
