@@ -258,9 +258,16 @@ class Config():
             var_data = np.array(getattr(self.args, var))
             assert np.all((0 < var_data) & (var_data < 1))
 
+        # print quantile mapping warning
         if self.args.debug and len(self.args.bias_vars) > 0:
             print('~ Applying quantile mapping for:',self.args.bias_vars)
 
+        # print warning in case regional maps do not exist
+        region = str(self.args.rgi_region).zfill(2)
+        fn_bc = self.args.climate_fp + self.args.merra2_laps_fn.format(sp='BC', r=region)
+        fn_oc = self.args.climate_fp + self.args.merra2_laps_fn.format(sp='OC', r=region)
+        if not os.path.exists(fn_bc) or not os.path.exists(fn_oc):
+            print('! BC / OC regional file not found: falling back on Region 01 pre-determined parameters')
         return
     
     def convert_to_jax_safe(self, args):

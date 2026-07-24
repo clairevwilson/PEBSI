@@ -488,17 +488,16 @@ class Climate():
 
         # load the pre-computed maps of BC/OC factors
         region = str(self.params.rgi_region).zfill(2)
-        fn_bc = params.merra2_laps_fn.format(sp='BC', r=region)
-        fn_oc = params.merra2_laps_fn.format(sp='OC', r=region)
+        fn_bc = params.climate_fp + params.merra2_laps_fn.format(sp='BC', r=region)
+        fn_oc = params.climate_fp + params.merra2_laps_fn.format(sp='OC', r=region)
 
         if not os.path.exists(fn_bc) or not os.path.exists(fn_oc):
-            print('! BC / OC regional file not found: falling back on Region 01 pre-determined parameters')
             self.bcdry *= params.ratio_BC2_BCtot
             self.ocdry *= params.ratio_OC2_OCtot
             return
 
-        ds_bc = xr.open_dataset(params.climate_fp + fn_bc)
-        ds_oc = xr.open_dataset(params.climate_fp + fn_oc)
+        ds_bc = xr.open_dataset(fn_bc)
+        ds_oc = xr.open_dataset(fn_oc)
 
         # select ratio at the correct lats/lons
         ratio_bc = (ds_bc['ratio'].sel(lat=self.point_lats, 
