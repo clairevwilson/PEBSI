@@ -1,7 +1,7 @@
 """
 Output class for PEBSI
 
-Contains functions which initialize the 
+Contains functions which initialize the
 datasets for storage, fills them with data
 after the simulation, and adds metadata
 attributes to the files.
@@ -24,8 +24,8 @@ class Output():
     """
     def __init__(self, params, terrain, resume_fp=None):
         """
-        Creates list of filenames and variable names
-        to store throughout the simulation.
+        Creates the output path and store list of
+        variable names to store throughout the simulation.
         """
         self.params = params
         self.terrain = terrain
@@ -42,19 +42,16 @@ class Output():
         # extract the actual variables to store
         self.store = [v for g in params.store_vars for v in OUTPUT_GROUPS[g]]
 
-        # find the filepath to store the data 
-        self.get_output_names()
+        # find the filepath to store the data
+        self.get_output_name()
 
-        # generate the filenames for the outputs
+        # single combined store for all points
         if params.store_data:
             os.makedirs(self.output_fp, exist_ok=True)
-            self.out_files = []
-            for i, g in enumerate(terrain.rgiid_n):
-                out_fn = os.path.join(self.output_fp, self.output_fn.format(g=g, i=i))
-                self.out_files.append(out_fn)
+            self.out_fn = os.path.join(self.output_fp, 'output.zarr')
         return
-    
-    def get_output_names(self):
+
+    def get_output_name(self):
         """
         Creates the filepath/names to store the output.
         """
@@ -68,7 +65,7 @@ class Output():
             self.output_fp = self.resume_fp
             return
 
-        # crop the trailing /
+        # crop the trailing `/``
         if str(params.output_fp).endswith('/'):
             output_fp_compare = params.output_fp[:-1]
         else:
@@ -93,52 +90,57 @@ class Output():
 
     def store_chunk(self, chunk_records, chunk_dates, chunk_idx):
         """
-        Saves a temporal subset of the output to a 
-        the .zarr store for each point. 
+        Saves a temporal subset of the output, across all
+        points at once, to the combined .zarr store.
         """
-        # loop through points
-        for i, out_fn in enumerate(self.out_files):
-            data_vars = {}
+        data_vars = {}
 
-            # loop through storage variables and pull from chunk_records
-            for var in self.store:
-                if not hasattr(chunk_records, var):
-                    continue
-                vals = np.array(getattr(chunk_records, var))
+        # loop through storage variables and pull from chunk_records
+        for var in self.store:
+            if not hasattr(chunk_records, var):
+                continue
+            vals = np.array(getattr(chunk_records, var))
 
-                # store values to dict with the indexing dims
-                if 'layer' not in var:
-                    data_vars[var] = (['time'], vals[:, i])
-                else:
-                    data_vars[var] = (['time', 'layer'], vals[:, i, :])
-
-            # create dataset of this chunk
-            ds_chunk = xr.Dataset(data_vars, coords={
-                'time': chunk_dates,
-                'layer': np.arange(self.N_LAYERS)
-            })
-
-            if chunk_idx == 0:
-                # make sure time is chunked in reasonable chunk
-                encoding = {var: {'chunks': (24 * 7, )} for var in ds_chunk.data_vars}
-                ds_chunk.to_zarr(out_fn, mode='w', consolidated=False, encoding=encoding)
+            # store values to dict with the indexing dims
+            if 'layer' not in var:
+                data_vars[var] = (['time', 'point'], vals)
             else:
-                ds_chunk.to_zarr(out_fn, append_dim='time', consolidated=False)
+                data_vars[var] = (['time', 'point', 'layer'], vals)
+
+        # create dataset of this chunk, across all points
+        ds_chunk = xr.Dataset(data_vars, coords={
+            'time': chunk_dates,
+            'point': np.arange(self.N_POINTS),
+            'layer': np.arange(self.N_LAYERS)
+        })
+
+        if chunk_idx == 0:
+            # make sure time is chunked in a reasonable chunk; keep point/layer whole
+            encoding = {}
+            for var in ds_chunk.data_vars:
+                if ds_chunk[var].ndim == 2:
+                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS)}
+                else:
+                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS, self.N_LAYERS)}
+            ds_chunk.to_zarr(self.out_fn, mode='w', consolidated=False, encoding=encoding)
+        else:
+            ds_chunk.to_zarr(self.out_fn, append_dim='time', consolidated=False)
 
     def close_out(self, params, time_elapsed, climate):
         """
-        Closes out the datasets, storing last helpful things:
+        Closes out the dataset, storing last helpful things:
           - Units for each variable
           - Additional variables like net radiation
+          - Site info (rgiid, lat, lon, elev) per point
           - Metadata attributes
         """
         self.add_units()
         self.add_vars()
+        self.add_site_info()
         self.add_basic_attrs(params, time_elapsed, climate)
-        for out_fn in self.out_files:
-            zarr.consolidate_metadata(out_fn)
-        return 
-    
+        zarr.consolidate_metadata(self.out_fn)
+        return
+
     def add_units(self):
         """
         Stores units alongside each data variable
@@ -155,20 +157,18 @@ class Output():
             'layertype': '-',
         }
 
-        for out_fn in self.out_files:
-            z = zarr.open(out_fn, mode='a')
-            for var in self.store:
-                if var not in z:
-                    continue
-                if var in output_units:
-                    z[var].attrs['units'] = output_units[var]
-                elif var in self.all_vars['EB']:
-                    z[var].attrs['units'] = 'W m-2'
-                elif var in self.all_vars['MB']:
-                    z[var].attrs['units'] = 'm w.e.'
-                
+        z = zarr.open(self.out_fn, mode='a')
+        for var in self.store:
+            if var not in z:
+                continue
+            if var in output_units:
+                z[var].attrs['units'] = output_units[var]
+            elif var in self.all_vars['EB']:
+                z[var].attrs['units'] = 'W m-2'
+            elif var in self.all_vars['MB']:
+                z[var].attrs['units'] = 'm w.e.'
         return
-    
+
     def add_vars(self):
         """
         Calculates additional variables from other
@@ -180,62 +180,83 @@ class Output():
           - Net mass balance MB [m w.e.]
           - Summed snow, firn and ice heights [m]
         """
-        for fn in self.out_files:
-            # load dataset and create new dataset for additional vars
-            ds = xr.open_zarr(fn, consolidated=False).compute()
-            new_vars = xr.Dataset()
+        ds = xr.open_zarr(self.out_fn, consolidated=False).compute()
+        new_vars = xr.Dataset()
 
-            # add surface height change 
-            if np.all([f in self.store for f in ['dh','layerheight']]):
-                total_heights = np.sum(ds.layerheight.values, axis=1)
-                initial_height = np.sum(ds.layerheight.values[0, :])
+        # add surface height change
+        if np.all([f in self.store for f in ['dh','layerheight']]):
+            total_heights = np.sum(ds.layerheight.values, axis=2)  # (time, point)
+            initial_height = total_heights[0, :]
 
-                # prepend initial height to compute differences accurately
-                padded_heights = np.insert(total_heights, 0, initial_height)
+            # prepend initial height to compute differences accurately
+            padded_heights = np.insert(total_heights, 0, initial_height, axis=0)
 
-                # difference total_heights from initial_height
-                new_vars['dh'] = (['time'], np.diff(padded_heights),{'units':'m'})
+            # difference total_heights from initial_height
+            new_vars['dh'] = (['time', 'point'], np.diff(padded_heights, axis=0), {'units':'m'})
 
-            # add summed radiation terms
-            rad_terms = ['shortwave_in','shortwave_ref','longwave_in','longwave_out']
-            if np.all([f in self.store for f in rad_terms]):
-                SWnet = ds['shortwave_in'] + ds['shortwave_ref']
-                LWnet = ds['longwave_in'] + ds['longwave_out']
-                NetRad = SWnet + LWnet
-                new_vars['shortwave_net'] = (['time'],SWnet.values,{'units':'W m-2'})
-                new_vars['longwave_net'] = (['time'],LWnet.values,{'units':'W m-2'})
-                new_vars['net_radiation'] = (['time'],NetRad.values,{'units':'W m-2'})
+        # add summed radiation terms
+        rad_terms = ['shortwave_in','shortwave_ref','longwave_in','longwave_out']
+        if np.all([f in self.store for f in rad_terms]):
+            SWnet = ds['shortwave_in'] + ds['shortwave_ref']
+            LWnet = ds['longwave_in'] + ds['longwave_out']
+            NetRad = SWnet + LWnet
+            new_vars['shortwave_net'] = (['time','point'],SWnet.values,{'units':'W m-2'})
+            new_vars['longwave_net'] = (['time','point'],LWnet.values,{'units':'W m-2'})
+            new_vars['net_radiation'] = (['time','point'],NetRad.values,{'units':'W m-2'})
 
-            # add summed mass balance term
-            if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
-                MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
-                ds['mass_balance'] = (['time'],MB.values,{'units':'m w.e.'})
+        # add summed mass balance term
+        if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
+            MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
+            new_vars['mass_balance'] = (['time','point'],MB.values,{'units':'m w.e.'})
 
-            # add snow, firn, and ice depth
-            if np.all([f in self.store for f in ['layertype','layerheight']]):
-                snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
-                firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
-                icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
-                new_vars['snowdepth'] = (['time'],snowdepth.values,{'units':'m'})
-                new_vars['firndepth'] = (['time'],firndepth.values,{'units':'m'})
-                new_vars['icedepth'] = (['time'],icedepth.values,{'units':'m'})
-            
-            new_vars = new_vars.assign_coords(time=ds.time)
-            new_vars.attrs = ds.attrs
-            new_vars.to_zarr(fn, mode='a')
+        # add snow, firn, and ice depth
+        if np.all([f in self.store for f in ['layertype','layerheight']]):
+            snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
+            firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
+            icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
+            new_vars['snowdepth'] = (['time','point'],snowdepth.values,{'units':'m'})
+            new_vars['firndepth'] = (['time','point'],firndepth.values,{'units':'m'})
+            new_vars['icedepth'] = (['time','point'],icedepth.values,{'units':'m'})
+
+        if len(new_vars.data_vars) == 0:
+            return
+
+        new_vars = new_vars.assign_coords(time=ds.time, point=ds.point)
+        new_vars.attrs = ds.attrs
+        new_vars.to_zarr(self.out_fn, mode='a')
         return
-    
+
+    def add_site_info(self):
+        """
+        Stores spatially-varying site info (one value per point)
+        alongside the point dimension, rather than duplicating it
+        as global attributes.
+        """
+        site_vars = {
+            'rgiid': (['point'], np.array(self.terrain.rgiid_n, dtype=str)),
+            'lat': (['point'], np.array(self.terrain.lat_n, dtype=float)),
+            'lon': (['point'], np.array(self.terrain.lon_n, dtype=float)),
+        }
+        if self.terrain.elev_n is not None:
+            site_vars['elev'] = (['point'], np.array(self.terrain.elev_n, dtype=float))
+
+        ds_site = xr.Dataset(site_vars, coords={'point': np.arange(self.N_POINTS)})
+        ds_site.to_zarr(self.out_fn, mode='a')
+        return
+
     def add_basic_attrs(self, params, time_elapsed, climate):
         """
         Adds informational attributes to the output dataset.
-        - glacier name, site, and elevation
         - length of the simulation (time_elapsed)
         - simulation dates (run_start and run_end)
         - list of variables from AWS/reanalysis
         - AWS and reanalysis dataset names
         - model run date
-        - machine that ran the simulation (machine) 
-        
+        - machine that ran the simulation (machine)
+        Any config/command-line parameter that varies per point
+        (i.e. is a list of length N_POINTS) is stored as a
+        per-point data variable instead of a global attribute.
+
         Parameters
         ==========
         params : command line arguments
@@ -266,7 +287,7 @@ class Output():
             AWS_str = 'none'
             AWS_elev = '-'
             which_AWS = 'none'
-        
+
         # get information about bias correction
         if params.use_aws:
             corr_vars = [v for v in climate.bias_vars if v not in measured]
@@ -274,78 +295,54 @@ class Output():
             corr_vars = climate.bias_vars
         corr_str = ', '.join(corr_vars)
         corr_str = 'none' if corr_str == '' else corr_str
-        
-        # load the output dataset
-        for i, out_fn in enumerate(self.out_files):
-            z = zarr.open(out_fn, mode='a')
 
-            elev = f'{self.terrain.elev_n[i]:.1f} m a.s.l.'
-            rgiid = str(self.terrain.rgiid_n[i])
-            lat = str(self.terrain.lat_n[i])
-            lon = str(self.terrain.lon_n[i])
+        # store basic attributes
+        attrs = dict(
+            n_points=self.N_POINTS,
+            from_AWS=AWS_str,
+            which_AWS=which_AWS,
+            elev_AWS=AWS_elev,
+            from_reanalysis=re_str,
+            which_reanalysis=which_re,
+            bias_corrected=corr_str,
+            sim_start=str(params.start_date),
+            sim_end=str(params.end_date),
+            model_run_date=str(pd.Timestamp.today()),
+            time_elapsed=time_elapsed,
+            run_by=params.machine
+        )
 
-            # store basic attributes
-            attrs = dict(
-                elevation=elev,
-                id=rgiid,
-                lat=lat,
-                lon=lon,
-                from_AWS=AWS_str,
-                which_AWS=which_AWS,
-                elev_AWS=AWS_elev,
-                from_reanalysis=re_str,
-                which_reanalysis=which_re,
-                bias_corrected=corr_str,
-                sim_start=str(params.start_date),
-                sim_end=str(params.end_date),
-                model_run_date=str(pd.Timestamp.today()),
-                time_elapsed=time_elapsed,
-                run_by=params.machine
+        # list variables from config that can be skipped
+        skip = ['rgi_ids', 'store_data','progress_bar','debug',
+                    'start_date','end_date','output_fn','testing']
+
+        # values that vary per point become per-point data variables
+        per_point_vars = {}
+
+        def _record(key, value):
+            if type(value) == list and len(value) == self.N_POINTS:
+                per_point_vars[key] = value
+            elif type(value) == list:
+                attrs[key] = ', '.join(str(v) for v in value)
+            elif type(value) == bool:
+                attrs[key] = str(value)
+            else:
+                attrs[key] = value
+
+        # add params that were specified in command line
+        for key in params.cmd_args:
+            if key not in skip:
+                _record(key, getattr(params, key))
+
+        z = zarr.open(self.out_fn, mode='a')
+        z.attrs.update(attrs)
+
+        if per_point_vars:
+            ds_params = xr.Dataset(
+                {k: (['point'], np.array(v)) for k, v in per_point_vars.items()},
+                coords={'point': np.arange(self.N_POINTS)}
             )
-
-            # list variables from config that can be skipped
-            skip = ['store_data','progress_bar','debug', 'fff',
-                        'dates_from_data','climate_source',
-                        'bias_vars', 'aws_elev', 'output_fn',
-                        'rgiids','start_date','end_date','machine']
-            skip_in_config = skip + list(params.cmd_args)
-
-            # add params that were specified in config file
-            if params.use_config:
-                import yaml
-                with open(params.config_fn) as f:
-                    config_inputs = yaml.safe_load(f)
-        
-                for key, value in config_inputs.items():
-                    if key not in skip_in_config:
-                        if type(value) == list:
-                            if len(value) == self.N_POINTS:
-                                store = value[i]
-                            else:
-                                store = ', '.join(str(v) for v in value)
-                        elif type(value) == bool:
-                            store = str(value)
-                        else:
-                            store = value
-                        attrs[key] = store
-
-            # add params that were specified in command line
-            for key in params.cmd_args:
-                if key not in skip:
-                    value = getattr(params, key)
-                    if type(value) == list:
-                        if len(value) == self.N_POINTS:
-                            store = value[i]
-                        else:
-                            store = ', '.join(str(v) for v in value)
-                    elif type(value) == bool:
-                        store = str(value)
-                    else:
-                        store = value
-                    attrs[key] = store
-            
-            z.attrs.update(attrs)
-            zarr.consolidate_metadata(out_fn)
+            ds_params.to_zarr(self.out_fn, mode='a')
 
         # success printout
         print(f"~ Successfully saved model outputs across {self.N_POINTS} points in {self.output_fp} ~")
@@ -361,20 +358,22 @@ class Output():
             Attributes to store
         """
         if not new_attrs:
-            return 
-        
-        for out_fn in self.out_files:
-            z = zarr.open(out_fn, mode='a')
-            z.attrs.update(new_attrs)
+            return
+
+        z = zarr.open(self.out_fn, mode='a')
+        z.attrs.update(new_attrs)
         return
-    
-    def get_output(self, i):
+
+    def get_output(self, i=None):
         """
-        Returns the output dataset for a given 
-        index in the points array.
+        Returns the output dataset, optionally sliced
+        to a single point index in the points array.
         """
-        return xr.open_zarr(self.out_files[i]).compute()
-    
+        ds = xr.open_zarr(self.out_fn).compute()
+        if i is not None:
+            return ds.isel(point=i)
+        return ds
+
     def delete_temp_files(self):
         """
         Deletes any temporary files that were created
