@@ -34,6 +34,7 @@ use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
+testing = False         #$ --testing                Run in testing mode?
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
@@ -259,6 +260,8 @@ BC_freshsnow = 0            # Concentration of BC in fresh snow for initializati
 OC_freshsnow = 0            # Concentration of OC in fresh snow for initialization [kg m-3]
 dust_freshsnow = 0          # Concentration of dust in fresh snow for initilization [kg m-3]
 # <<<<<< MERRA-2: LAP binning >>>>>
+ratio_BC2_BCtot = 2.08      # Ratio to transform BC bin 2 deposition to total BC, if regional mappings do not exist
+ratio_OC2_OCtot = 1.54      # Ratio to transform OC bin 2 deposition to total OC, if regional mappings do not exist
 ratio_DU3_DUtot = 3         # Ratio to transform dust bin 3 deposition to total dust
 merra_lat_res = 0.5         # Resolution of MERRA-2 latitudinally [deg]
 merra_lon_res = 0.625       # Resolution of MERRA-2 longitudinally [deg]

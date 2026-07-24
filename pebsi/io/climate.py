@@ -491,6 +491,12 @@ class Climate():
         fn_bc = params.merra2_laps_fn.format(sp='BC', r=region)
         fn_oc = params.merra2_laps_fn.format(sp='OC', r=region)
 
+        if not os.path.exists(fn_bc) or not os.path.exists(fn_oc):
+            print('! BC / OC regional file not found: falling back on Region 01 pre-determined parameters')
+            self.bcdry *= params.ratio_BC2_BCtot
+            self.ocdry *= params.ratio_OC2_OCtot
+            return
+
         ds_bc = xr.open_dataset(params.climate_fp + fn_bc)
         ds_oc = xr.open_dataset(params.climate_fp + fn_oc)
 
