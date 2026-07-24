@@ -81,8 +81,7 @@ class Terrain:
                 assert gid in metadata.index, \
                     f'To index by site, glacier ID must be associated with name in glacier_metadata ({gid})'
 
-                gid_df = metadata.loc[gid]
-                gid_df = gid_df.set_index('site')
+                gid_df = metadata.loc[[gid]].set_index('site')
 
                 lats.append(float(gid_df.loc[site, 'lat']))
                 lons.append(float(gid_df.loc[site, 'lon']))
