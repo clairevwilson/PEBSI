@@ -205,6 +205,8 @@ class Climate():
         else:
             z_fp = self.GCM_fp + self.var_dict['elev']['fn']
             with xr.open_dataarray(z_fp) as zds:
+                if type(zds) == xr.Dataset:
+                    zds = zds['PHIS']
                 zds = zds.sel({self.lat_vn: self.point_lats,
                             self.lon_vn: self.point_lons}, method='nearest')
                 zds = self.check_units('elev', zds)
