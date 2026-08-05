@@ -197,7 +197,7 @@ dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
 max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
 min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
-min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
+min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
