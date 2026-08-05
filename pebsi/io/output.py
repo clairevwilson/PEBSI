@@ -8,6 +8,7 @@ attributes to the files.
 """
 # Built-in libraries
 import os
+import shutil
 # External libraries
 import numpy as np
 import pandas as pd
@@ -138,6 +139,41 @@ class Output():
         self.add_vars()
         self.add_site_info()
         self.add_basic_attrs(params, time_elapsed, climate)
+        self.rechunk_final()
+        return
+
+    def rechunk_final(self):
+        """
+        Rewrites the store chunked along both time (~10yr) and point
+        (~10pts) instead of the whole-point chunks used while writing
+        incrementally, so per-point and per-time-window reads don't
+        each have to decompress the whole dataset.
+        """
+        ds = xr.open_zarr(self.out_fn, consolidated=False, chunks={})
+
+        n_time = ds.sizes['time']
+        if n_time > 1:
+            dt = pd.Timestamp(ds.time.values[1]) - pd.Timestamp(ds.time.values[0])
+            time_chunk = min(n_time, max(1, int(10 * pd.Timedelta(days=365.25) / dt)))
+        else:
+            time_chunk = n_time
+        point_chunk = min(ds.sizes['point'], 10)
+
+        chunk_sizes = {'time': time_chunk, 'point': point_chunk, 'layer': self.N_LAYERS}
+        chunk_sizes = {d: s for d, s in chunk_sizes.items() if d in ds.dims}
+
+        ds = ds.chunk(chunk_sizes)
+        encoding = {var: {'chunks': tuple(chunk_sizes.get(d, -1) for d in ds[var].dims)}
+                    for var in ds.data_vars}
+
+        tmp_fn = self.out_fn.rstrip('/') + '_rechunk_tmp'
+        if os.path.exists(tmp_fn):
+            shutil.rmtree(tmp_fn)
+        ds.to_zarr(tmp_fn, mode='w', consolidated=False, encoding=encoding)
+
+        shutil.rmtree(self.out_fn)
+        shutil.move(tmp_fn, self.out_fn)
+
         zarr.consolidate_metadata(self.out_fn)
         return
 
@@ -180,19 +216,22 @@ class Output():
           - Net mass balance MB [m w.e.]
           - Summed snow, firn and ice heights [m]
         """
-        ds = xr.open_zarr(self.out_fn, consolidated=False).compute()
-        new_vars = xr.Dataset()
+        # open lazily (dask-backed) so derived variables stay chunked instead
+        # of materializing the entire store (all points x time x layers) in RAM
+        ds = xr.open_zarr(self.out_fn, consolidated=False, chunks={})
+        new_vars = {}
 
         # add surface height change
         if np.all([f in self.store for f in ['dh','layerheight']]):
-            total_heights = np.sum(ds.layerheight.values, axis=2)  # (time, point)
-            initial_height = total_heights[0, :]
+            total_heights = ds.layerheight.sum(dim='layer')  # (time, point)
+            initial_height = total_heights.isel(time=0)
 
-            # prepend initial height to compute differences accurately
-            padded_heights = np.insert(total_heights, 0, initial_height, axis=0)
-
-            # difference total_heights from initial_height
-            new_vars['dh'] = (['time', 'point'], np.diff(padded_heights, axis=0), {'units':'m'})
+            # difference total_heights from the previous step; first step is 0
+            # since it's diffed against its own initial value
+            diffed = total_heights.diff(dim='time')
+            first_step = xr.zeros_like(initial_height).expand_dims(time=[ds.time.values[0]])
+            dh = xr.concat([first_step, diffed], dim='time')
+            new_vars['dh'] = dh.assign_attrs(units='m')
 
         # add summed radiation terms
         rad_terms = ['shortwave_in','shortwave_ref','longwave_in','longwave_out']
@@ -200,27 +239,28 @@ class Output():
             SWnet = ds['shortwave_in'] + ds['shortwave_ref']
             LWnet = ds['longwave_in'] + ds['longwave_out']
             NetRad = SWnet + LWnet
-            new_vars['shortwave_net'] = (['time','point'],SWnet.values,{'units':'W m-2'})
-            new_vars['longwave_net'] = (['time','point'],LWnet.values,{'units':'W m-2'})
-            new_vars['net_radiation'] = (['time','point'],NetRad.values,{'units':'W m-2'})
+            new_vars['shortwave_net'] = SWnet.assign_attrs(units='W m-2')
+            new_vars['longwave_net'] = LWnet.assign_attrs(units='W m-2')
+            new_vars['net_radiation'] = NetRad.assign_attrs(units='W m-2')
 
         # add summed mass balance term
         if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
             MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
-            new_vars['mass_balance'] = (['time','point'],MB.values,{'units':'m w.e.'})
+            new_vars['mass_balance'] = MB.assign_attrs(units='m w.e.')
 
         # add snow, firn, and ice depth
         if np.all([f in self.store for f in ['layertype','layerheight']]):
             snowdepth = ds.layerheight.where(ds.layertype == 0).sum(dim='layer')
             firndepth = ds.layerheight.where(ds.layertype == 1).sum(dim='layer')
             icedepth = ds.layerheight.where(ds.layertype == 2).sum(dim='layer')
-            new_vars['snowdepth'] = (['time','point'],snowdepth.values,{'units':'m'})
-            new_vars['firndepth'] = (['time','point'],firndepth.values,{'units':'m'})
-            new_vars['icedepth'] = (['time','point'],icedepth.values,{'units':'m'})
+            new_vars['snowdepth'] = snowdepth.assign_attrs(units='m')
+            new_vars['firndepth'] = firndepth.assign_attrs(units='m')
+            new_vars['icedepth'] = icedepth.assign_attrs(units='m')
 
-        if len(new_vars.data_vars) == 0:
+        if len(new_vars) == 0:
             return
 
+        new_vars = xr.Dataset(new_vars)
         new_vars = new_vars.assign_coords(time=ds.time, point=ds.point)
         new_vars.attrs = ds.attrs
         new_vars.to_zarr(self.out_fn, mode='a')
