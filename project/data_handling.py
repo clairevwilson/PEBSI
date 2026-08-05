@@ -96,6 +96,7 @@ class MassBalance():
         self.period_starts = self.period_starts[valid_periods]
         self.period_ends = self.period_ends[valid_periods]
         meas = self.data[valid_periods]
+        self.data = meas
 
         mod = []
         for start, end in zip(self.period_starts, self.period_ends):
