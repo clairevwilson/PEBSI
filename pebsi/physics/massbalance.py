@@ -1002,7 +1002,8 @@ class MassBalanceDriver:
             raw_tm0 = CP_ICE * ldensity[:, 0] * safe_lheight[:, 0]
             safe_thermal_mass_0 = jnp.where(raw_tm0 > 0, raw_tm0, 1.0)
             dT_0 = (flux_surf - flux_inter[:, 0]) * dt_heat / safe_thermal_mass_0
-            
+            dT_0 = jnp.clip(dT_0, -dT_limit, dT_limit)
+
             # mid-layer Updates Logic
             safe_thermal_mass_mid = CP_ICE * ldensity[:, 1:-1] * safe_lheight[:, 1:-1]
             
