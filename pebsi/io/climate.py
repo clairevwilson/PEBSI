@@ -209,8 +209,14 @@ class Climate():
         for var in self.need_vars:
             # gather data for each var and add to all_data
             region = 'reg' + str(self.params.rgi_region).zfill(2)
+
+            # check if the variable is coming from a secondary folder
+            suffix = self.params.secondary_climate_string
+            if suffix and var in self.params.secondary_vars:
+                region = region + suffix
+
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
-            
+
             self.get_var_data(fn, var)
         return
     

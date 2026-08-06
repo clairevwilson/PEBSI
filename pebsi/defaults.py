@@ -26,7 +26,6 @@ import socket
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
 # ====================================================================================================================
 use_config = True       #$ -c, --use_config         Use configuration file?
-output_fp = None        #$ -out, --output_fp        Output file path (None for a default, descriptive name)
 rgi_ids = None          #$ -ids, --rgi_ids          List of RGI glacier IDs to simulate
 rgi_region = 1          #$ -reg, --rgi_region       RGI region to run (rgi_ids overrides this)
 sites = None            #$ --sites                  Names of sites to use with same length as rgi_ids
@@ -49,8 +48,7 @@ machine = socket.gethostname()
 
 # GENERAL
 config_fn = 'config.yaml'           #$ -cf, --config_fn     # Configuration .yaml file    
-output_fp = '../Output/'                                    # General output filepath
-output_fn = '{g}_{i}.zarr'                                  # Output file name, to be formatted by glacier ID and point index
+output_fp = '../Output/test/'       #$ -out, --output_fp    # Output folder to store output, config copy, etc.
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
@@ -114,6 +112,10 @@ ukesm_vn = (                                # Name of var in UKESM data
         'mass_content_of_{sp}_dry_aerosol_'
         'particles_due_to_{t}_deposition')   
 wind_ref_height = 2                         # Reference height for wind speed [m]
+
+# SECONDARY CLIMATE SOURCE
+secondary_climate_string = None             # Suffix appended to region string to load vars from an alternate folder
+secondary_vars = []                         # Variables to load from the secondary climate folder ^
 
 # BIAS CORRECTION
 bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
