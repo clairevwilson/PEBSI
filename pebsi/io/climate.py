@@ -46,10 +46,9 @@ class Climate():
         self.terrain = terrain
 
         # list all required variables
-        self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
-                            'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
-        self.optional_vars = ['SWout','LWout','tcc','NR','albedo']
-        self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
+        self.all_vars = list(params.climate_all_vars)
+        self.optional_vars = list(params.climate_optional_vars)
+        self.carbon_vars = list(params.carbon_vars)
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()

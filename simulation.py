@@ -16,6 +16,7 @@ import itertools
 import threading
 import time
 import warnings
+import yaml
 # External libraries
 import jax
 import numpy as np
@@ -282,6 +283,8 @@ class PEBSI():
         # process the dataset for bias, elevation, etc.
         climate.process_climate()
         self.climate = climate
+        self.params.climate_measured_vars = climate.measured_vars
+        self.params.climate_all_vars = climate.all_vars
 
         # update self.point_attrs with the real per-cell elevation
         if not getattr(self, '_cell_elevs_set', False):
@@ -536,6 +539,14 @@ class PEBSI():
         static_args = self.config.static_args
         dynamic_args = self.config.dynamic_args
 
+        # initialize climate metadata on params so close_out can read it directly
+        if params.use_aws:
+            aws_cols = set(pd.read_csv(params.aws_fn, nrows=0).columns)
+            all_known = list(params.climate_all_vars) + list(params.climate_optional_vars)
+            params.climate_measured_vars = [v for v in all_known if v in aws_cols]
+        else:
+            params.climate_measured_vars = []
+
         self.start_print()
 
         # ========== CHECKPOINT / SPIN-UP ==========
@@ -556,11 +567,22 @@ class PEBSI():
         # initialize output after the checkpoint check so resume_fp is known
         model_output = Output(params, self.terrain, resume_fp=resume_fp)
 
-        # copy config to the output directory so a resumed run uses the same settings
+        # copy config to the output directory
         if params.store_data and params.use_config and resume_fp is None:
-            shutil.copy2(params.config_fn, model_output.output_fp)
+            # open the config
+            with open(params.config_fn, 'r') as f:
+                yaml_data = yaml.safe_load(f)
 
-        # ========== MAIN SIMULATION ==========
+            # copy in any args specified in command line 
+            for key in params.cmd_args:
+                yaml_data[key] = getattr(params, key)
+
+            # dump new dict into output filepath
+            config_dest = os.path.join(model_output.output_fp, os.path.basename(params.config_fn))
+            with open(config_dest, 'w') as f:
+                yaml.dump(yaml_data, f, default_flow_style=False)
+
+        # =============== CHUNKING SETUP ===============
         total_steps = len(self.dates)
         chunk_size = params.temporal_chunks
         n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
@@ -577,6 +599,7 @@ class PEBSI():
         prev_duration = self.spinup_time * 3
         progress = ChunkProgress(total_steps, params.progress_bar and n_chunks > 1, prev_duration)
 
+        # ================== MAIN SIMULATION ==================
         chunk_i = 0
         self._chunk_label = (0, n_chunks)  # (current, total) for use in sub-methods
         for start in range(start_from, total_steps, chunk_size):
@@ -625,6 +648,7 @@ class PEBSI():
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
             del chunk_records
 
+        # ================== CLOSING OUT ==================
         if n_chunks == 1 and params.progress_bar:
             sim_done.set()
             if sim_thread is not None:
@@ -639,7 +663,7 @@ class PEBSI():
         progress.close()
 
         if self.params.store_data:
-            model_output.close_out(params, time_elapsed, self.climate)
+            model_output.close_out(params, time_elapsed)
         else:
             print('~ Success: data was not saved ~')
 

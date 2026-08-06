@@ -58,9 +58,6 @@ class Output():
         """
         params = self.params
 
-        # specify individual file output name format
-        self.output_fn = params.output_fn
-
         # when resuming, reuse the original output directory without incrementing
         if self.resume_fp is not None:
             self.output_fp = self.resume_fp
@@ -127,7 +124,7 @@ class Output():
         else:
             ds_chunk.to_zarr(self.out_fn, append_dim='time', consolidated=False)
 
-    def close_out(self, params, time_elapsed, climate):
+    def close_out(self, params, time_elapsed):
         """
         Closes out the dataset, storing last helpful things:
           - Units for each variable
@@ -138,7 +135,7 @@ class Output():
         self.add_units()
         self.add_vars()
         self.add_site_info()
-        self.add_basic_attrs(params, time_elapsed, climate)
+        self.add_basic_attrs(params, time_elapsed)
         self.rechunk_final()
         return
 
@@ -284,7 +281,7 @@ class Output():
         ds_site.to_zarr(self.out_fn, mode='a')
         return
 
-    def add_basic_attrs(self, params, time_elapsed, climate):
+    def add_basic_attrs(self, params, time_elapsed):
         """
         Adds informational attributes to the output dataset.
         - length of the simulation (time_elapsed)
@@ -302,37 +299,35 @@ class Output():
         params : command line arguments
         time_elapsed : float
             Run time for the whole simulation
-        climate
-            Class object from pebsi.climate
         """
         # get elapsed time
         time_elapsed = f'{time_elapsed:.1f} s'
 
-        # get inforation about climate data sources
+        # get information about climate data sources
+        # params.climate_measured_vars and params.climate_all_vars are set in
+        # PEBSI.run() before the main loop (and updated each chunk in pack_forcings)
         which_re = params.climate_source
-        re_str = ''
+        measured = params.climate_measured_vars
         if params.use_aws:
-            measured = climate.measured_vars
             which_AWS = params.aws_fn
             AWS_elev = f'{params.aws_elev:.1f} m a.s.l.'
             AWS_str = ', '.join(measured)
-            re_vars = [e for e in climate.all_vars if e not in measured]
-            if 'vwind' in re_vars and not 'uwind' in re_vars:
+            re_vars = [e for e in params.climate_all_vars if e not in measured]
+            if 'vwind' in re_vars and 'uwind' not in re_vars:
                 re_vars.remove('vwind')
-            if 'uwind' in re_vars and not 'vwind' in re_vars:
+            if 'uwind' in re_vars and 'vwind' not in re_vars:
                 re_vars.remove('uwind')
-            re_str += ', '.join(re_vars)
+            if 'NR' in measured and 'LWin' in re_vars:
+                re_vars.remove('LWin')
+            re_str = ', '.join(re_vars)
+            corr_vars = [v for v in params.bias_vars if v not in measured]
         else:
-            re_str += 'all'
+            re_str = 'all'
             AWS_str = 'none'
             AWS_elev = '-'
             which_AWS = 'none'
+            corr_vars = list(params.bias_vars)
 
-        # get information about bias correction
-        if params.use_aws:
-            corr_vars = [v for v in climate.bias_vars if v not in measured]
-        else:
-            corr_vars = climate.bias_vars
         corr_str = ', '.join(corr_vars)
         corr_str = 'none' if corr_str == '' else corr_str
 
@@ -354,7 +349,7 @@ class Output():
 
         # list variables from config that can be skipped
         skip = ['rgi_ids', 'store_data','progress_bar','debug',
-                    'start_date','end_date','output_fn','testing']
+                    'start_date','end_date','testing']
 
         # values that vary per point become per-point data variables
         per_point_vars = {}

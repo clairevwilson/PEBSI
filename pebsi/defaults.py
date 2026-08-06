@@ -137,7 +137,7 @@ initial_snow_depth = 1                  # default amount of initial snow [m]
 initial_firn_depth = 10                 # default amount of initial firn [m] (only for sites identified as accumulation area)
 
 # OUTPUT
-store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate']
+store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS
@@ -173,6 +173,12 @@ initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 
 intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
 extensive_vars = ['lice','lwater','lBC','lOC','ldust','ldrefreeze','lrefreeze']
 all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
+
+# REQUIRED & OPTIONAL CLIMATE VARIABLES
+climate_all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
+                    'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
+climate_optional_vars = ['SWout','LWout','tcc','NR','albedo']
+carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS

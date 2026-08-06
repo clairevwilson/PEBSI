@@ -120,6 +120,15 @@ class Config():
                     
         # 2: fill out variables from yaml file, if specified
         yaml_fn = args.config_fn
+
+        # if resuming without an explicit config path, use the config saved in the checkpoint dir
+        if getattr(cmd_args, 'resume_from', None):
+            resume_config = os.path.join(cmd_args.resume_from, os.path.basename(yaml_fn))
+            if os.path.exists(resume_config):
+                yaml_fn = resume_config
+                args.config_fn = resume_config
+                cmd_args.use_config = True
+
         if cmd_args.use_config:
             # open yaml
             with open(yaml_fn, 'r') as f:
