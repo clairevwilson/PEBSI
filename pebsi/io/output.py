@@ -121,6 +121,9 @@ class Output():
                 else:
                     encoding[var] = {'chunks': (24 * 7, self.N_POINTS, self.N_LAYERS)}
             ds_chunk.to_zarr(self.out_fn, mode='w', consolidated=False, encoding=encoding)
+            
+            # write site info right away
+            self.add_site_info()
         else:
             ds_chunk.to_zarr(self.out_fn, append_dim='time', consolidated=False)
 
@@ -129,12 +132,10 @@ class Output():
         Closes out the dataset, storing last helpful things:
           - Units for each variable
           - Additional variables like net radiation
-          - Site info (rgiid, lat, lon, elev) per point
           - Metadata attributes
         """
         self.add_units()
         self.add_vars()
-        self.add_site_info()
         self.add_basic_attrs(params, time_elapsed)
         self.rechunk_final()
         return
@@ -273,9 +274,8 @@ class Output():
             'rgiid': (['point'], np.array(self.terrain.rgiid_n, dtype=str)),
             'lat': (['point'], np.array(self.terrain.lat_n, dtype=float)),
             'lon': (['point'], np.array(self.terrain.lon_n, dtype=float)),
+            'elev': (['point'], np.array(self.terrain.elev_n, dtype=float))
         }
-        if self.terrain.elev_n is not None:
-            site_vars['elev'] = (['point'], np.array(self.terrain.elev_n, dtype=float))
 
         ds_site = xr.Dataset(site_vars, coords={'point': np.arange(self.N_POINTS)})
         ds_site.to_zarr(self.out_fn, mode='a')
