@@ -26,14 +26,16 @@ from jax.scipy.interpolate import RegularGridInterpolator
 import pebsi.defaults as defaults
 
 # Fields must be broken into static and dynamic for JAX. 
+
 # Statics args are needed to initialize the model and
 # make choices in the compilation (e.g., options / methods)
-
 static_fields = [
     'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 
     'store_vars', 'differentiable',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
+    'carbon_vars','climate_all_vars','climate_optional_vars',
+    'secondary_climate_string', 'secondary_vars',
 
     'method_turbulent', 'method_stability', 'method_diffuse',
     'method_heateq', 'method_densification', 'method_cooling',
