@@ -18,7 +18,7 @@ import jax.numpy as jnp
 
 # define which variables belong to which output groups
 OUTPUT_GROUPS = {
-    'minimal':  ['accumulation', 'refreeze', 'melt'],
+    'minimal':  ['accumulation', 'refreeze', 'melt', 'albedo'],
     'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
                  'sublimation', 'deposition', 'evaporation',
                  'condensation', 'accumulation', 'rainfall', 'error',
@@ -180,8 +180,8 @@ class MBOutputs(NamedTuple):
 
 class StepOutputs(NamedTuple):
     """
-    Example, complete step outputs class including every energy balance and mass flux 
-    for documentation purposes.
+    Placeholder (unused) step outputs class which documents every possible
+    energy balance and mass flux for documentation purposes.
 
     The actual StepOutputs class created uses only a subset of these variables
     depending on which variables were specified in store_vars.
