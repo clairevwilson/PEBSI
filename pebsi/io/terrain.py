@@ -665,9 +665,6 @@ class Terrain:
 
         Only called when params.option_ice_albedo_tif is True.
         """
-        if self.params.debug:
-            print('~ Loading ice albedo from preprocessed tifs . . .')
-
         N_POINTS = self.N_POINTS
         ice_albedo_n = np.zeros(N_POINTS)
 
@@ -686,6 +683,9 @@ class Terrain:
             ice_albedo_n[gid_idx] = np.nan_to_num(selected.values, nan=self.params.albedo_ice)
 
             da.close()
+
+        if self.params.debug:
+            print('~ Loaded ice albedo from preprocessed tifs')
 
         return ice_albedo_n
 
