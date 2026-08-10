@@ -7,6 +7,7 @@ the model outputs.
 """
 import pickle
 import yaml
+import os
 
 params_fn = 'project/calibrated_grid.pkl'
 out_config_fn = 'config_calibrated.yaml'
@@ -50,7 +51,7 @@ configs['temporal_chunks'] = 43800
 configs['debug'] = True
 configs['store_data'] = True
 configs['progress_bar'] = False
-configs['store_vars'] = ['MB','EB','layers']
+configs['store_vars'] = ['MB','EB','layers','climate']
 
 # FILEPATHS
 configs['climate_fp'] = '/ocean/projects/ees260009p/cwilson4/climate_data/'
@@ -71,3 +72,6 @@ if __name__ == '__main__':
 
     model = sim.PEBSI(args)
     model.run()
+
+# remove config file since it was copied to output directory
+os.remove(out_config_fn)

@@ -14,7 +14,7 @@ if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/Output/ddf/'
     home_fp = '/trace/home/cvwilson/research/'
 elif 'bridges' in socket.gethostname():
-    base_fp = '/ocean/projects/ees260009p/cwilson4/Output/ddf/'
+    base_fp = '/ocean/projects/ees260009p/cwilson4/'
     home_fp = '/jet/home/cwilson4/'
 elif 'lantern' in socket.gethostname():
     base_fp = '/Users/cvw/local/Output/'
@@ -51,7 +51,7 @@ class MassBalance():
         """
         # open dataframes
         # wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
-        benchmark_fp = base_fp + '../../MB_data/'
+        benchmark_fp = base_fp + 'MB_data/'
 
         # store input attributes
         self.name = name
@@ -515,7 +515,7 @@ class Albedo():
             self.glac_no = '01.06469'
 
         # open dataframes
-        self.albedo_fp = base_fp + '../data/rs/albedo/' # updated/
+        self.albedo_fp = base_fp + 'data/albedo/' # updated/
 
         # find the site location lat/lon
         glac_no_6 = translate_rgi[name]['6']
@@ -765,7 +765,10 @@ class Albedo():
     def plot_timeseries(self, years=None):
         if years is None:
             years = np.unique(pd.to_datetime(self.time).year)
-        cmap = mpl.cm.get_cmap('viridis')
+        try:
+            cmap = mpl.cm.get_cmap('viridis')
+        except:
+            cmap = mpl.colormaps['viridis']
         norm = mpl.colors.Normalize(vmin=min(years),vmax=max(years))
 
         fig, ax = plt.subplots()
@@ -806,7 +809,10 @@ class Albedo():
     
     def plot_1to1(self):
         years = np.unique(pd.to_datetime(self.time).year)
-        cmap = mpl.cm.get_cmap('viridis')
+        try:
+            cmap = mpl.cm.get_cmap('viridis')
+        except:
+            cmap = mpl.colormaps['viridis']
         norm = mpl.colors.Normalize(vmin=min(years),vmax=max(years))
 
         fig, ax = plt.subplots(figsize=(3.5, 3.5))

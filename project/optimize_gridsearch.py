@@ -7,6 +7,7 @@ import pickle
 import yaml
 import time
 import dask
+import matplotlib.pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 dask.config.set(scheduler='synchronous')
 
@@ -17,7 +18,7 @@ rgi_map = {}
 for glacier, numbers in translate_rgi.items():
     rgi_map[numbers['6']] = glacier
 
-output_fp = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_3/'
+output_fp = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_dense_2/'
 ds_all = xr.open_zarr(output_fp + 'output.zarr')
 
 # --- TEMP: this store isn't chunked by point (chunks span all points), so
@@ -25,8 +26,8 @@ ds_all = xr.open_zarr(output_fp + 'output.zarr')
 # chunk. Load the needed variables into memory once, up front, instead of
 # repeating that full-chunk read per point. Delete this block once reading
 # from output.zarr generated with the new point-chunked rechunk_final().
-print('loading dataset into memory (unchunked-by-point workaround)...', flush=True)
-ds_all = ds_all[['melt', 'accumulation', 'refreeze']].load()
+# print('loading dataset into memory (unchunked-by-point workaround)...', flush=True)
+ds_all = ds_all[['melt', 'accumulation', 'refreeze', 'albedo']].load()
 print('done loading', flush=True)
 # --- END TEMP
 
@@ -59,8 +60,8 @@ def process_site(rgiid, site):
     # here instead of crashing inside mae()
     n_valid = np.sum((mb.period_starts >= model_t0) & (mb.period_ends <= model_t1))
     if n_valid < 2:
-        # print(f'  skipping {rgiid} {site}: only {n_valid} benchmark periods overlap '
-        #       f'model time range [{model_t0}, {model_t1}]', flush=True)
+        print(f'  skipping {rgiid} {site}: only {n_valid} benchmark periods overlap '
+              f'model time range [{model_t0}, {model_t1}]', flush=True)
         return None
 
     idx_site = idx_by_site.get((rgiid, site), [])
@@ -72,7 +73,7 @@ def process_site(rgiid, site):
 
     for n, idx in enumerate(idx_site):
         t1 = time.perf_counter()
-        ds = ds_all.sel(point=idx)[['melt', 'accumulation', 'refreeze']]
+        ds = ds_all.sel(point=idx) # [['melt', 'accumulation', 'refreeze']]
         io_s += time.perf_counter() - t1
 
         t2 = time.perf_counter()
@@ -101,7 +102,12 @@ def process_site(rgiid, site):
     best_winter = winter[best_idx]
     best_kw = kw[best_idx]
 
-    return rgiid, site, best_winter, best_summer, best_kp, best_kw, init_s, io_s, compute_s
+    best_point = idx_site[best_idx]
+    best_ds = ds_all.sel(point=best_point) # [['melt', 'accumulation', 'refreeze']]
+    mb = MassBalance(rgi_map[rgiid], site)
+    mb.get_model_mb(best_ds)
+
+    return rgiid, site, best_point, best_winter, best_summer, best_kp, best_kw, init_s, io_s, compute_s, mb
 
 
 print('  RGIId  | Site | Winter MAE | Summer MAE | kp  | kw')
@@ -110,23 +116,40 @@ tasks = [(rgiid, site) for rgiid, sites in site_dict.items() for site in sites]
 
 t_start = time.perf_counter()
 
+plot_dir = output_fp + 'best_mb_plots/'
+os.makedirs(plot_dir, exist_ok=True)
+
 out_dict = {}
 with ThreadPoolExecutor(max_workers=min(32, len(tasks) or 1)) as executor:
+    all_best_idx = []
     futures = [executor.submit(process_site, rgiid, site) for rgiid, site in tasks]
     for future in as_completed(futures):
         result = future.result()
         if result is None:
             continue
-        rgiid, site, best_winter, best_summer, best_kp, best_kw, init_s, io_s, compute_s = result
+        rgiid, site, best_point, best_winter, best_summer, best_kp, best_kw, init_s, io_s, compute_s, mb = result
         elapsed = time.perf_counter() - t_start
 
         if rgiid not in out_dict:
             out_dict[rgiid] = {}
 
-        if best_winter < 0.9 and best_summer < 0.9:
+        summer_errors = mb.mod[mb.idx_summer] - mb.meas[mb.idx_summer]
+        winter_errors = mb.mod[mb.idx_winter] - mb.meas[mb.idx_winter]
+        if np.all(summer_errors < 0) or np.all(summer_errors > 0) or np.all(winter_errors < 0) or np.all(winter_errors > 0):
+            print(f'Throwing out {rgiid}/{site} because of bias mass balance')
+            pass
+        else:
             out_dict[rgiid][site] = {'winter_MAE': best_winter, 'summer_MAE': best_summer,
-                                 'kp': best_kp, 'kw': best_kw}
-        print(f'{rgiid:<12}{site:<9}{best_winter:<12.2f}{best_summer:<11.2f}{best_kp:<6}{best_kw:<8}')
+                                'kp': best_kp, 'kw': best_kw}
+            
+            fig, ax = mb.plot_mb(savefig=plot_dir + f'{rgiid}_{site}.png')
+            plt.close(fig)
+            print(f'{rgiid:<12}{site:<9}{best_winter:<12.2f}{best_summer:<11.2f}{best_kp:<6}{best_kw:<8}')
+
+            all_best_idx.append(best_point)
+
+ds_best = ds_all.sel(point=all_best_idx)
+ds_best.to_zarr(output_fp + 'best_params.zarr', mode='w')
 
 with open('calibrated_grid.pkl', 'wb') as f:
     pickle.dump(out_dict, f)

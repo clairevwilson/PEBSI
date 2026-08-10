@@ -11,6 +11,7 @@ run together as one set of model points.
 import itertools
 import pickle
 import yaml
+import os
 
 sites_fn = 'project/sites.pkl'
 out_config_fn = 'config_gridsearch.yaml'
@@ -29,17 +30,17 @@ configs['constant_freshgrainsize'] = 54.5
 
 # CONFIGURATION
 configs['start_date'] = '2000-04-01'
-configs['end_date'] = '2000-05-01'
-configs['temporal_chunks'] = int(8760/12) # 43800
+configs['end_date'] = '2025-09-01'
+configs['temporal_chunks'] = 35040 # int(8760 / 2) # 
 configs['debug'] = True
 configs['store_data'] = True
 configs['progress_bar'] = False
-configs['store_vars'] = ['MB','EB','layers']
+configs['store_vars'] = ['minimal']
 
 # FILEPATHS
 configs['climate_fp'] = '/ocean/projects/ees260009p/cwilson4/climate_data/'
 configs['rgi_fp'] = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
-configs['output_fp'] = '/ocean/projects/ees260009p/cwilson4/Output/calibrated_all/'
+configs['output_fp'] = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_dense/'
 configs['cop30_vrt_path'] = '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
 configs['shading_fp'] = '/ocean/projects/ees260009p/cwilson4/data/shading/'
 configs['ice_albedo_fn'] = '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
@@ -85,3 +86,6 @@ if __name__ == '__main__':
 
     model = sim.PEBSI(args)
     model.run()
+
+# remove config file since it was copied to output directory
+os.remove(out_config_fn)
