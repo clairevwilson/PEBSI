@@ -1,9 +1,8 @@
 """
-Plot annual mass balance as a kriged heatmap from PEBSI output zarrs.
+Plot annual mass balance as a kriged heatmap from a PEBSI output.zarr.
 Usage: python plot_mb_map.py <output_directory>
 """
 import sys
-import glob
 import numpy as np
 import xarray as xr
 import geopandas as gpd
@@ -13,41 +12,26 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/recalibrate_4/'
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/recalibrate_1/'
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 plot_var = 'MB'
 cm = 'RdBu'
 
 # ===================== LOAD DATA =====================
-fns = sorted(glob.glob(f'{output_dir}/*.zarr'))
-assert len(fns) > 0, f'No zarr files found in {output_dir}'
+ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
-lats, lons, vals, rgi_ids = [], [], [], set()
+if plot_var == 'MB':
+    mb = (-ds['melt'] + ds['refreeze'] + ds['accumulation']).sum('time')
+    n_years = len(np.unique(ds.time.dt.year.values))
+    vals = mb.values / max(n_years, 1)
+else:
+    vals = ds[plot_var].sum('time').values
 
-i = 0
-for fn in fns:
-    ds = xr.open_zarr(fn, consolidated=False)
-    if plot_var == 'MB':
-        mb = (-ds['melt'] + ds['refreeze'] + ds['accumulation']).sum('time')
-        n_years = len(np.unique(ds.time.dt.year.values))
-        mb_annual = float(mb.values) / max(n_years, 1)
-        vals.append(mb_annual)
-
-    else:
-        vals.append(ds[plot_var].sum('time'))
-
-    lats.append(float(ds.attrs['lat']))
-    lons.append(float(ds.attrs['lon']))
-    
-    rgi_ids.add(ds.attrs['id'])
-    ds.close()
-    i += 1 
-    if i % 100 == 0:
-        print(f'{i} / 1000')
-
-lats = np.array(lats)
-lons = np.array(lons)
-vals = np.array(vals)
+lats = ds['lat'].values
+lons = ds['lon'].values
+rgi_ids = set(ds['rgiid'].values.tolist())
+n_points = ds.sizes['point']
+ds.close()
 
 # ===================== CRS SETUP =====================
 # build a local LAEA centered on the glacier
@@ -100,7 +84,7 @@ ax.scatter(xs, ys, c=vals, cmap=cm, vmin=vmin, vmax=vmax,
 cbar = fig.colorbar(im, ax=ax, label='Annual mass balance [m w.e.]', shrink=0.8)
 ax.set_xlabel('Easting [m]')
 ax.set_ylabel('Northing [m]')
-ax.set_title(f'Mass balance — {len(fns)} points ({", ".join(rgi_ids)})')
+ax.set_title(f'Mass balance — {n_points} points ({", ".join(rgi_ids)})')
 ax.set_aspect('equal')
 
 plt.tight_layout()
