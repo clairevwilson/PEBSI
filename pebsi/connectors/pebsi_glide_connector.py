@@ -144,7 +144,7 @@ class GlideCoupler:
         self.grids = {}   # o2_region -> {'x': ndarray, 'y': ndarray, 'crs': pyproj.CRS}
 
         for region, gids_in_region in self.region_glaciers.items():
-            model, grid_info = self._build_glide_model(region, gids_in_region)
+            model, grid_info = self._build_glide_model(gids_in_region)
             self.models[region] = model
             self.grids[region] = grid_info
 
@@ -156,10 +156,6 @@ class GlideCoupler:
         attribute table PEBSI already loads in Terrain.get_rgi_data()
         (pebsi/io/terrain.py -> self.rgi_df, read from
         00_rgi60_attribs/{region}.csv, which includes an O2Region column).
-
-        terrain.rgiid_n entries are the bare RGI ID (e.g. "01.00570", no
-        "RGI60-" prefix) -- see Terrain.scatter_points / get_median_elevation
-        for the same RGIId <-> rgiid_n format convention.
         """
         df = terrain.rgi_df
         short_id = df["RGIId"].str.split("-").str[-1]
@@ -170,7 +166,7 @@ class GlideCoupler:
             raise KeyError(f"No O2Region found in rgi_df for RGI IDs: {sorted(missing)}")
         return lookup
 
-    def _build_glide_model(self, region, gids_in_region):
+    def _build_glide_model(self, gids_in_region):
         """
         One-time construction of a shared GLIDE grid + IceDynamics model
         covering every glacier in O2 sub-region `region`. Bed and initial
@@ -304,13 +300,11 @@ class GlideCoupler:
             H_old_grid = self._extract_ice_thickness(region)
             H_old_pts = grid_to_points(grid["x"], grid["y"], H_old_grid, x_pts, y_pts)
 
-            # push this period's SMB as an annual RATE (GLIDE scales it by dt
-            # internally) and advance -- period_mb_mwe is a TOTAL over
-            # dt_years, so it must be divided down to a rate first
-            mb_rate_mwe = period_mb_mwe[region_idx] / dt_years  # m w.e. yr^-1
+            # push this period's SMB as an annual rate
+            mb_rate_mwe = period_mb_mwe[region_idx] / dt_years  # m w.e. yr-1
             smb_ice_rate = mwe_to_ice_thickness(
                 mb_rate_mwe, self.params.density_ice, self.params.density_water
-            )  # m ice yr^-1
+            )  # m ice yr-1
             smb_grid = points_to_grid(x_pts, y_pts, smb_ice_rate, grid["x"], grid["y"])
             self._push_forcing(region, smb_grid)
             self._advance(region, t=float(t_years), dt=dt_years)
@@ -324,9 +318,7 @@ class GlideCoupler:
                 grid["x"], grid["y"], new_surface, x_pts, y_pts
             )
 
-            # dynamics-only mass change: total change minus what SMB alone
-            # already explains over the whole period (PEBSI's own layers
-            # already applied the SMB part -- see module docstring)
+            # dynamics-only mass change: total change minus SMB over the period
             dH_total = H_new_pts - H_old_pts
             dH_smb = smb_ice_rate * dt_years
             dH_dynamics = dH_total - dH_smb

@@ -395,10 +395,9 @@ class PEBSI():
         Packs forcings for one temporal chunk, runs main(), and returns
         the updated state and trimmed output records.
 
-        chunk_size is a free variable for the case where temporal_chunks
-        are longer than the spinup period. In this case, the user should specify
-        a different chunk size (e.g., if n_spinup_years is 1, use 8760 steps 
-        for the spinup chunk). 
+        chunk_size is a free variable for the case where temporal_chunk_hours
+        are longer than the spinup period. In this case, the spinup runs one 
+        temporal chunk of one year.
         """
         actual_length = len(chunk_dates)
 
@@ -453,7 +452,7 @@ class PEBSI():
         n_spinup_steps = n_spinup_years * 8760
 
         # avoid a short final chunk, which _run_chunk would pad with zeros
-        chunk_size = params.temporal_chunks
+        chunk_size = params.temporal_chunk_hours
         if n_spinup_steps > 0 and (chunk_size > n_spinup_steps or n_spinup_steps % chunk_size != 0):
             chunk_size = n_spinup_steps
 
@@ -584,7 +583,7 @@ class PEBSI():
 
         # =============== CHUNKING SETUP ===============
         total_steps = len(self.dates)
-        chunk_size = params.temporal_chunks
+        chunk_size = params.temporal_chunk_hours
         n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
 
         # single-chunk runs: spinner only (progress bar is meaningless with no prior timing)

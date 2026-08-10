@@ -206,7 +206,7 @@ def flatten_site_order(site_dict):
 
 
 def build_generated_config(site_dict, host, start_date='2024-04-01', end_date='2025-04-01',
-                           temporal_chunks=8760):
+                           temporal_chunk_years=1):
     """
     Builds a PEBSI config yaml from site_dict (see load_site_dict) so the
     model's `sites`/`rgi_ids` always match the sites used for observations.
@@ -220,7 +220,7 @@ def build_generated_config(site_dict, host, start_date='2024-04-01', end_date='2
         rgi_ids=[rgi6_by_name[glacier] for glacier, site in site_order],
         sites=[site for glacier, site in site_order],
         n_points=len(site_order),
-        temporal_chunks=temporal_chunks,
+        temporal_chunk_years=temporal_chunk_years,
         bias_vars=['temp'],
         start_date=start_date,
         end_date=end_date,
@@ -400,7 +400,7 @@ def make_loss_fn(model, site_order, summer, winter):
     static_args = model.config.static_args
     dynamic_args = model.config.dynamic_args
     params = model.config.params
-    chunk_size = params.temporal_chunks
+    chunk_size = params.temporal_chunk_hours
     # truncate dates to a multiple of chunk_size so chunks are always full
     total_steps = (len(model.dates) // chunk_size) * chunk_size
 
@@ -570,7 +570,7 @@ def generate_snapshots(model, n_snapshots=8):
     params = model.config.params
     static_args = model.config.static_args
     dynamic_args = model.config.dynamic_args
-    chunk_size = params.temporal_chunks
+    chunk_size = params.temporal_chunk_hours
     total_steps = (len(model.dates) // chunk_size) * chunk_size
     n_chunks = total_steps // chunk_size
     save_every = max(1, n_chunks // n_snapshots)
@@ -1081,7 +1081,7 @@ if __name__ == '__main__':
 
     config_fp = build_generated_config(
         site_dict, host, start_date=DEBUG_START_DATE, end_date=DEBUG_END_DATE,
-        temporal_chunks=BISECT_CHUNK_SIZE if (NAN_BISECT or STAGE_BISECT) else 8760,
+        temporal_chunk_years=(BISECT_CHUNK_SIZE / 8760) if (NAN_BISECT or STAGE_BISECT) else 1,
     )
     print(f"Generated config for {len(site_order)} sites -> {config_fp}")
 
@@ -1131,7 +1131,7 @@ if __name__ == '__main__':
         bisect_nan_chunk(
             loss_fn, list(wf_init), list(kp_init),
             model_dates=model.dates,
-            chunk_size=model.config.params.temporal_chunks,
+            chunk_size=model.config.params.temporal_chunk_hours,
         )
         sys.exit(0)
 

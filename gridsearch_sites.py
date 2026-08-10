@@ -31,7 +31,7 @@ configs['constant_freshgrainsize'] = 54.5
 # CONFIGURATION
 configs['start_date'] = '2000-04-01'
 configs['end_date'] = '2025-09-01'
-configs['temporal_chunks'] = 35040 # int(8760 / 2) # 
+configs['temporal_chunk_years'] = 4
 configs['debug'] = True
 configs['store_data'] = True
 configs['progress_bar'] = False
