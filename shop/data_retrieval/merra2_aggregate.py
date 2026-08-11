@@ -19,12 +19,12 @@ from tqdm import tqdm
 roi = 'reg01'
 
 data_fp = '/Volumes/TOSHIBA EXT/MERRA2/'
-fp_zarr_store = f'/Users/cvw/local/climate_data/{roi}/'
+fp_zarr_store = f'/Users/cvw/local/climate_data/MERRA2/{roi}/'
 fp_figs = data_fp + 'Figs/'
 
 # bounding box, copied from 1_download_MERRA2.py, used to trim files to a common grid
-lat_min, lat_max = 50, 72
-lon_min, lon_max = -180, -133.25
+lat_min, lat_max = 50, 72           # ALASKA
+lon_min, lon_max = -180, -126.5
 # ===========================================================================
 
 dataset_variables = {
@@ -62,9 +62,7 @@ def process_files(dataset, data_fp, filetype='.nc4'):
     new_files = [f for f in daily_files if any(file_times[f] not in times_var[var] for var in variables)]
 
     if new_files:
-        # batch by year: one open_mfdataset + one to_zarr write per var per year, instead of
-        # one to_zarr call per file (which gets dramatically slower as the store grows).
-        # this also bounds how much work is lost if the run gets interrupted.
+        # batch by year: one open_mfdataset + one to_zarr write per var per year
         files_by_year = defaultdict(list)
         for f in new_files:
             files_by_year[file_times[f].year].append(f)
@@ -109,8 +107,7 @@ def process_files(dataset, data_fp, filetype='.nc4'):
 
 def finalize_store(var):
     """Rechunk to (TIME_CHUNK, LAT_CHUNK, LON_CHUNK) if needed (no-op for stores already
-    written with that chunking), then consolidate metadata. No sort/dedupe: process_files
-    builds each store in chronological order already, so re-sorting is unnecessary."""
+    written with that chunking), resort and de-dupe, then consolidate metadata."""
     fn_zarr_var = os.path.join(fp_zarr_store, f'{var}_{roi}.zarr')
     target_chunks = (TIME_CHUNK, LAT_CHUNK, LON_CHUNK)
     current_chunks = tuple(zarr.open_group(fn_zarr_var, mode='r')[var].chunks)
@@ -125,6 +122,7 @@ def finalize_store(var):
 
         ds = xr.open_zarr(fn_zarr_old, consolidated=False)
         ds = ds.chunk({'time': TIME_CHUNK, 'lat': LAT_CHUNK, 'lon': LON_CHUNK})
+        ds = ds.sortby('time').drop_duplicates('time')
         for v in ds.variables:
             ds[v].encoding.clear()
         ds.to_zarr(fn_zarr_var, mode='w', consolidated=False, zarr_format=2)

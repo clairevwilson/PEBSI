@@ -7,7 +7,7 @@ Before running:
   https://opendap.earthdata.nasa.gov/collections/C1276812819-GES_DISC/granules/M2C0NXASM.5.12.4%3AMERRA2_101.const_2d_asm_Nx.00000000.nc4.dap.nc4?dap4.ce=/PHIS;/time;/lat;/lon
   and save it as MERRA2_constants.nc in data_fp below.
 - Set up a NASA EarthData login (https://urs.earthdata.nasa.gov/) and generate a
-  bearer token from your profile page, then set it as the EARTHDATA_TOKEN env var:
+  bearer token from your profile page, then set it as the EARTHDATA_TOKEN
 """
 import os
 import re
@@ -28,12 +28,12 @@ fn_gp = data_fp + 'MERRA2_constants.nc'
 
 # bounding box in degrees (negatives for west longitudes / south latitudes)
 lat_min, lat_max = 50, 72           # ALASKA
-lon_min, lon_max = -180, -133.25
+lon_min, lon_max = -180, -126.5
 
 start_time = '1980-01-01'           # defaults to 00:00 hrs
 end_time = '2026-05-01'             # data downloaded up to and not including this date
 
-workers = 4                         # parallel download threads
+workers = 8                         # parallel download threads
 
 all_LAPs = False                    # True: adg download includes all LAP species/bins
                                     # False: only bc/oc wet+dry bin 2 and dust wet+dry bin 3
@@ -49,21 +49,30 @@ if not token:
 datasets = ['slv', 'rad', 'flx', 'adg']
 filename_template = 'MERRA2_VERSION.tavg1_2d_DATASET_Nx.DATE.nc4.nc4'
 
-url_templates = {
-    'slv': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXSLV.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.nc4?PS[0:23][Y1:Y2][X1:X2],QV2M[0:23][Y1:Y2][X1:X2],T2M[0:23][Y1:Y2][X1:X2],U2M[0:23][Y1:Y2][X1:X2],V2M[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
-    'rad': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXRAD.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_rad_Nx.DATE.nc4.nc4?CLDTOT[0:23][Y1:Y2][X1:X2],LWGAB[0:23][Y1:Y2][X1:X2],SWGDN[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
-    'flx': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXFLX.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_flx_Nx.DATE.nc4.nc4?PRECTOTCORR[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
+vars_by_dataset = {'slv': ['T2M','U2M','V2M','PS','QV2M'],
+                   'adg': ['OCDP002', 'OCWT002', 'BCDP002', 'BCWT002', 'DUDP003', 'DUWT003'],
+                   'rad': ['SWGDN','LWGAB','CLDTOT'],
+                   'flx': ['PRECTOTCORR']
 }
 
-adg_vars = ['OCDP002', 'OCWT002', 'BCDP002', 'BCWT002', 'DUDP003', 'DUWT003']
 if all_LAPs:
-    adg_vars += ['BCDP001', 'OCDP001',
+    vars_by_dataset['adg'] += ['BCDP001', 'OCDP001',
                  'DUDP001', 'DUWT001', 'DUDP002', 'DUWT002', 
                  'DUDP004', 'DUWT004', 'DUDP005', 'DUWT005']
-adg_query = ','.join(f'{v}[0:23][Y1:Y2][X1:X2]' for v in adg_vars) + ',time,lat[Y1:Y2],lon[X1:X2]'
-url_templates['adg'] = ('https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXADG.5.12.4/YEAR/MONTH/'
-                         f'MERRA2_VERSION.tavg1_2d_adg_Nx.DATE.nc4.nc4?{adg_query}')
 
+url_templates = {}
+
+for dataset in datasets:
+    str_1 = 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/'
+    str_2 = f'M2T1NX{dataset.upper()}.5.12.4'
+    str_3 = f'/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_{dataset}_Nx.DATE.nc4.nc4?'
+
+    template = str_1 + str_2 + str_3 
+    for var in vars_by_dataset[dataset]:
+        template += f'{var}[0:23][Y1:Y2][X1:X2],'
+    template += 'time,lat[Y1:Y2],lon[X1:X2]'
+
+    url_templates[dataset] = template
 
 def version(year, new_version=False):
     if year < 1992:
