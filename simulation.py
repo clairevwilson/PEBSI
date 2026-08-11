@@ -577,7 +577,7 @@ class PEBSI():
                 yaml_data[key] = getattr(params, key)
 
             # dump new dict into output filepath
-            config_dest = os.path.join(model_output.output_fp, os.path.basename(params.config_fn))
+            config_dest = os.path.join(model_output.output_fp, defaults.config_fn)
             with open(config_dest, 'w') as f:
                 yaml.dump(yaml_data, f, default_flow_style=False)
 
