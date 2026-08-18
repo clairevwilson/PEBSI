@@ -140,6 +140,8 @@ class PEBSI():
             self.config.dynamic_args = self.config.dynamic_args._replace(
                 albedo_ice=jnp.array(albedo_ice_n, dtype=jnp.float64)
             )
+        if params.option_windmaps:
+            terrain.get_wind_fields()
 
         # validate spatial inputs
         terrain.validate_terrain_data()
@@ -245,6 +247,15 @@ class PEBSI():
         # per-cell elevation arrays are zero here; filled in pack_forcings()
 
         N_UNIQUE = self._cl.N_UNIQUE
+        N_POINTS = self.terrain.N_POINTS
+
+        if params.option_windmaps:
+            wind_spdup = jnp.array(self.terrain.spdup_n, dtype=jnp.float64)
+            wind_directions = jnp.array(self.terrain.wind_directions, dtype=jnp.float64)
+        else:
+            wind_spdup = jnp.ones((N_POINTS, 1), dtype=jnp.float64)
+            wind_directions = jnp.zeros((1,), dtype=jnp.float64)
+
         point_attrs = PointAttributes(
             # per-point (N_POINTS,)
             latitude=jnp.array(self.terrain.lat_n, dtype=jnp.float64),
@@ -255,6 +266,8 @@ class PEBSI():
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
             median_elev=jnp.array(self.terrain.median_elev_n, dtype=jnp.float64),
             cell_idx=jnp.array(self._cl.point_to_cell_idx, dtype=jnp.int32),
+            wind_spdup=wind_spdup,
+            wind_directions=wind_directions,
 
             # per-cell (N_UNIQUE,) dummy arrays
             gcm_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),

@@ -96,6 +96,29 @@ def apply_parameters(forcings, params):
         tp=forcings.tp * params.kp
     )
 
+def apply_wind_speedup(forcings, point_attrs):
+    """
+    Scales wind speed by the topographic speed-up factor for the current
+    wind direction, linearly interpolated between the two nearest direction bins.
+    Assumes uniform bin spacing (guaranteed by preprocess_wind_glaciers.py).
+    """
+    dirs = point_attrs.wind_directions   # (N_DIRS,)
+    spdup = point_attrs.wind_spdup       # (N_POINTS, N_DIRS)
+    winddir = forcings.winddir % 360.0   # (N_POINTS,)
+
+    n_dirs = dirs.shape[0]
+    step = dirs[1] - dirs[0]
+
+    frac = winddir / step
+    idx_lo = jnp.floor(frac).astype(jnp.int32) % n_dirs
+    idx_hi = (idx_lo + 1) % n_dirs
+    weight = frac - jnp.floor(frac)
+
+    pts = jnp.arange(spdup.shape[0])
+    spdup_interp = spdup[pts, idx_lo] + weight * (spdup[pts, idx_hi] - spdup[pts, idx_lo])
+
+    return forcings._replace(wind=forcings.wind * spdup_interp)
+
 def domain_expansion(forcings, point_attrs, params):
     """
     Full pipeline: expand cell → point, then apply all elevation
@@ -107,4 +130,6 @@ def domain_expansion(forcings, point_attrs, params):
     forcings = adjust_pressure(forcings, point_attrs, params)
     forcings = adjust_longwave(forcings, point_attrs, params)
     forcings = apply_parameters(forcings, params)
+    if params.option_windmaps:
+        forcings = apply_wind_speedup(forcings, point_attrs)
     return forcings

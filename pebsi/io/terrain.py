@@ -658,6 +658,44 @@ class Terrain:
         self.shading_lookup = shading_lookup
         return
 
+    
+    def get_wind_fields(self):
+        """
+        Samples each point's wind speed-up from a preprocessed,
+        per-glacier zarr containing the wind factors.
+        Stores spdup_n (N_POINTS, N_DIRECTIONS) and wind_directions
+        (N_DIRECTIONS,) to self.
+        """
+        N_POINTS = self.N_POINTS
+        spdup_n = None
+
+        for gid in np.unique(self.rgiid_n):
+            gid_idx = np.where(self.rgiid_n == gid)[0]
+
+            fn = self.params.windmap_fn.format(gid=gid)
+            ds = xr.open_dataset(fn)
+
+            if spdup_n is None:
+                n_dirs = len(ds['direction'])
+                spdup_n = np.full((N_POINTS, n_dirs), np.nan)
+                self.wind_directions = ds['direction'].values
+
+            # y/x coord values are degrees (COP30 is geographic EPSG:4326)
+            target_y = xr.DataArray(self.lat_n[gid_idx], dims='points')
+            target_x = xr.DataArray(self.lon_n[gid_idx], dims='points')
+
+            # selected shape: (direction, points) → transpose to (points, direction)
+            selected = ds.sel(lon=target_x, lat=target_y, method='nearest')
+            spdup_n[gid_idx] = selected['spdup'].values.T
+
+            ds.close()
+
+        self.spdup_n = spdup_n
+
+        if self.params.debug:
+            print('~ Loaded wind fields from preprocessed zarrs')
+        return
+
     def get_ice_albedo(self):
         """
         Samples each point's ice albedo from a per-glacier

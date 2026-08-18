@@ -166,6 +166,10 @@ class PointAttributes(NamedTuple):
     median_elev: jnp.ndarray        # Glacier median elevation for precip gradient [m]
     cell_idx: jnp.ndarray           # Index into (N_UNIQUE,) cell arrays for this point
 
+    # ====================== Wind (N_POINTS, N_DIRECTIONS) ====================
+    wind_spdup: jnp.ndarray          # Wind speed-up factor per direction [-]
+    wind_directions: jnp.ndarray     # Wind direction bins [deg]
+
     # ========================= Per-cell (N_UNIQUE,) ==========================
     gcm_elev: jnp.ndarray           # GCM grid cell elevation [m]
     temp_elev: jnp.ndarray          # Reference elevation for temp lapse rate [m]
