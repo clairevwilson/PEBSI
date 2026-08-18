@@ -17,7 +17,7 @@ elif 'bridges' in socket.gethostname():
     base_fp = '/ocean/projects/ees260009p/cwilson4/'
     home_fp = '/jet/home/cwilson4/'
 elif 'lantern' in socket.gethostname():
-    base_fp = '/Users/cvw/local/Output/'
+    base_fp = '/Users/cvw/local/'
     home_fp = '/Users/cvw/local/'
 elif 'campfire' in socket.gethostname():
     base_fp = '/home/claire/Local/Output/'
@@ -488,7 +488,7 @@ class SnowMelt():
         return error
 
 class Albedo():
-    def __init__(self, name, site, use='s2'):
+    def __init__(self, name, site='', use='s2'):
         """ 
         Grabs the timeseries of data to
         compare a model run.
@@ -515,22 +515,91 @@ class Albedo():
             self.glac_no = '01.06469'
 
         # open dataframes
-        self.albedo_fp = base_fp + 'data/albedo/' # updated/
+        self.albedo_fp = base_fp + 'data/albedo/updated/' # updated/
 
         # find the site location lat/lon
         glac_no_6 = translate_rgi[name]['6']
         self.site_df = pd.read_csv(home_fp + 'PEBSI/data/glacier_metadata.csv', dtype=str)
         self.site_df = self.site_df.loc[self.site_df['rgiid'] == glac_no_6]
         self.site_df = self.site_df.set_index('site')
-        self.lat = self.site_df.loc[site, 'lat']
-        self.lon = self.site_df.loc[site, 'lon']
+        if site in self.site_df.index:
+            self.lat = self.site_df.loc[site, 'lat']
+            self.lon = self.site_df.loc[site, 'lon']
 
-        # grab the data
-        self.get_point_albedo()
+            # grab the data
+            self.get_point_albedo()
+        else:
+            self.get_glacier_albedo()
         
         # ensure everything is in array format
         self.time = np.array(pd.to_datetime(self.time))
         self.data = np.array(self.data)
+        return
+
+    def get_glacier_albedo(self):
+        num = str(self.glac_no[3:])
+
+        if self.use == 'all':
+            use_list = ['s2','l8','l9']
+        else:
+            if type(self.use) != list:
+                use_list = [self.use]
+            else:
+                use_list = self.use
+
+        # get filename for this glac_no
+        albedo_fns = [self.albedo_fp + f'{num}/RGI2000-v7.0-G-01-{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
+
+        # build dataset
+        self.data = []
+        self.time = []
+        self.dtype = []
+        self.ds = None
+        for albedo_fn, dtype in zip(albedo_fns, use_list):
+            # open the dataset and get the proper CRS
+            ds = xr.open_dataset(albedo_fn)
+            crs = ds.spatial_ref.attrs['crs_wkt']
+            self.epsg = crs.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
+
+            # filter to the glacier extent
+            # self.mask = ds['dem_shadow_mask'].astype(bool)
+            # ds = ds.where(self.mask)
+
+            # convert coordinates
+            ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True).to_dataset()
+            ds['dtype'] = ('time', np.array([dtype]*len(ds.time.values)).flatten())    
+            if self.ds is None:
+                self.ds = ds 
+            else:
+                self.ds = xr.concat([self.ds, ds], dim='time')
+
+            self.da = da = ds['albedo']
+            
+            # get the data and timeseries
+            da = da.dropna(dim='time')
+            for time, value in zip(da.time.values, da.values):
+                self.data.append(value)
+                self.time.append(time)
+                self.dtype.append(dtype)
+        self.data = np.array(self.data)
+        self.time = np.array(self.time)
+        self.dtype = np.array(self.dtype)
+
+        self.ds = self.ds.squeeze('band')
+
+        # get rid of duplicates
+        ds_mean = self.ds.groupby("time").mean()
+        s = self.ds["dtype"].to_series()
+        dupes = s.index.duplicated(keep=False)
+        s.loc[dupes] = "mean"
+        dtype_da = xr.DataArray(
+            s.groupby(level="time").first().values.astype(object),
+            dims=["time"],
+            coords={"time": s.groupby(level="time").first().index},
+        )
+        ds_mean["dtype"] = dtype_da
+        self.ds = ds_mean.sortby('time')
+        self.ds.attrs['crs'] = f'EPSG:{self.epsg}'
         return
     
     def get_point_albedo(self):
