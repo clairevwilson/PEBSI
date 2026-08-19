@@ -12,26 +12,30 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/recalibrate_1/'
-rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
-plot_var = 'MB'
-cm = 'RdBu'
+output_dir = '../Output/wind_maps_0/' # /ocean/projects/ees260009p/cwilson4
+rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
+plot_var = 'mass_balance'
+cm = 'RdBu_r'
 
 # ===================== LOAD DATA =====================
-ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
+ds_map = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False).load()
+ds_nomap = xr.open_zarr(f'{output_dir.replace("wind", "no_wind")}/output.zarr', consolidated=False).load()
 
-if plot_var == 'MB':
-    mb = (-ds['melt'] + ds['refreeze'] + ds['accumulation']).sum('time')
-    n_years = len(np.unique(ds.time.dt.year.values))
-    vals = mb.values / max(n_years, 1)
+ds = ds_map 
+
+n_years = len(np.unique(ds.time.dt.year.values))
+if plot_var == 'mass_balance':
+    vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
 else:
-    vals = ds[plot_var].sum('time').values
+    vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values / max(n_years, 1)
 
 lats = ds['lat'].values
 lons = ds['lon'].values
 rgi_ids = set(ds['rgiid'].values.tolist())
 n_points = ds.sizes['point']
-ds.close()
+
+ds_nomap.close()
+ds_map.close()
 
 # ===================== CRS SETUP =====================
 # build a local LAEA centered on the glacier
@@ -66,8 +70,11 @@ glacier_mask = np.flipud(rasterio.features.rasterize(shapes, out_shape=z_grid.sh
 z_masked = np.where(glacier_mask == 1, z_grid, np.nan)
 
 # ===================== PLOT =====================
-vmax = np.nanpercentile(np.abs(vals), 95)
-vmin = np.nanpercentile(np.abs(vals), 1)
+if plot_var == 'wind':
+    vmin, vmax = 0.5, 1.5
+else:
+    vmin = -0.5 # np.nanpercentile(np.abs(vals), 95)
+    vmax = 0.5 #  np.nanpercentile(np.abs(vals), 1)
 
 fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -81,13 +88,19 @@ glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
 ax.scatter(xs, ys, c=vals, cmap=cm, vmin=vmin, vmax=vmax,
            s=15, edgecolors='k', linewidths=0.3, zorder=5)
 
-cbar = fig.colorbar(im, ax=ax, label='Annual mass balance [m w.e.]', shrink=0.8)
+if plot_var == 'mass_balance':
+    cbar = fig.colorbar(im, ax=ax, label='$\Delta$Annual mass balance [m w.e.]', shrink=0.8)
+elif plot_var == 'wind':
+    cbar = fig.colorbar(im, ax=ax, label='Wind speed mapped / unmapped', shrink=0.8)
+else:
+    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+
 ax.set_xlabel('Easting [m]')
 ax.set_ylabel('Northing [m]')
-ax.set_title(f'Mass balance — {n_points} points ({", ".join(rgi_ids)})')
+# ax.set_title(f'Mass balance — {n_points} points ({", ".join(rgi_ids)})')
 ax.set_aspect('equal')
 
 plt.tight_layout()
 plt.savefig(f'{output_dir}/{plot_var}_map.png', dpi=150)
 plt.show()
-print(f'saved to {output_dir}/{plot_var}_map.png')
+print(f'saved to {output_dir}{plot_var}_map.png')
