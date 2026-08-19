@@ -100,10 +100,10 @@ class MassBalance():
 
         mod = []
         for start, end in zip(self.period_starts, self.period_ends):
-            if 'MB' not in ds.variables:
+            if 'mass_balance' not in ds.variables:
                 MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
-                ds['MB'] = (['time'],MB.values,{'units':'m w.e.'})
-            mb_mod = ds.sel(time=slice(start, end)).MB.sum()
+                ds['mass_balance'] = (['time'],MB.values,{'units':'m w.e.'})
+            mb_mod = ds.sel(time=slice(start, end)).mass_balance.sum()
             mod.append(mb_mod)
         mod = np.array(mod)
 

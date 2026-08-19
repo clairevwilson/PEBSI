@@ -1287,6 +1287,159 @@ def visualize_layers(ds,dates,vars,force_layers=False,
         plt.close()
         return axes
 
+def visualize_layers_fast(ds,dates,vars,force_layers=False,
+                     t='',plot_ax=False,
+                     plot_firn=True,plot_ice=False,ylim=False,
+                     colorbar=True, diverging=False):
+    """
+    Faster version of visualize_layers: slices the dataset once with
+    ds.sel(time=dates) instead of once per timestep per variable, and
+    draws each timestep's stacked layers with a single ax.bar call
+    instead of one call per layer.
+
+    force_layers:
+        Three options:
+        - False, takes all snow layers
+        - List of integers to select those layer indices
+        - Depth in m
+    """
+    diff = dates[1] - dates[0]
+
+    fig,axes = plt.subplots(len(vars),figsize=(5,1.7*len(vars)),sharex=True,layout='constrained')
+    if plot_ax:
+        assert len(plot_ax) == len(vars), f"plot_ax should be length {len(vars)}"
+        axes = plot_ax
+    if len(vars) == 1 and '__iter__' not in dir(axes):
+        axes = [axes]
+
+    ds_sub = ds.sel(time=dates)
+    height_all = ds_sub['layerheight'].to_numpy()
+    dens_all = ds_sub['layerdensity'].to_numpy()
+
+    ctypes = {'layerBC':'Greys','layerOC':'Oranges','layerdust':'Reds',
+              'layertemp':'plasma','layerdensity':'Greens','layerwater':'Blues',
+              'layergrainsize':'PuRd','layerrefreeze':'Purples','layerheight':'magma',
+              'layertype':'viridis', 'layerage':'OrRd'}
+    units = {'layerBC':'ppb','layerdust':'ppm','layerOC':'ppb','layertemp':'$^{\circ}$C',
+            'layerdensity':'kg m$^{-3}$','layerwater':'%','layergrainsize':'um',
+            'layerrefreeze':'kg m-2','layerheight':'m', 'layerage':'days', 'layertype':'-'}
+
+    for i,var in enumerate(vars):
+        assert 'layer' in var, 'choose layer variable'
+        if var in ['layerBC']:
+            bounds = [-5,30]
+        elif var in ['layerOC']:
+            bounds = [-5,100]
+        elif var in ['layerdust']:
+            bounds = [0,50]
+        elif var in ['layerdensity']:
+            bounds = [50,800] if plot_firn else [0,500]
+        elif var in ['layerwater']:
+            bounds = [-1,15]
+        elif var in ['layertemp']:
+            bounds = [-10,0]
+        elif var in ['layergrainsize']:
+            bounds = [100,1500]
+        elif var in ['layerrefreeze']:
+            bounds = [-1,20]
+        elif var in ['layerheight']:
+            bounds = [0, 2]
+        elif var in ['layertype']:
+            bounds = [0, 2]
+        elif var in ['layerage']:
+            bounds = [0, 120]
+        dens_lim = 890 if plot_firn else 600
+        dens_lim = 1000 if plot_ice else dens_lim
+
+        ctype = ctypes[var]
+        if diverging:
+            ctype = 'coolwarm'
+            bounds = (-10, 10)
+            if var == 'layergrainsize':
+                bounds = (-100, 100)
+            if var == 'layertemp':
+                bounds = (-1, 1)
+        norm = mpl.colors.Normalize(vmin=bounds[0],vmax=bounds[1])
+        cmap = mpl.colormaps[ctype]
+
+        ax = axes[i]
+        vardata_all = ds_sub[var].to_numpy()
+        max_snowdepth = 0
+        for j,step in enumerate(dates):
+            height = height_all[j]
+            vardata = vardata_all[j]
+            dens = dens_all[j]
+            if type(force_layers) == bool:
+                layers_to_plot = np.where(dens < dens_lim)[0]
+            else:
+                if '__iter__' in dir(force_layers):
+                    layers_to_plot = force_layers
+                else:
+                    layers_to_plot = np.where(np.cumsum(height) < force_layers)[0]
+            if plot_ice:
+                layers_to_plot = np.arange(len(vardata))
+            # flip order so they stack bottom to top
+            height = np.flip(height[layers_to_plot])
+            vardata = np.flip(vardata[layers_to_plot])
+            dens_flip = np.flip(dens[layers_to_plot])
+            if var in ['layerwater']:
+                porosity = 1 - dens_flip / 900
+                vardata = vardata / (porosity * 1000 * height) * 100
+            if var in ['layerrefreeze']:
+                vardata = vardata / (dens_flip * height) * 100
+
+            mask = ~np.isnan(height)
+            height = height[mask]
+            vardata = vardata[mask]
+            dens_flip = dens_flip[mask]
+            if len(height) == 0:
+                continue
+
+            colors = cmap(norm(vardata))
+            if 'density' in var:
+                colors[dens_flip > 899] = mpl.colors.to_rgba('0.1')
+
+            bottom = np.concatenate(([0],np.cumsum(height)[:-1]))
+            ax.bar(step,height, bottom=bottom, width=diff, color=colors,linewidth=0.5,edgecolor='none')
+            max_snowdepth = max(max_snowdepth,np.sum(height))
+
+        if colorbar:
+            sm = mpl.cm.ScalarMappable(cmap=ctype,norm=plt.Normalize(bounds[0],bounds[1]))
+            leg = plt.colorbar(sm,ax=ax,aspect=7)
+            leg.ax.tick_params(labelsize=9)
+            if 'BC' in var:
+                leg.ax.set_ylim(0, 30)
+                leg.ax.set_yticks([0,15,30])
+            label = varprops[var]['label']+' ('+units[var]+')'
+            leg.set_label(label,rotation=270,labelpad=27,fontsize=12)
+        ax.grid(axis='y')
+        ax.tick_params(length=5)
+        if ylim:
+            ax.set_ylim(ylim)
+
+    ylabel = 'Height above ice (m)'
+    if len(axes) > 1:
+        fig.supylabel(ylabel,)
+    else:
+        ax.set_ylabel(ylabel,)
+    fig.suptitle(t,fontsize=14)
+    ax.set_xticks(dates)
+    date_form = mpl.dates.DateFormatter('%b %d')
+    ax.xaxis.set_major_formatter(date_form)
+    ax.set_xticks(pd.date_range(dates[0],dates[len(dates)-1],freq='2MS'))
+    ax.set_xlim([dates[0],dates[len(dates)-1]])
+
+    if dates[-1] - dates[1] < pd.Timedelta(days=5):
+        date_form = mpl.dates.DateFormatter('%m/%d %H:00')
+        ax.xaxis.set_major_formatter(date_form)
+        ax.set_xticks(pd.date_range(dates[0],dates[len(dates)-1],5))
+
+    if not plot_ax:
+        return fig,axes
+    else:
+        plt.close()
+        return axes
+
 def plot_single_layer(ds,layer,vars,time,cumMB=False,t='',vline=None,res='h',resample=False):
     if len(time) == 2:
         start = pd.to_datetime(time[0])
