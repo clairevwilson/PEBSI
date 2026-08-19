@@ -359,20 +359,27 @@ LAYER_PHASE_NAMES = {
 }
 
 
-@functools.partial(jax.jit, static_argnames=['static_args', 'stop_after_phase'])
+@functools.partial(jax.jit, static_argnames=[
+    'static_args', 'stop_after_phase', 'disable_any_merge', 'restrict_to_site'
+])
 def main_layer_phase_probe(
     initial_state,
     all_forcings,
     point_attrs,
     static_args,
     dynamic_args,
-    stop_after_phase):
+    stop_after_phase,
+    disable_any_merge=False,
+    restrict_to_site=None):
     """
     Debug-only variant of `main` that runs stages 1-3 and vertical-process
     sub-calls 1-4 (heating_melting through phase_changes) exactly as the
     other probes do, then truncates *inside* check_layer_sizes after
     stop_after_phase (see LAYER_PHASE_NAMES). stop_after_phase is a static
-    Python int, 1-3.
+    Python int, 1-3. disable_any_merge (static bool) forces off the
+    is_thin_any ice-ice merge path, leaving only snow_merge. restrict_to_site
+    (static int or None) forces merge_mask False everywhere except that one
+    site -- see check_layer_sizes_probe in pebsi/physics/layers.py.
 
     Not used by any production path -- see jax_optimize.py's stage-bisection
     diagnostic (PEBSI_STAGE_BISECT family).
@@ -406,7 +413,9 @@ def main_layer_phase_probe(
             current_state, vert_fluxes['latent_heat']
         )
 
-        current_state = check_layer_sizes_probe(current_state, params, stop_after_phase)
+        current_state = check_layer_sizes_probe(
+            current_state, params, stop_after_phase, disable_any_merge, restrict_to_site
+        )
         return current_state, None
 
     scan_step = jax.checkpoint(step) if static_args.differentiable else step
@@ -428,14 +437,75 @@ MERGE_PHASE_NAMES = {
 }
 
 
-@functools.partial(jax.jit, static_argnames=['static_args', 'stop_after_merge_phase'])
+@functools.partial(jax.jit, static_argnames=['static_args'])
+def main_no_merge_probe(
+    initial_state,
+    all_forcings,
+    point_attrs,
+    static_args,
+    dynamic_args):
+    """
+    Debug-only variant of `main`, identical in every stage EXCEPT
+    check_layer_sizes is replaced with check_layer_sizes_no_merge_probe
+    (dead-layer zeroing + split scan, no merge scan at all). This is the
+    real forward/backward simulation, full fidelity, minus exactly one
+    thing -- the direct test of whether merge_existing_layers is actually
+    what makes the gradient non-finite, as opposed to an artifact of the
+    deep chain of truncating/isolating probes used to localize it (see
+    jax_optimize.py's single-site real test).
+
+    Not used by any production path.
+    """
+    params = SimpleNamespace(**{**dynamic_args._asdict(), **static_args._asdict()})
+    mb = MassBalanceDriver(params)
+    eb = EnergyBalanceDriver(params)
+
+    def step(current_state, current_forcings):
+        current_forcings = domain_expansion(current_forcings, point_attrs, params)
+
+        rainfall, snowfall, current_state = mb.run_new_mass(current_state, current_forcings)
+        current_state = mb.run_daily_routines(current_state, current_forcings)
+        current_state, fluxes = eb.solve_energy_balance(current_state, current_forcings, point_attrs)
+
+        vert_fluxes = {
+            'rainfall': rainfall,
+            'snowfall': snowfall,
+            'latent_heat': fluxes['latent_heat'],
+            'melt_energy': fluxes['melt_energy'],
+            'SWnet_penetrating': fluxes['SWnet_penetrating']
+        }
+
+        current_state, melt_array, mass_to_route = mb.heating_melting(current_state, vert_fluxes)
+        for var, data in mass_to_route.items():
+            vert_fluxes[var] = jnp.sum(data, axis=1)
+        current_state, melt_runoff, vert_fluxes = mb.percolation(current_state, vert_fluxes)
+        current_state = mb.route_particles(current_state, current_forcings, vert_fluxes)
+        current_state = mb.refreezing(current_state)
+        current_state, condensation_runoff, mass_fluxes = mb.phase_changes(
+            current_state, vert_fluxes['latent_heat']
+        )
+
+        current_state = check_layer_sizes_no_merge_probe(current_state, params)
+        current_state = mb.resolve_temperature_profile(current_state)
+
+        current_state, water_squeezed_out = mb.run_state_updates(current_state, current_forcings)
+        current_state = mb.run_annual_routines(current_state, current_forcings)
+        return current_state, None
+
+    scan_step = jax.checkpoint(step) if static_args.differentiable else step
+    final_state, _ = jax.lax.scan(scan_step, initial_state, all_forcings, unroll=1)
+    return final_state
+
+
+@functools.partial(jax.jit, static_argnames=['static_args', 'stop_after_merge_phase', 'restrict_to_site'])
 def main_merge_phase_probe(
     initial_state,
     all_forcings,
     point_attrs,
     static_args,
     dynamic_args,
-    stop_after_merge_phase):
+    stop_after_merge_phase,
+    restrict_to_site=None):
     """
     Debug-only variant of `main` that runs stages 1-3 and vertical-process
     sub-calls 1-4 exactly as main_layer_phase_probe does, then within the
@@ -443,6 +513,9 @@ def main_merge_phase_probe(
     merge_existing_layers after stop_after_merge_phase (see
     MERGE_PHASE_NAMES). No split scan -- this isolates merge_existing_layers'
     own internal structure. stop_after_merge_phase is a static Python int, 1-6.
+    restrict_to_site (static int or None) forces the merge to only occur at
+    that one site (see check_layer_sizes_merge_internal_probe), for testing
+    a single truncated phase on a single clean, isolated merge event.
 
     Not used by any production path -- see jax_optimize.py's stage-bisection
     diagnostic (PEBSI_STAGE_BISECT family).
@@ -477,7 +550,134 @@ def main_merge_phase_probe(
         )
 
         current_state = check_layer_sizes_merge_internal_probe(
-            current_state, params, stop_after_merge_phase
+            current_state, params, stop_after_merge_phase, restrict_to_site
+        )
+        return current_state, None
+
+    scan_step = jax.checkpoint(step) if static_args.differentiable else step
+    final_state, _ = jax.lax.scan(scan_step, initial_state, all_forcings, unroll=1)
+    return final_state
+
+
+@functools.partial(jax.jit, static_argnames=['static_args', 'skip_var', 'restrict_to_site'])
+def main_merge_phase1_skipvar_probe(
+    initial_state,
+    all_forcings,
+    point_attrs,
+    static_args,
+    dynamic_args,
+    skip_var,
+    restrict_to_site=None):
+    """
+    Debug-only variant of `main` that runs ONLY merge_existing_layers'
+    phase 1 (weighted-average/extensive-sum -- no shift, no downstream at
+    all) on a single clean, isolated merge event, skipping the write-back
+    of exactly one variable (see merge_existing_layers_phase1_skipvar_probe).
+    Isolates which of the 12 phase-1 variables is responsible, since phase
+    1 as a whole was confirmed non-finite on a real, ordinary-looking merge.
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic (PEBSI_STAGE_BISECT family).
+    """
+    params = SimpleNamespace(**{**dynamic_args._asdict(), **static_args._asdict()})
+    mb = MassBalanceDriver(params)
+    eb = EnergyBalanceDriver(params)
+
+    def step(current_state, current_forcings):
+        current_forcings = domain_expansion(current_forcings, point_attrs, params)
+
+        rainfall, snowfall, current_state = mb.run_new_mass(current_state, current_forcings)
+        current_state = mb.run_daily_routines(current_state, current_forcings)
+        current_state, fluxes = eb.solve_energy_balance(current_state, current_forcings, point_attrs)
+
+        vert_fluxes = {
+            'rainfall': rainfall,
+            'snowfall': snowfall,
+            'latent_heat': fluxes['latent_heat'],
+            'melt_energy': fluxes['melt_energy'],
+            'SWnet_penetrating': fluxes['SWnet_penetrating']
+        }
+
+        current_state, melt_array, mass_to_route = mb.heating_melting(current_state, vert_fluxes)
+        for var, data in mass_to_route.items():
+            vert_fluxes[var] = jnp.sum(data, axis=1)
+        current_state, melt_runoff, vert_fluxes = mb.percolation(current_state, vert_fluxes)
+        current_state = mb.route_particles(current_state, current_forcings, vert_fluxes)
+        current_state = mb.refreezing(current_state)
+        current_state, condensation_runoff, mass_fluxes = mb.phase_changes(
+            current_state, vert_fluxes['latent_heat']
+        )
+
+        current_state = check_layer_sizes_merge_phase1_skipvar_probe(
+            current_state, params, skip_var, restrict_to_site
+        )
+        return current_state, None
+
+    scan_step = jax.checkpoint(step) if static_args.differentiable else step
+    final_state, _ = jax.lax.scan(scan_step, initial_state, all_forcings, unroll=1)
+    return final_state
+
+
+MERGE_SKIPBLOCK_NAMES = [
+    'shift', 'shift_zero_only', 'lheight_recompute_1', 'add_bottom_layer',
+    'lheight_recompute_2', 'update_layer_props',
+]
+
+
+@functools.partial(jax.jit, static_argnames=['static_args', 'skip_block', 'restrict_to_site'])
+def main_merge_skipblock_probe(
+    initial_state,
+    all_forcings,
+    point_attrs,
+    static_args,
+    dynamic_args,
+    skip_block,
+    restrict_to_site=None):
+    """
+    Debug-only variant of `main` that runs the merge scan with every field
+    fully faithful to production EXCEPT skip_block is a no-op (see
+    merge_existing_layers_skipblock_probe) -- unlike main_merge_phase_probe
+    (which truncates and compounds torn-state inconsistency across the
+    scan), this isolates one block cleanly every merge, every iteration.
+    skip_block is a static Python string (one of MERGE_SKIPBLOCK_NAMES) or
+    None (baseline, shift everything -- should match production exactly).
+    restrict_to_site (static int or None) forces the merge to only occur
+    at that one site, for testing a single isolated merge event.
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic (PEBSI_STAGE_BISECT family).
+    """
+    params = SimpleNamespace(**{**dynamic_args._asdict(), **static_args._asdict()})
+    mb = MassBalanceDriver(params)
+    eb = EnergyBalanceDriver(params)
+
+    def step(current_state, current_forcings):
+        current_forcings = domain_expansion(current_forcings, point_attrs, params)
+
+        rainfall, snowfall, current_state = mb.run_new_mass(current_state, current_forcings)
+        current_state = mb.run_daily_routines(current_state, current_forcings)
+        current_state, fluxes = eb.solve_energy_balance(current_state, current_forcings, point_attrs)
+
+        vert_fluxes = {
+            'rainfall': rainfall,
+            'snowfall': snowfall,
+            'latent_heat': fluxes['latent_heat'],
+            'melt_energy': fluxes['melt_energy'],
+            'SWnet_penetrating': fluxes['SWnet_penetrating']
+        }
+
+        current_state, melt_array, mass_to_route = mb.heating_melting(current_state, vert_fluxes)
+        for var, data in mass_to_route.items():
+            vert_fluxes[var] = jnp.sum(data, axis=1)
+        current_state, melt_runoff, vert_fluxes = mb.percolation(current_state, vert_fluxes)
+        current_state = mb.route_particles(current_state, current_forcings, vert_fluxes)
+        current_state = mb.refreezing(current_state)
+        current_state, condensation_runoff, mass_fluxes = mb.phase_changes(
+            current_state, vert_fluxes['latent_heat']
+        )
+
+        current_state = check_layer_sizes_merge_skipblock_probe(
+            current_state, params, skip_block, restrict_to_site
         )
         return current_state, None
 

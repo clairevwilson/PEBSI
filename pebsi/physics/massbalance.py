@@ -305,8 +305,8 @@ class MassBalanceDriver:
         small_top_layer = (state.lheight[:, 0] < 1e-3) & (state.ltype[:, 0] == 0)
 
         # define masks for possible cases
-        create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= 1e-3)
-        delay_mask = new_layer_cond & (~small_top_layer) & (new_height < 1e-3)
+        create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= params.min_dz)
+        delay_mask = new_layer_cond & (~small_top_layer) & (new_height < params.min_dz)
         merge_new_mask = (~new_layer_cond) | small_top_layer
 
         action_taken_mask = create_new_mask | merge_new_mask
@@ -1334,13 +1334,25 @@ class MassBalanceDriver:
             
             # determine actual dry grain growth rate from parameters
             safe_kap = jnp.maximum(kap, 1e-6)
-            drdrydt = dr0 * jnp.power(safe_base, 1.0 / safe_kap) / dt
+            # DIAGNOSTIC (see decompose_gradient_by_field.py): threshold-based
+            # stop_gradient on just the base argument of jnp.power (two prior
+            # attempts, at 1e-6 and 1e-2) did not fix -- and made it WORSE --
+            # the huge lgrainsize gradient. Full ablation to isolate whether
+            # dry metamorphism as a whole (base AND exponent paths, plus its
+            # recursive feedback through grainsize->denominator->base each
+            # hour) is really the source, before guessing at a real fix.
+            drdrydt = jax.lax.stop_gradient(dr0 * jnp.power(safe_base, 1.0 / safe_kap) / dt)
             drdry = drdrydt * dt
 
         # WET METAMORPHISM
         grainsize_m = grainsize / 1e6
         safe_grainsize_m_sq = jnp.where(grainsize_m > 0, grainsize_m ** 2, 1.0)
-        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * safe_grainsize_m_sq)
+        # DIAGNOSTIC (see decompose_gradient_by_field.py): same shape of bug
+        # as drdry -- 1/grainsize_m**2 is forward-safe (only floored at
+        # exactly <=0) but its gradient ~ -2/grainsize_m**3 is unbounded as
+        # grainsize_m->0. Full ablation to test whether this (via density/
+        # albedo) is what's driving the huge lice gradient at 27360-27405h.
+        drwetdt = jax.lax.stop_gradient(WET_C * (f_liq ** 3) / (4.0 * PI * safe_grainsize_m_sq))
         drwet = drwetdt * dt * 1e6
         
         # accelerate grain growth?

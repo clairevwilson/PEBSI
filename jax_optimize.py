@@ -21,7 +21,7 @@ Steps:
   2. Initialize PEBSI (sets up state, forcings, etc.) — this is the numpy side.
   3. Define a loss function that swaps wind_factor and kp into dynamic_args,
      calls pebsi.main.main(), sums MB over observation periods for each
-     season, and returns the combined RMSE loss.
+     season, and returns the combined MAE loss.
   4. jax.grad + optax to optimize wind_factor and kp per site simultaneously.
 """
 import os 
@@ -35,6 +35,41 @@ REDUCED_SITES_CONFIG = os.path.join(os.path.dirname(__file__), 'configs_opt_brid
 # so stretch to a 15-year window to see if it's a long-horizon accumulation issue.
 DEBUG_START_DATE = '2023-04-01'
 DEBUG_END_DATE = '2025-04-01'
+
+# Step back from the whole bisection chain below (PEBSI_NORMAL_RUN_2015_2020=1):
+# the single-site real-simulation sweep (see run_real_single_site_test) came
+# back finite for every site the chain implicated, with or without merging --
+# so instead of continuing to localize a NaN that a real run doesn't
+# reproduce in isolation, just run the actual (non-debug) optimization loop
+# on a hand-picked set of 16 sites whose benchmark observations all span
+# 2015-04-01 to 2020-04-01, giving several real summer+winter MB points per
+# site to check calibration against. See configs_opt_2015_2020.yaml.
+NORMAL_RUN_2015_2020 = os.environ.get('PEBSI_NORMAL_RUN_2015_2020', '0') == '1'
+
+# The 2015-2020/16-site normal run (above) hit a real, severe (though
+# clipped-and-survived) gradient blowup at step 4 -- kahiltna/K53's raw
+# grad norm went from O(1) to 3.1e10 in one step. Getting the full 16-site
+# run to actually converge (needed to know if the remaining gap vs. the
+# grid search is "not enough steps" or a real disagreement) means ~100
+# steps, which at ~700s/step is a ~20h commitment -- too much to spend
+# before we're confident it'll actually work. This instead reproduces
+# K53's trajectory ALONE (PEBSI_INVESTIGATE_SITE_BLOWUP=1): since nothing
+# in the physics couples across sites (every layer op is elementwise over
+# the point axis), running just this one site under the identical
+# hyperparameters/window should hit the same blowup, with every step's
+# gradient fully visible instead of only top-3, and at 1/16th the site
+# count (though NOT 1/16th the time -- the per-step cost is dominated by
+# the ~43800-step temporal scan, not the site count, so this still costs
+# roughly the same per step, just for far fewer steps). See
+# investigate_site_blowup. Implies PEBSI_NORMAL_RUN_2015_2020's site
+# set/window, since that's the run this is reproducing.
+INVESTIGATE_SITE_BLOWUP = os.environ.get('PEBSI_INVESTIGATE_SITE_BLOWUP', '0') == '1'
+INVESTIGATE_SITE_INDEX = int(os.environ.get('PEBSI_INVESTIGATE_SITE_INDEX', '5'))  # 5 = kahiltna/K53
+
+if NORMAL_RUN_2015_2020 or INVESTIGATE_SITE_BLOWUP:
+    REDUCED_SITES_CONFIG = os.path.join(os.path.dirname(__file__), 'configs_opt_2015_2020.yaml')
+    DEBUG_START_DATE = '2015-04-01'
+    DEBUG_END_DATE = '2020-04-01'
 
 # NaN-localization mode (PEBSI_NAN_BISECT=1): instead of optimizing,
 # binary-search for the smallest number of chunks whose gradient goes
@@ -96,6 +131,51 @@ MERGE_SKIPVAR_TEST = os.environ.get('PEBSI_MERGE_SKIPVAR_TEST', '0') == '1'
 # trigger the non-finite gradient, with full downstream fidelity.
 MERGE_NVARS_BISECT = os.environ.get('PEBSI_MERGE_NVARS_BISECT', '0') == '1'
 
+# PEBSI_LAYER_PHASE_BISECT (via check_layer_sizes_probe, the trustworthy,
+# never-truncating tool) confirmed merge_scan is STILL non-finite even with
+# both shift-mechanism fixes applied to the real merge_existing_layers.
+# All the finer sub-bisection below that level (PEBSI_MERGE_PHASE_BISECT,
+# PEBSI_MERGE_VAR_BISECT, etc.) used a probe that truncates-and-repeats,
+# which was shown to give unreliable signals. This retests properly: skip
+# exactly one of merge_existing_layers' 5 post-averaging blocks, always
+# running everything else to full completion.
+MERGE_SKIPBLOCK_TEST = os.environ.get('PEBSI_MERGE_SKIPBLOCK_TEST', '0') == '1'
+
+# find_nan_merge_skipblock (with shift_zero_only added) confirmed the trigger
+# is "does this merge zero a layer's mass out at all", not reindexing or any
+# single downstream recompute. All earlier "other physics is clean" tests
+# ran against the pristine initial state, before any merge ever created a
+# zero-mass layer -- so they never exercised a LATER hour reading one. This
+# bisects the minimum number of hours (from the real initial_state) needed
+# for the merge-scan-only gradient to go non-finite.
+MERGE_HOURS_BISECT = os.environ.get('PEBSI_MERGE_HOURS_BISECT', '0') == '1'
+
+# PEBSI_MERGE_HOURS_BISECT confirmed it needs 618h (not hour 1) -- so
+# something accumulates in the state before the merge-scan-only gradient
+# breaks. Rather than more differential probing, this dumps the real state
+# right before the failing hour (617h) and scans it directly for the
+# degenerate layer we've been inferring (near-zero mass, mass/height
+# inconsistency, density at an epsilon floor), then tests whether hour 618
+# alone (from that real, detached state) reproduces the non-finite gradient
+# -- the smallest possible repro case.
+STATE_DUMP_HOUR = int(os.environ.get('PEBSI_STATE_DUMP_HOUR', '0'))
+
+# Step back from the bisection chain above (PEBSI_REAL_SINGLESITE_TEST=1):
+# every level from STAGE_BISECT down through STATE_DUMP_HOUR narrows the
+# non-finite gradient using probes that truncate a stage/phase/hour count
+# and stop early -- useful for localization, but none of them is a real,
+# complete forward/backward simulation, and the chain never landed on one
+# conclusive culprit (phase-1 alone is non-finite; no single one of its 12
+# variables fixes it). This instead builds a genuine ONE-site model (site
+# index 1 -- '01.09162'/B, the same site the STATE_DUMP_HOUR repro isolated
+# a merge event at), runs the real, untouched pebsi_main() forward+backward
+# over the confirmed-bad window, and compares it against main_no_merge_probe
+# -- identical in every other respect, merge scan simply absent -- to check
+# directly whether merge_existing_layers is actually responsible, rather
+# than continuing to infer it through more nested probes.
+REAL_SINGLESITE_TEST = os.environ.get('PEBSI_REAL_SINGLESITE_TEST', '0') == '1'
+REAL_SINGLESITE_INDEX = int(os.environ.get('PEBSI_REAL_SINGLESITE_INDEX', '1'))
+
 
 import socket
 if 'trace' in socket.gethostname():
@@ -136,7 +216,11 @@ from pebsi.main import (
     main_merge_var_probe, MERGE_VAR_NAMES,
     main_merge_skipvar_probe,
     main_merge_nvars_probe,
+    main_merge_skipblock_probe, MERGE_SKIPBLOCK_NAMES,
+    main_merge_phase1_skipvar_probe,
+    main_no_merge_probe,
 )
+from pebsi.physics.layers import PHASE1_VAR_NAMES
 
 # per-host filepaths, carried over from configs_opt_{host}.yaml
 HOST_PATHS = {
@@ -387,7 +471,7 @@ def make_loss_fn(model, site_order, summer, winter):
     """
     Returns a loss function that takes (log_wind_factor, log_kp) — each
     (N_POINTS,), in model site order — and returns
-    (total_loss, (summer_rmse, winter_rmse)).
+    (total_loss, (summer_mae, winter_mae)).
 
     summer / winter : (site_labels, period_idx, meas, mask) tuples, where
         period_idx : (S, N_max, 2) int32 — timestep [start, end) per period
@@ -456,13 +540,13 @@ def make_loss_fn(model, site_order, summer, winter):
         period_sums, _ = jax.lax.scan(accumulate_site, period_sums, jnp.arange(period_sums.shape[0]))
         return period_sums
 
-    def _rmse(period_sums, meas_jax, mask_jax):
+    def _mae(period_sums, meas_jax, mask_jax):
         safe_meas = jnp.where(mask_jax, meas_jax, 0.0)
         residuals = period_sums - safe_meas
-        sq = jnp.where(mask_jax, jnp.square(residuals), 0.0)
+        abs_res = jnp.where(mask_jax, jnp.abs(residuals), 0.0)
         counts = jnp.sum(mask_jax, axis=1).clip(min=1)
-        per_site_rmse = jnp.sqrt(jnp.sum(sq, axis=1) / counts + 1e-8)
-        return jnp.mean(per_site_rmse)
+        per_site_mae = jnp.sum(abs_res, axis=1) / counts
+        return jnp.mean(per_site_mae)
 
     def _make_loss(n_chunks_used):
         # truncate to the first n_chunks_used chunks (static slice -> one
@@ -497,10 +581,10 @@ def make_loss_fn(model, site_order, summer, winter):
                 scan_chunk, init_carry, (used_forcings, used_offsets)
             )
 
-            summer_rmse = _rmse(summer_sums, summer_meas, summer_mask)
-            winter_rmse = _rmse(winter_sums, winter_meas, winter_mask)
-            total_loss = summer_rmse + winter_rmse
-            return total_loss, (summer_rmse, winter_rmse)
+            summer_mae = _mae(summer_sums, summer_meas, summer_mask)
+            winter_mae = _mae(winter_sums, winter_meas, winter_mask)
+            total_loss = summer_mae + winter_mae
+            return total_loss, (summer_mae, winter_mae)
 
         return loss_fn
 
@@ -819,6 +903,103 @@ def bisect_nan_merge_phase(model, snapshot_state, probe_start_idx, wf_init, kp_i
     return hi
 
 
+def test_single_merge_phase_only(model, frozen_state, hour_idx, restrict_to_site, wf_init, kp_init, phase):
+    """
+    Runs ONLY the given merge_existing_layers phase (main_merge_phase_probe,
+    stop_after_merge_phase) on a single clean, isolated merge event (one
+    hour, one site, one merge, real detached state, capped at one merge --
+    see check_layer_sizes_merge_internal_probe). find_nan_merge_skipblock
+    showed skipping any ONE of the 5 non-averaging blocks individually
+    doesn't fix this exact case, so this tests the one piece that's never
+    skippable there: phase 1 (weighted-average/extensive-sum) alone,
+    nothing downstream at all.
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    probe_forcings = model.pack_forcings(params, model.dates[hour_idx:hour_idx + 1], hour_idx)
+    frozen = jax.lax.stop_gradient(frozen_state)
+
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    def probe_loss(log_wf, log_kp):
+        wf = jnp.exp(log_wf)
+        kp = jnp.exp(log_kp)
+        dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+        final_state = main_merge_phase_probe(
+            frozen, probe_forcings, model.point_attrs, static_args, dargs, phase, restrict_to_site
+        )
+        return _state_reduction(final_state)
+
+    t0 = time.time()
+    try:
+        grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+        ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+    except FloatingPointError:
+        ok = False
+    print(f"  site {restrict_to_site}, hour {hour_idx}, ONLY phase {phase} ({MERGE_PHASE_NAMES[phase]}): "
+          f"{'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+    jax.clear_caches()
+    return ok
+
+
+def find_nan_phase1_skipvar(model, frozen_state, hour_idx, restrict_to_site, wf_init, kp_init):
+    """
+    Phase 1 (weighted-average/extensive-sum) alone was confirmed non-finite
+    on a single, clean, isolated real merge (test_single_merge_phase_only).
+    This tests each of its 12 variables (PHASE1_VAR_NAMES) individually: is
+    the gradient finite when *only that one* variable's write-back is
+    skipped, with every other phase-1 variable processed normally (via
+    main_merge_phase1_skipvar_probe)? Plus a None baseline that should
+    reproduce the confirmed non-finite result.
+
+    Not a bisection -- tests all 12. Returns the list of variable names
+    whose omission made the gradient finite, or [] if none did.
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    probe_forcings = model.pack_forcings(params, model.dates[hour_idx:hour_idx + 1], hour_idx)
+    frozen = jax.lax.stop_gradient(frozen_state)
+
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    def skip_finite(skip_var):
+        def probe_loss(log_wf, log_kp):
+            wf = jnp.exp(log_wf)
+            kp = jnp.exp(log_kp)
+            dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+            final_state = main_merge_phase1_skipvar_probe(
+                frozen, probe_forcings, model.point_attrs, static_args, dargs, skip_var, restrict_to_site
+            )
+            return _state_reduction(final_state)
+
+        t0 = time.time()
+        try:
+            grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+            ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+        except FloatingPointError:
+            ok = False
+        label = f"skip '{skip_var}'" if skip_var is not None else "skip none (baseline)"
+        print(f"        {label}: {'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+        jax.clear_caches()
+        return ok
+
+    print("      baseline (should match confirmed non-finite phase-1-only result):", flush=True)
+    skip_finite(None)
+
+    print("      testing each phase-1 variable individually:", flush=True)
+    culprits = []
+    for var in PHASE1_VAR_NAMES:
+        if skip_finite(var):
+            culprits.append(var)
+    return culprits
+
+
 def bisect_nan_merge_var(model, snapshot_state, probe_start_idx, wf_init, kp_init, probe_hours=72):
     """
     One level deeper still: merge phase 2 (shift float-typed vars) bundles
@@ -952,6 +1133,320 @@ def find_nan_merge_skipvar(model, snapshot_state, probe_start_idx, wf_init, kp_i
     return culprits
 
 
+def find_nan_merge_skipblock(model, snapshot_state, probe_start_idx, wf_init, kp_init, probe_hours=72,
+                              restrict_to_site=None):
+    """
+    Tests each of merge_existing_layers' 5 post-averaging blocks (shift,
+    lheight_recompute_1, add_bottom_layer, lheight_recompute_2,
+    update_layer_props) individually: is the gradient finite when *only
+    that one* block is skipped (a no-op), with every other block run to
+    full completion exactly as production (merge_existing_layers_skipblock_probe)?
+
+    This is the corrected version of the phase-level bisection --
+    main_merge_phase_probe (PEBSI_MERGE_PHASE_BISECT) truncates and returns
+    early, so calling it repeatedly across the layer scan compounds an
+    artificial torn state every iteration (add_bottom_layer/
+    update_layer_props never run). That was verified to give an unreliable
+    signal: two fixes to the shift step that should have flipped phase 2 to
+    finite did not, when properly re-verified against the real (complete)
+    merge_existing_layers via check_layer_sizes_probe. This probe never
+    truncates -- every merge always completes fully except the one skipped
+    block, exactly like production.
+
+    Not a bisection (skip-conditions aren't monotonic) -- tests all 5, plus
+    a None baseline that should reproduce the confirmed-non-finite result.
+    Returns the list of block names whose omission made the gradient
+    finite, or [] if none did.
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    probe_hours = min(probe_hours, len(model.dates) - probe_start_idx)
+    probe_forcings = model.pack_forcings(
+        params, model.dates[probe_start_idx:probe_start_idx + probe_hours], probe_start_idx
+    )
+    frozen_state = jax.lax.stop_gradient(snapshot_state)
+
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    def skip_finite(skip_block):
+        def probe_loss(log_wf, log_kp):
+            wf = jnp.exp(log_wf)
+            kp = jnp.exp(log_kp)
+            dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+            final_state = main_merge_skipblock_probe(
+                frozen_state, probe_forcings, model.point_attrs, static_args, dargs,
+                skip_block, restrict_to_site,
+            )
+            return _state_reduction(final_state)
+
+        t0 = time.time()
+        try:
+            grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+            ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+        except FloatingPointError:
+            ok = False
+        label = f"skip '{skip_block}'" if skip_block is not None else "skip none (baseline)"
+        print(f"        {label}: {'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+        jax.clear_caches()  # each skip_block is a distinct compile
+        return ok
+
+    print("      baseline (should match confirmed non-finite result):", flush=True)
+    baseline_ok = skip_finite(None)
+    if baseline_ok:
+        print("      unexpected: baseline is finite here but not via check_layer_sizes_probe -- "
+              "the two probe implementations may have diverged.", flush=True)
+
+    print("      testing each block individually:", flush=True)
+    culprits = []
+    for block in MERGE_SKIPBLOCK_NAMES:
+        if skip_finite(block):
+            culprits.append(block)
+    return culprits
+
+
+def bisect_nan_merge_hours(model, wf_init, kp_init, max_hours):
+    """
+    Finds the minimum number of hours, starting from the model's actual
+    initial_state, needed for the merge-scan-only gradient
+    (main_layer_phase_probe, stop_after_phase=2 -- dead-zeroing + full
+    check_layer_sizes merge scan, no split) to go non-finite, via binary
+    search.
+
+    find_nan_merge_skipblock showed the trigger is specifically "does this
+    merge zero a layer's mass out at all" (not reindexing, not any single
+    downstream recompute). Every earlier stage/sub-stage test that found
+    OTHER physics functions "clean" ran them against the pristine initial
+    state, before any merge had ever zeroed a layer -- so they never
+    actually exercised "does something read a zero-mass, ice-typed layer
+    left over from an earlier merge". If the bug needs many hours before
+    the first such layer gets created (and then read again later), short
+    probes here should stay finite; if it can happen within the first
+    hour(s), it isn't about accumulated cross-timestep state at all.
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    def hours_finite(n_hours):
+        probe_forcings = model.pack_forcings(params, model.dates[:n_hours], 0)
+
+        def probe_loss(log_wf, log_kp):
+            wf = jnp.exp(log_wf)
+            kp = jnp.exp(log_kp)
+            dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+            final_state = main_layer_phase_probe(
+                model.initial_state, probe_forcings, model.point_attrs, static_args, dargs, 2
+            )
+            return _state_reduction(final_state)
+
+        t0 = time.time()
+        try:
+            grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+            ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+        except FloatingPointError:
+            ok = False
+        print(f"    first {n_hours}h: {'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+        jax.clear_caches()
+        return ok
+
+    if hours_finite(max_hours):
+        return None
+
+    lo, hi = 0, max_hours  # first lo hours finite; first hi hours non-finite
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if hours_finite(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def dump_state_before_failure(model, wf_init, kp_init, hour):
+    """
+    Forward-only (no grad -> cheap) run from model.initial_state through
+    `hour` hours, then scans the resulting state directly for degenerate
+    layers: near-zero-but-not-exactly-zero mass (the classic ">0 doesn't
+    catch this" guard-miss pattern), mass/height inconsistency (one zero,
+    the other not), or density sitting exactly at one of the 1e-3 epsilon
+    floors we added. bisect_nan_merge_hours found the merge-scan-only
+    gradient first breaks at hour 618 -- calling this with hour=617 gets
+    the state right before that, to see directly (not just infer) what
+    artifact an earlier merge left behind for hour 618 to trip on.
+
+    Returns the state (for feeding into a single-hour repro test).
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    forcings = model.pack_forcings(params, model.dates[:hour], 0)
+    final_state, _ = pebsi_main(model.initial_state, forcings, model.point_attrs, static_args, dynamic_args)
+
+    print(f"  Scanning state after {hour}h for degenerate layers:", flush=True)
+    lice = np.asarray(final_state.lice)
+    ldensity = np.asarray(final_state.ldensity)
+    lheight = np.asarray(final_state.lheight)
+    ltype = np.asarray(final_state.ltype)
+
+    found_any = False
+    for site in range(lice.shape[0]):
+        for layer in range(lice.shape[1]):
+            m, d, h, t = lice[site, layer], ldensity[site, layer], lheight[site, layer], ltype[site, layer]
+            flags = []
+            if 0 < m < 1e-2:
+                flags.append('near-zero-but-positive mass')
+            if (m == 0) != (h == 0):
+                flags.append('mass/height inconsistency')
+            if abs(d - 1e-3) < 1e-6:
+                flags.append('density at epsilon floor')
+            if flags:
+                found_any = True
+                print(f"    site {site} layer {layer}: lice={m:.4e} ldensity={d:.4e} "
+                      f"lheight={h:.4e} ltype={t} <- {', '.join(flags)}", flush=True)
+    if not found_any:
+        print("    nothing flagged -- no near-zero mass, no mass/height inconsistency, "
+              "no density at the epsilon floor, in any layer at any site.", flush=True)
+
+    return final_state
+
+
+def dump_merge_candidates(model, state):
+    """
+    Reproduces check_layer_sizes' own merge-decision logic (dead-layer mask,
+    is_thin_snow/is_thin_any/force_small_snow -> merge_mask) directly
+    against a real state, without mutating anything, and prints EVERY
+    property (not just mass/height/density -- also temperature, grain size,
+    age, impurities) of both layers in any (site, idx) pair that would
+    actually trigger a merge. dump_state_before_failure's narrower
+    mass/height/density scan found nothing degenerate, so the trigger must
+    be in something else about the specific layers that are about to merge.
+
+    Only evaluates the FIRST scan pass (matches the state as-is, before any
+    merge in this timestep has actually mutated it) -- if idx and idx's
+    neighbor both look "normal" here yet this timestep's full merge scan
+    still produces a non-finite gradient, that's strong evidence the issue
+    is in how merge_existing_layers processes an otherwise-ordinary merge,
+    not in some hidden pre-existing degenerate value.
+    """
+    params = model.config.params
+    n_points, n_layers = state.lice.shape
+
+    dead_mask = np.asarray(state.lice) < params.min_layer_mass
+
+    layer_indices = np.arange(n_layers)
+    curve_snow = params.dz_toplayer * np.exp(layer_indices * params.layer_growth)
+    min_height_by_depth = np.maximum(curve_snow, params.min_dz)
+
+    dt_heat = params.dt / params.n_heat_steps
+    ice_stability_min = 2.0 * np.sqrt(4 * params.k_ice * dt_heat / (params.Cp_ice * params.density_ice))
+    min_height_ice = np.maximum(ice_stability_min, params.min_dz)
+
+    lheight = np.asarray(state.lheight)
+    ltype = np.asarray(state.ltype)
+
+    fields = ['lice', 'lwater', 'ldensity', 'lheight', 'ltype', 'ltemp', 'lage',
+              'lgrainsize', 'lBC', 'lOC', 'ldust', 'ldrefreeze', 'lrefreeze']
+    field_arrays = {f: np.asarray(getattr(state, f)) for f in fields if hasattr(state, f)}
+
+    print("  Reproducing check_layer_sizes' merge decision against this state:", flush=True)
+    any_found = False
+    for idx in range(n_layers - 1):
+        dz = lheight[:, idx]
+        curr_type = ltype[:, idx]
+        next_type = ltype[:, idx + 1]
+
+        is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
+        is_thin_any = dz < min_height_ice
+        is_snow = curr_type == 0
+        type_matches_below = curr_type == next_type
+        force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
+
+        any_merge = is_thin_any & ~is_snow
+        snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
+        merge_mask = any_merge | snow_merge
+
+        for site in np.where(merge_mask)[0]:
+            any_found = True
+            print(f"    MERGE at site {site}, idx {idx} (-> target {idx+1}):", flush=True)
+            for f, arr in field_arrays.items():
+                print(f"      {f}: removed(idx={idx})={arr[site, idx]:.6g}  "
+                      f"target(idx={idx+1})={arr[site, idx+1]:.6g}", flush=True)
+            print(f"      dead_mask[removed]={dead_mask[site, idx]} "
+                  f"dead_mask[target]={dead_mask[site, idx+1]} "
+                  f"is_thin_snow={is_thin_snow[site]} is_thin_any={is_thin_any[site]} "
+                  f"force_small_snow={force_small_snow[site]} type_matches_below={type_matches_below[site]}",
+                  flush=True)
+    if not any_found:
+        print("    no (site, idx) pair triggers merge_mask on this first pass -- "
+              "if the full scan still fails, a LATER scan iteration (after earlier "
+              "merges in this same timestep have mutated the state) must be the "
+              "one that actually triggers.", flush=True)
+
+
+def test_single_hour_from_state(model, frozen_state, hour_idx, wf_init, kp_init,
+                                  disable_any_merge=False, restrict_to_site=None):
+    """
+    Runs just the ONE hour's merge-scan-only gradient (main_layer_phase_probe,
+    stop_after_phase=2 -- dead-zeroing + full check_layer_sizes merge scan,
+    no split) starting from a fixed, detached real state -- the smallest
+    possible reproduction, if that state alone already contains whatever's
+    needed to trigger the non-finite gradient without any further history.
+
+    disable_any_merge (static bool): forces off the is_thin_any ice-ice
+    merge path (see check_layer_sizes_probe), leaving only snow_merge.
+    Disabling this alone did NOT fix a real non-finite case (snow_merge via
+    type_matches_below was independently active at other sites), so it
+    isn't about ice vs. snow specifically.
+
+    restrict_to_site (static int or None): forces merge_mask False
+    everywhere except this one site -- isolates whether a single merge
+    event, by itself, is sufficient.
+    """
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    probe_forcings = model.pack_forcings(params, model.dates[hour_idx:hour_idx + 1], hour_idx)
+    frozen = jax.lax.stop_gradient(frozen_state)
+
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    def probe_loss(log_wf, log_kp):
+        wf = jnp.exp(log_wf)
+        kp = jnp.exp(log_kp)
+        dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+        final_state = main_layer_phase_probe(
+            frozen, probe_forcings, model.point_attrs, static_args, dargs, 2,
+            disable_any_merge, restrict_to_site,
+        )
+        return _state_reduction(final_state)
+
+    t0 = time.time()
+    try:
+        grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+        ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+    except FloatingPointError:
+        ok = False
+    if restrict_to_site is not None:
+        label = f"restricted to site {restrict_to_site} only"
+    elif disable_any_merge:
+        label = "with any_merge (ice-ice) DISABLED"
+    else:
+        label = "baseline (all merge paths active)"
+    print(f"  single hour idx {hour_idx} alone, {label}: "
+          f"{'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+    jax.clear_caches()  # each distinct (disable_any_merge, restrict_to_site) is a fresh compile
+    return ok
+
+
 def bisect_nan_merge_nvars(model, snapshot_state, probe_start_idx, wf_init, kp_init, probe_hours=72):
     """
     find_nan_merge_skipvar showed omitting any single one of 12 variables
@@ -1011,17 +1506,238 @@ def bisect_nan_merge_nvars(model, snapshot_state, probe_start_idx, wf_init, kp_i
     return hi  # 1-based count; MERGE_VAR_NAMES[hi-1] is the last var added
 
 
+def run_real_single_site_test(site_index=1, probe_hours=BISECT_CHUNK_SIZE):
+    """
+    The step-back sanity check (PEBSI_REAL_SINGLESITE_TEST=1): builds a
+    genuine ONE-site PEBSI model (not a reduced-but-still-multi-site config
+    like the rest of this file), spins it up for real, then runs a real
+    forward+backward pass -- the actual pebsi_main(), no truncation, no
+    masking, nothing debug-only -- over the confirmed-bad window and checks
+    whether the gradient w.r.t. wind_factor/kp is finite. Then reruns the
+    identical setup through main_no_merge_probe, which is `main` with only
+    the merge scan removed (see check_layer_sizes_no_merge_probe), to see
+    whether removing merging is what flips it to finite.
+
+    Unlike every probe in the bisection chain above, neither of these two
+    runs truncates the simulation early or isolates a single merge event --
+    both go through the full per-timestep physics (all 6 stages) exactly
+    as production, for the full probe_hours window, so this is as close to
+    "does merge_existing_layers actually break a real simulation" as this
+    file gets.
+    """
+    site_dict = load_reduced_site_dict(REDUCED_SITES_CONFIG)
+    site_order = flatten_site_order(site_dict)
+    glacier, site = site_order[site_index]
+    single_site_dict = {glacier: [site]}
+    print(f"Real single-site test: site index {site_index} -> {glacier}/{site}", flush=True)
+
+    config_fp = build_generated_config(
+        single_site_dict, host, start_date=DEBUG_START_DATE, end_date=DEBUG_END_DATE,
+        temporal_chunk_years=BISECT_CHUNK_SIZE / 8760,
+    )
+    model = init_pebsi(config_fp)
+
+    params = model.config.params
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+
+    wf_init = list(model.config.dynamic_args.wind_factor)
+    kp_init = list(model.config.dynamic_args.kp)
+    log_wf = jnp.log(jnp.array(wf_init, dtype=jnp.float32))
+    log_kp = jnp.log(jnp.array(kp_init, dtype=jnp.float32))
+
+    probe_hours = min(probe_hours, len(model.dates))
+    probe_forcings = model.pack_forcings(params, model.dates[:probe_hours], 0)
+
+    def grad_is_finite(label, main_fn, returns_records):
+        def probe_loss(log_wf, log_kp):
+            wf = jnp.exp(log_wf)
+            kp = jnp.exp(log_kp)
+            dargs = dynamic_args._replace(wind_factor=wf, kp=kp)
+            result = main_fn(model.initial_state, probe_forcings, model.point_attrs, static_args, dargs)
+            final_state = result[0] if returns_records else result
+            return _state_reduction(final_state)
+
+        t0 = time.time()
+        try:
+            grads = jax.grad(probe_loss, argnums=(0, 1))(log_wf, log_kp)
+            ok = all(np.isfinite(np.asarray(g)).all() for g in grads)
+        except FloatingPointError:
+            ok = False
+        print(f"  {label}: {'finite' if ok else 'NON-FINITE'} ({time.time()-t0:.1f}s)", flush=True)
+        jax.clear_caches()
+        return ok
+
+    print(f"Running {probe_hours}h real forward+backward, single site, baseline (with merging):", flush=True)
+    baseline_ok = grad_is_finite("baseline pebsi_main (real, untouched)", pebsi_main, returns_records=True)
+
+    print(f"Running {probe_hours}h real forward+backward, single site, merge scan removed:", flush=True)
+    no_merge_ok = grad_is_finite(
+        "main_no_merge_probe (merge scan absent)", main_no_merge_probe, returns_records=False
+    )
+
+    print("", flush=True)
+    if baseline_ok:
+        print("-> baseline is ALREADY finite on this single site/window -- merge_existing_layers "
+              "may need more sites, more hours, or a different site to reproduce; the earlier "
+              "multi-site NAN_BISECT result doesn't necessarily hold for one site alone.", flush=True)
+    elif no_merge_ok:
+        print("-> baseline is non-finite and removing the merge scan makes it finite: "
+              "merge_existing_layers is confirmed responsible in a real, untruncated simulation.",
+              flush=True)
+    else:
+        print("-> baseline is non-finite AND it's still non-finite with the merge scan entirely "
+              "removed: merge_existing_layers is NOT the (sole) cause -- the deep bisection chain "
+              "was likely chasing an artifact introduced by the probes' own truncation/masking, "
+              "not the real bug. Look elsewhere.", flush=True)
+
+    return baseline_ok, no_merge_ok
+
+
+def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_snapshots=5):
+    """
+    Reproduces ONE site's real optimization trajectory in isolation (no
+    other sites in the model at all), running the same MAE loss / lr /
+    clipping as the full 16-site run, so every step's gradient and
+    parameter value is fully visible instead of only the top-3 sites the
+    batched run prints. Since nothing in the physics couples across sites,
+    this should hit the same kind of blowup the full run saw at K53
+    (step 4, raw grad norm 3.1e10) using far fewer total steps.
+
+    CAVEAT: clip_by_global_norm operates on the GLOBAL norm across every
+    site in the batch, so in the full run K53's own gradient was sometimes
+    scaled down by clipping triggered by a DIFFERENT site (e.g. step 3 was
+    dominated by gulkana/AB). Run alone, K53 only gets clipped by its own
+    values, so its exact trajectory (and the exact step the blowup occurs
+    on) won't match the full run 1:1 -- but whether it blows up AT ALL when
+    driven purely by its own gradient signal is exactly the question that
+    matters here.
+
+    On detecting a blowup (either parameter's raw grad exceeding 1e3),
+    re-runs forward-only (cheap -- no backward pass) at that exact
+    exploding (wind_factor, kp) value and scans yearly snapshots for the
+    same degenerate-layer signatures the earlier NaN investigation flagged
+    (near-zero-but-positive mass, mass/height inconsistency, density or
+    height sitting exactly at an epsilon floor) to find when in the window
+    it first appears.
+    """
+    site_dict = load_reduced_site_dict(REDUCED_SITES_CONFIG)
+    site_order = flatten_site_order(site_dict)
+    glacier, site = site_order[site_index]
+    single_site_dict = {glacier: [site]}
+    print(f"Investigating site index {site_index} -> {glacier}/{site}, in isolation", flush=True)
+
+    config_fp = build_generated_config(
+        single_site_dict, host, start_date=DEBUG_START_DATE, end_date=DEBUG_END_DATE,
+        temporal_chunk_years=1,
+    )
+    model = init_pebsi(config_fp)
+
+    obs_by_season = load_all_observations(single_site_dict)
+    summer_labels, summer_meas, summer_mask, summer_starts, summer_ends = obs_by_season['summer']
+    winter_labels, winter_meas, winter_mask, winter_starts, winter_ends = obs_by_season['winter']
+    summer_period_idx = build_period_indices(model.dates, summer_starts, summer_ends)
+    winter_period_idx = build_period_indices(model.dates, winter_starts, winter_ends)
+
+    loss_fn = make_loss_fn(
+        model, [(glacier, site)],
+        summer=(summer_labels, summer_period_idx, summer_meas, summer_mask),
+        winter=(winter_labels, winter_period_idx, winter_meas, winter_mask),
+    )
+
+    params = {
+        'log_wind_factor': jnp.zeros(1, dtype=jnp.float32),
+        'log_kp': jnp.zeros(1, dtype=jnp.float32),
+    }
+    optimizer = optax.chain(optax.clip_by_global_norm(clip_norm), optax.adam(lr))
+    opt_state = optimizer.init(params)
+
+    def wrapped_loss(p):
+        return loss_fn(p['log_wind_factor'], p['log_kp'])
+
+    grad_fn = jax.jit(jax.value_and_grad(wrapped_loss, has_aux=True))
+
+    print(f"{'step':>4} {'wf':>8} {'kp':>8} {'summer_mae':>11} {'winter_mae':>11} "
+          f"{'wf_grad':>12} {'kp_grad':>12}", flush=True)
+    wf_val = kp_val = None
+    exploded = False
+    for i in range(n_steps):
+        t0 = time.time()
+        (total_loss, (summer_mae, winter_mae)), grads = grad_fn(params)
+        jax.block_until_ready((total_loss, grads))
+        wf_grad = float(grads['log_wind_factor'][0])
+        kp_grad = float(grads['log_kp'][0])
+        wf_val = float(jnp.exp(params['log_wind_factor'][0]))
+        kp_val = float(jnp.exp(params['log_kp'][0]))
+        print(f"{i:>4} {wf_val:>8.4f} {kp_val:>8.4f} {float(summer_mae):>11.4f} "
+              f"{float(winter_mae):>11.4f} {wf_grad:>12.3e} {kp_grad:>12.3e} "
+              f"({time.time()-t0:.1f}s)", flush=True)
+
+        if abs(wf_grad) > 1e3 or abs(kp_grad) > 1e3:
+            print(f"  blowup at step {i} -- params going into this step: "
+                  f"wf={wf_val:.4f} kp={kp_val:.4f}", flush=True)
+            exploded = True
+            break
+
+        updates, opt_state = optimizer.update(grads, opt_state)
+        params = optax.apply_updates(params, updates)
+
+    if not exploded:
+        print("  no blowup within n_steps -- rerun with a larger n_steps.", flush=True)
+        return
+
+    model.config.dynamic_args = model.config.dynamic_args._replace(
+        wind_factor=jnp.array([wf_val], dtype=jnp.float32),
+        kp=jnp.array([kp_val], dtype=jnp.float32),
+    )
+    print(f"\n  Scanning forward-only trajectory at wf={wf_val:.4f}, kp={kp_val:.4f} "
+          f"for degenerate layers...", flush=True)
+    snapshots = generate_snapshots(model, n_snapshots=n_snapshots)
+    for date, state, _ in snapshots:
+        lice = np.asarray(state.lice)
+        ldensity = np.asarray(state.ldensity)
+        lheight = np.asarray(state.lheight)
+        ltype = np.asarray(state.ltype)
+        layer_flags = []
+        for layer in range(lice.shape[1]):
+            m, d, h, t = lice[0, layer], ldensity[0, layer], lheight[0, layer], ltype[0, layer]
+            flags = []
+            if 0 < m < 1e-2:
+                flags.append('near-zero-but-positive mass')
+            if (m == 0) != (h == 0):
+                flags.append('mass/height inconsistency')
+            if abs(d - 1e-3) < 1e-6:
+                flags.append('density at epsilon floor')
+            if abs(h - 1e-6) < 1e-9:
+                flags.append('height at epsilon floor')
+            if flags:
+                layer_flags.append(f"layer {layer}: lice={m:.4e} ldensity={d:.4e} "
+                                    f"lheight={h:.4e} ltype={t} <- {', '.join(flags)}")
+        print(f"  {date}: {'; '.join(layer_flags) if layer_flags else 'nothing flagged'}", flush=True)
+
+
 # ---------------------------------------------------------------------------
 # 5. Optimization
 # ---------------------------------------------------------------------------
 
-def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=100, lr=1e-2):
+def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=100, lr=1e-2, clip_norm=1.0):
     params = {
         'log_wind_factor': jnp.log(jnp.array(init_wind_factors, dtype=jnp.float32)),
         'log_kp': jnp.log(jnp.array(init_kp, dtype=jnp.float32)),
     }
 
-    optimizer = optax.adam(lr)
+    # clip_by_global_norm caps the raw gradient BEFORE adam sees it, so a
+    # single site hitting a steep-but-finite region of the loss surface
+    # (e.g. a layer landing near one of the epsilon floors in layers.py --
+    # see update_layer_props/merge_existing_layers) can't blow up the whole
+    # trajectory the way it did at lr=5e-2/step 4 (wf/kp grad norms jumping
+    # from O(1) to O(1e7) in one step). clip_norm=1.0 is comfortably above
+    # the O(0.2-1.0) per-parameter norms seen in a normal step, so it's a
+    # no-op most of the time and only engages on an actual spike.
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(clip_norm),
+        optax.adam(lr),
+    )
     opt_state = optimizer.init(params)
 
     def wrapped_loss(params):
@@ -1042,23 +1758,36 @@ def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=10
                 print(f"  step {step}: non-finite grad for {name} at {len(bad)} site(s): {bad_sites}", flush=True)
         return found
 
-    print(f"{'Step':>6}  {'Summer RMSE':>12}  {'Winter RMSE':>12}  {'wf |grad|':>10}  {'kp |grad|':>10}", flush=True)
+    # Per-site breakdown so a spike like the lr=5e-2 run's step 3/4 (kp grad
+    # norm 0.17 -> 8.5 -> 5.8e7) points straight at the responsible site
+    # instead of just the aggregate norm.
+    def _top_grad_sites(g, n=3):
+        g = np.asarray(g)
+        idx = np.argsort(-np.abs(g))[:n]
+        return ', '.join(f"{site_order[j]}={g[j]:.3e}" for j in idx)
+
+    print(f"{'Step':>6}  {'Summer MAE':>12}  {'Winter MAE':>12}  {'wf |grad|':>10}  {'kp |grad|':>10}", flush=True)
     for i in range(n_steps):
         t0 = time.time()
-        (total_loss, (summer_rmse, winter_rmse)), grads = grad_fn(params)
+        (total_loss, (summer_mae, winter_mae)), grads = grad_fn(params)
         jax.block_until_ready((total_loss, grads))
 
         if _report_nan_grads(i, grads):
             print("  Stopping: non-finite gradient detected (see above).", flush=True)
             break
 
+        raw_global_norm = float(optax.global_norm(grads))
         updates, opt_state = optimizer.update(grads, opt_state)
         params = optax.apply_updates(params, updates)
 
         wf_grad_norm = float(jnp.linalg.norm(grads['log_wind_factor']))
         kp_grad_norm = float(jnp.linalg.norm(grads['log_kp']))
-        print(f"{i:>6}  {float(summer_rmse):>12.4f}  {float(winter_rmse):>12.4f}  "
+        print(f"{i:>6}  {float(summer_mae):>12.4f}  {float(winter_mae):>12.4f}  "
               f"{wf_grad_norm:>10.3e}  {kp_grad_norm:>10.3e}  ({time.time()-t0:.1f}s)", flush=True)
+        print(f"    top wf grad sites: {_top_grad_sites(grads['log_wind_factor'])}", flush=True)
+        print(f"    top kp grad sites: {_top_grad_sites(grads['log_kp'])}", flush=True)
+        if raw_global_norm > clip_norm:
+            print(f"    clipped: raw global grad norm {raw_global_norm:.3e} -> {clip_norm}", flush=True)
 
     return jnp.exp(params['log_wind_factor']), jnp.exp(params['log_kp'])
 
@@ -1069,6 +1798,18 @@ def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=10
 
 if __name__ == '__main__':
     print(f"JAX backend: {jax.default_backend()}  devices: {jax.devices()}", flush=True)
+
+    if REAL_SINGLESITE_TEST:
+        print(f"PEBSI_REAL_SINGLESITE_TEST=1: real (untruncated) forward+backward on a single "
+              f"site, with vs. without the merge scan...\n", flush=True)
+        run_real_single_site_test(site_index=REAL_SINGLESITE_INDEX)
+        sys.exit(0)
+
+    if INVESTIGATE_SITE_BLOWUP:
+        print(f"PEBSI_INVESTIGATE_SITE_BLOWUP=1: reproducing site {INVESTIGATE_SITE_INDEX}'s real "
+              f"optimization trajectory in isolation to find and scan the blowup...\n", flush=True)
+        investigate_site_blowup(site_index=INVESTIGATE_SITE_INDEX)
+        sys.exit(0)
 
     site_dict = load_site_dict()
     if USE_REDUCED_SITE_SET:
@@ -1244,13 +1985,100 @@ if __name__ == '__main__':
                   "skip-var result.", flush=True)
         sys.exit(0)
 
+    if MERGE_SKIPBLOCK_TEST:
+        print(f"PEBSI_MERGE_SKIPBLOCK_TEST=1: testing each merge post-averaging block "
+              f"individually over chunk 0 (first {BISECT_CHUNK_SIZE}h from initial_state)...\n",
+              flush=True)
+        culprits = find_nan_merge_skipblock(
+            model, model.initial_state, 0, list(wf_init), list(kp_init),
+            probe_hours=BISECT_CHUNK_SIZE,
+        )
+        if culprits:
+            print(f"\n-> skipping these block(s) made the gradient finite: {culprits}", flush=True)
+        else:
+            print("\nNo single block's omission fixed it -- likely needs two or more "
+                  "blocks together, or the bug is in the weighted-average/extensive-sum "
+                  "step itself (which always runs, never skipped here).", flush=True)
+        sys.exit(0)
+
+    if MERGE_HOURS_BISECT:
+        print(f"PEBSI_MERGE_HOURS_BISECT=1: bisecting minimum hours needed for merge-scan-only "
+              f"gradient to go non-finite (max {BISECT_CHUNK_SIZE}h)...\n", flush=True)
+        bad_hours = bisect_nan_merge_hours(
+            model, list(wf_init), list(kp_init), max_hours=BISECT_CHUNK_SIZE,
+        )
+        if bad_hours is not None:
+            print(f"\n-> minimum {bad_hours}h needed "
+                  f"({model.dates[0]} to {model.dates[bad_hours-1]})", flush=True)
+        else:
+            print(f"\nEven {BISECT_CHUNK_SIZE}h is finite here -- unexpected given the "
+                  "skip-block result.", flush=True)
+        sys.exit(0)
+
+    if STATE_DUMP_HOUR:
+        print(f"PEBSI_STATE_DUMP_HOUR={STATE_DUMP_HOUR}: dumping real state before the "
+              f"failing hour, then testing that one hour alone...\n", flush=True)
+        state_before = dump_state_before_failure(
+            model, list(wf_init), list(kp_init), hour=STATE_DUMP_HOUR
+        )
+        print("", flush=True)
+        dump_merge_candidates(model, state_before)
+        print("", flush=True)
+        test_single_hour_from_state(
+            model, state_before, hour_idx=STATE_DUMP_HOUR, wf_init=list(wf_init), kp_init=list(kp_init),
+            disable_any_merge=False,
+        )
+        test_single_hour_from_state(
+            model, state_before, hour_idx=STATE_DUMP_HOUR, wf_init=list(wf_init), kp_init=list(kp_init),
+            disable_any_merge=True,
+        )
+        print("", flush=True)
+        print("  Testing each candidate site's merge in isolation:", flush=True)
+        for site in [1, 2, 3, 5, 8, 10, 11, 12]:
+            test_single_hour_from_state(
+                model, state_before, hour_idx=STATE_DUMP_HOUR, wf_init=list(wf_init), kp_init=list(kp_init),
+                restrict_to_site=site,
+            )
+        print("", flush=True)
+        print("  Skip-block test on the minimal single-site, single-hour, single-merge repro "
+              "(site 1, snow-snow, non-ice):", flush=True)
+        find_nan_merge_skipblock(
+            model, state_before, probe_start_idx=STATE_DUMP_HOUR, wf_init=list(wf_init), kp_init=list(kp_init),
+            probe_hours=1, restrict_to_site=1,
+        )
+        print("", flush=True)
+        print("  None of the 5 non-averaging blocks fixed it alone -- testing phase 1 "
+              "(weighted-average/extensive-sum) completely alone, nothing downstream:", flush=True)
+        test_single_merge_phase_only(
+            model, state_before, hour_idx=STATE_DUMP_HOUR, restrict_to_site=1,
+            wf_init=list(wf_init), kp_init=list(kp_init), phase=1,
+        )
+        print("", flush=True)
+        print("  Phase 1 alone is non-finite -- testing each of its 12 variables individually:", flush=True)
+        culprits = find_nan_phase1_skipvar(
+            model, state_before, hour_idx=STATE_DUMP_HOUR, restrict_to_site=1,
+            wf_init=list(wf_init), kp_init=list(kp_init),
+        )
+        if culprits:
+            print(f"\n-> skipping these phase-1 variable(s) made the gradient finite: {culprits}", flush=True)
+        else:
+            print("\nNo single phase-1 variable's omission fixed it -- likely needs two or more "
+                  "together.", flush=True)
+        sys.exit(0)
+
     print("Optimizing wind_factor (summer MB) and kp (winter MB) for all sites...\n", flush=True)
+    # lr bumped 1e-2 -> 5e-2: Adam in log-space moves log(param) by roughly
+    # lr per step once past the bias-correction warmup, so 10 steps at 1e-2
+    # only reaches wind_factor ~= 1.1x its start (matches the run that came
+    # back barely moved from 1.0) -- 5e-2 should get within range of the
+    # grid search's optima (mostly 1.5-3x) in the same 10 steps, at the same
+    # per-step cost, instead of needing many more (expensive) iterations.
     wind_factors, kps = run_optimization(
         loss_fn,
         init_wind_factors=list(wf_init),
         init_kp=list(kp_init),
         site_order=site_order,
-        n_steps=10, lr=1e-2,
+        n_steps=10, lr=5e-2,
     )
 
     print("\nOptimized parameters:")

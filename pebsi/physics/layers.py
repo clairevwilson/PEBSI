@@ -726,16 +726,19 @@ def merge_existing_layers(state, mask, idx, params):
         removed_vals = data[:, idx]
         target_vals = data[:, target_idx]
 
-        # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_safe
-        
-        if var in ['ltype','lage']:
-            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        if var == 'ltype':
+            # merges never promote to a more-advanced type (snow < firn < ice)
+            merged_vals = jnp.minimum(removed_vals, target_vals).astype(jnp.int32)
+        else:
+            # calculate mass-weighted average of values (N_POINTS)
+            merged_vals = (target_vals * m_target + removed_vals * m_removed) / m_safe
+            if var == 'lage':
+                merged_vals = jnp.round(merged_vals).astype(jnp.int32)
 
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
             target_mask,
-            weighted_avg[:, None],
+            merged_vals[:, None],
             data
         )
 
@@ -798,6 +801,117 @@ def merge_existing_layers(state, mask, idx, params):
 
     # finally, send state through the profile updates utility
     state = update_layer_props(state, params.density_ice)
+
+    return state
+
+
+def merge_existing_layers_skipblock_probe(state, mask, idx, params, skip_block):
+    """
+    Debug-only: identical to (current, fixed) merge_existing_layers, except
+    exactly one of its post-averaging blocks is replaced with a no-op:
+      'shift': don't move any layers OR zero the removed one (post-averaging
+        positions kept as-is -- NOTE this also breaks mass conservation,
+        since the removed layer's mass is never zeroed, only relocated;
+        see 'shift_zero_only' to separate that confound)
+      'shift_zero_only': zero out the removed layer in place at idx (mass-
+        conserving), but DON'T reindex/move later layers up to fill the gap
+        -- isolates whether creating a genuinely near-empty layer matters,
+        independent of the reindexing/data-movement itself
+      'lheight_recompute_1': skip the lheight recompute right after the shift
+      'add_bottom_layer': skip add_bottom_layer entirely
+      'lheight_recompute_2': skip the lheight recompute right after add_bottom_layer
+      'update_layer_props': skip the final update_layer_props call
+      None: skip nothing (baseline, should match merge_existing_layers exactly)
+
+    Unlike merge_existing_layers_probe (stop_after_phase truncates and
+    returns early -- when called repeatedly across the layer scan, this
+    compounds an artificial torn state every iteration, since later phases
+    like add_bottom_layer/update_layer_props never run), this always
+    completes every step except the one skip_block, so it's called
+    repeatedly across the scan exactly like production. skip_block is a
+    static Python string or None.
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic.
+    """
+    properties = state._asdict()
+    layers_idx = jnp.arange(state.lice.shape[1])
+    target_idx = idx + 1
+
+    m_removed = properties['lice'][:, idx]
+    m_target = properties['lice'][:, target_idx]
+    m_total = m_removed + m_target
+    m_safe = jnp.where(m_total > params.min_layer_mass, m_total, params.min_layer_mass)
+
+    target_mask = mask[:, None] & (layers_idx == target_idx)[None, :]
+
+    for var in params.intensive_vars:
+        data = properties[var]
+        removed_vals = data[:, idx]
+        target_vals = data[:, target_idx]
+        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_safe
+        if var in ['ltype', 'lage']:
+            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        properties[var] = jnp.where(target_mask, weighted_avg[:, None], data)
+
+    for var in params.extensive_vars:
+        data = properties[var]
+        summed_data = data[:, idx] + data[:, target_idx]
+        properties[var] = jnp.where(target_mask, summed_data[:, None], data)
+
+    shift_mask = mask[:, None] & (layers_idx >= idx)[None, :]
+    zero_mask = mask[:, None] & (layers_idx == idx)[None, :]
+
+    def _do_shift(props):
+        props = dict(props)
+        for var in params.all_layer_vars:
+            data = props[var]
+            if var == 'ltype':
+                fill_value = 2
+            elif var == 'ldensity':
+                fill_value = params.density_ice
+            else:
+                fill_value = 0.0
+            fill_col = jnp.full((data.shape[0], 1), fill_value, dtype=data.dtype)
+            fully_shifted = jnp.concatenate([data[:, 1:], fill_col], axis=1)
+            props[var] = jnp.where(shift_mask, fully_shifted, data)
+        return props
+
+    def _do_zero_only(props):
+        props = dict(props)
+        for var in params.all_layer_vars:
+            data = props[var]
+            if var == 'ltype':
+                fill_value = 2
+            elif var == 'ldensity':
+                fill_value = params.density_ice
+            else:
+                fill_value = 0.0
+            filled = jnp.full_like(data, fill_value)
+            props[var] = jnp.where(zero_mask, filled, data)
+        return props
+
+    if skip_block == 'shift_zero_only':
+        properties = jax.lax.cond(jnp.any(mask), _do_zero_only, lambda p: p, properties)
+    elif skip_block != 'shift':
+        properties = jax.lax.cond(jnp.any(mask), _do_shift, lambda p: p, properties)
+
+    properties['ice_mask'] = properties['ltype'].astype(jnp.int32) == 2
+    if skip_block != 'lheight_recompute_1':
+        safe_ldensity = jnp.where(properties['ldensity'] > 1e-3, properties['ldensity'], 1e-3)
+        properties['lheight'] = properties['lice'] / safe_ldensity
+    state = state._replace(**properties)
+
+    if skip_block != 'add_bottom_layer':
+        state = add_bottom_layer(state, mask, params)
+
+    if skip_block != 'lheight_recompute_2':
+        safe_ldensity = jnp.where(state.ldensity > 1e-3, state.ldensity, 1e-3)
+        updated_lheight = state.lice / safe_ldensity
+        state = state._replace(lheight=updated_lheight)
+
+    if skip_block != 'update_layer_props':
+        state = update_layer_props(state, params.density_ice)
 
     return state
 
@@ -901,6 +1015,62 @@ def merge_existing_layers_probe(state, mask, idx, params, stop_after_phase):
 
     state = update_layer_props(state, params.density_ice)
     return state
+
+
+# All 12 phase-1 variables (5 intensive + 7 extensive), in the order they're
+# processed in merge_existing_layers_probe's phase-1 loops.
+PHASE1_VAR_NAMES = [
+    'ltemp', 'ldensity', 'lage', 'lgrainsize', 'ltype',       # intensive
+    'lice', 'lwater', 'lBC', 'lOC', 'ldust', 'ldrefreeze', 'lrefreeze',  # extensive
+]
+
+
+def merge_existing_layers_phase1_skipvar_probe(state, mask, idx, params, skip_var):
+    """
+    Debug-only: runs ONLY phase 1 (weighted-average/extensive-sum -- no
+    shift, no downstream at all, matching merge_existing_layers_probe's
+    stop_after_phase=1), but skips writing back exactly one variable
+    (leaves it at its pre-merge value for every point/layer, mask-selection
+    included). Isolates which of the 12 phase-1 variables is responsible,
+    since phase 1 as a whole was confirmed non-finite on a single, clean,
+    isolated real merge event where nothing downstream even runs.
+
+    skip_var is a static Python string (one of PHASE1_VAR_NAMES) or None
+    (baseline, should match phase 1's confirmed non-finite result).
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic.
+    """
+    properties = state._asdict()
+    layers_idx = jnp.arange(state.lice.shape[1])
+    target_idx = idx + 1
+
+    m_removed = properties['lice'][:, idx]
+    m_target = properties['lice'][:, target_idx]
+    m_total = m_removed + m_target
+    m_safe = jnp.where(m_total > params.min_layer_mass, m_total, params.min_layer_mass)
+
+    target_mask = mask[:, None] & (layers_idx == target_idx)[None, :]
+
+    for var in params.intensive_vars:
+        if var == skip_var:
+            continue
+        data = properties[var]
+        removed_vals = data[:, idx]
+        target_vals = data[:, target_idx]
+        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_safe
+        if var in ['ltype', 'lage']:
+            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        properties[var] = jnp.where(target_mask, weighted_avg[:, None], data)
+
+    for var in params.extensive_vars:
+        if var == skip_var:
+            continue
+        data = properties[var]
+        summed_data = data[:, idx] + data[:, target_idx]
+        properties[var] = jnp.where(target_mask, summed_data[:, None], data)
+
+    return state._replace(**properties)
 
 
 def merge_existing_layers_var_probe(state, mask, idx, params, n_vars_shifted):
@@ -1139,16 +1309,19 @@ def merge_new_layer(state, mask, new_layer, params):
         new_vals = new_layer[var]
         target_vals = data[:, 0]
 
-        # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + new_vals * m_new) / m_safe
-        
-        if var in ['ltype','lage']:
-            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        if var == 'ltype':
+            # merges never promote to a more-advanced type (snow < firn < ice)
+            merged_vals = jnp.minimum(new_vals, target_vals).astype(jnp.int32)
+        else:
+            # calculate mass-weighted average of values (N_POINTS)
+            merged_vals = (target_vals * m_target + new_vals * m_new) / m_safe
+            if var == 'lage':
+                merged_vals = jnp.round(merged_vals).astype(jnp.int32)
 
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
             target_mask,
-            weighted_avg[:, None],
+            merged_vals[:, None],
             data
         )
 
@@ -1213,7 +1386,9 @@ def check_layer_sizes(state, params):
     min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
 
     # define function to scan for layers to merge
-    def _scan_merge(current_state, idx):
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
+
         # always fetch the most up-to-date heights and types from evolving state
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
@@ -1222,27 +1397,30 @@ def check_layer_sizes(state, params):
         # determine if layer is too thin for its position
         is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
         is_thin_any = (dz < min_height_ice)
-        
+
         # determine which spatial columns need a merge at this specific vertical index
         is_snow = curr_type == 0
         type_matches_below = curr_type == next_type
         force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
-        
+
         # build the boolean merge mask (N_POINTS)
         # firn / ice layers only merge if they are below min_dz
         any_merge = is_thin_any & ~is_snow
         # snow layers merge if there is snow beneath; or if they are very small
         snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
 
-        merge_mask = any_merge | snow_merge
+        # cap at one merge per point per call
+        merge_mask = (any_merge | snow_merge) & ~already_merged
 
         # merge layers, if there are layers to merge
         next_state = merge_existing_layers(current_state, merge_mask, idx, params)
+        next_already_merged = already_merged | merge_mask
 
-        return next_state, None 
-    
+        return (next_state, next_already_merged), None
+
     layers_idx = jnp.arange(n_layers - 1) # don't include bottom layer
-    state, _ = jax.lax.scan(_scan_merge, state, layers_idx)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
 
     # split snow layers that have grown beyond twice their target size for their position
     def _scan_splits(current_state, idx):
@@ -1256,12 +1434,27 @@ def check_layer_sizes(state, params):
     return state, dead_mass
 
 
-def check_layer_sizes_probe(state, params, stop_after_phase):
+def check_layer_sizes_probe(state, params, stop_after_phase, disable_any_merge=False, restrict_to_site=None):
     """
     Debug-only variant of check_layer_sizes for isolating which of its 3
     phases (1: dead-layer zeroing, 2: merge scan / merge_existing_layers,
     3: split scan / split_layer) introduces a non-finite gradient.
     stop_after_phase is a static Python int, 1-3. Returns state only.
+
+    disable_any_merge (static bool): if True, forces any_merge (the
+    is_thin_any & ~is_snow path -- firn/ice layers merging because they're
+    below ice_stability_min, the numerical-stability height floor)
+    permanently off, so only snow_merge (the force_small_snow / min_dz path
+    this whole investigation started from) can ever trigger. Disabling this
+    alone did NOT fix a real non-finite case, since snow_merge (via
+    type_matches_below, not force_small_snow) was independently active at
+    other sites in the same timestep -- see restrict_to_site to isolate a
+    single merge event at a time instead.
+
+    restrict_to_site (static int or None): if set, forces merge_mask to
+    False for every point except this one -- isolates whether a single
+    site's merge event, by itself, is sufficient to trigger a non-finite
+    gradient, or whether it takes multiple sites merging simultaneously.
 
     Not used by any production path -- see jax_optimize.py's stage-bisection
     diagnostic.
@@ -1290,7 +1483,8 @@ def check_layer_sizes_probe(state, params, stop_after_phase):
     )
     min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
 
-    def _scan_merge(current_state, idx):
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
         next_type = current_state.ltype[:, idx + 1]
@@ -1302,15 +1496,20 @@ def check_layer_sizes_probe(state, params, stop_after_phase):
         type_matches_below = curr_type == next_type
         force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
 
-        any_merge = is_thin_any & ~is_snow
+        any_merge = (is_thin_any & ~is_snow) & (not disable_any_merge)
         snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
-        merge_mask = any_merge | snow_merge
+        merge_mask = (any_merge | snow_merge) & ~already_merged
+        if restrict_to_site is not None:
+            site_mask = jnp.arange(current_state.lice.shape[0]) == restrict_to_site
+            merge_mask = merge_mask & site_mask
 
         next_state = merge_existing_layers(current_state, merge_mask, idx, params)
-        return next_state, None
+        next_already_merged = already_merged | merge_mask
+        return (next_state, next_already_merged), None
 
     layers_idx = jnp.arange(n_layers - 1)
-    state, _ = jax.lax.scan(_scan_merge, state, layers_idx)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
     if stop_after_phase == 2:
         return state
 
@@ -1324,13 +1523,67 @@ def check_layer_sizes_probe(state, params, stop_after_phase):
     return state
 
 
-def check_layer_sizes_merge_internal_probe(state, params, stop_after_merge_phase):
+def check_layer_sizes_no_merge_probe(state, params):
+    """
+    Debug-only variant of check_layer_sizes with the merge scan removed
+    entirely (merge_existing_layers is never called -- not truncated, not
+    masked to all-False, just absent from the traced graph). Dead-layer
+    zeroing and the split scan run exactly as production.
+
+    Every earlier bisection level (STAGE_BISECT down through
+    MERGE_HOURS_BISECT/STATE_DUMP_HOUR in jax_optimize.py) narrowed the
+    non-finite gradient down to merge_existing_layers via nested probes that
+    each truncate or isolate a piece of the computation -- useful for
+    localization, but every one of them changes the trajectory relative to
+    a real run, and the chain never landed on a single conclusive culprit
+    variable/block. This is the sanity check one level up: does a REAL,
+    otherwise-untouched forward/backward simulation actually go non-finite
+    only when merges happen, and go finite when this one probe removes
+    merging (and nothing else)? See jax_optimize.py's single-site real test.
+
+    Not used by any production path.
+    """
+    properties = state._asdict()
+
+    dead_mask = properties['lice'] < params.min_layer_mass
+    properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
+    properties['lBC'] = jnp.where(dead_mask, 0.0, properties['lBC'])
+    properties['lOC'] = jnp.where(dead_mask, 0.0, properties['lOC'])
+    properties['ldust'] = jnp.where(dead_mask, 0.0, properties['ldust'])
+    state = state._replace(**properties)
+
+    n_layers = properties['lice'].shape[1]
+    layer_indices = jnp.arange(n_layers)
+    curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
+
+    def _scan_splits(current_state, idx):
+        dz = current_state.lheight[:, idx]
+        curr_type = current_state.ltype[:, idx]
+        should_split = (curr_type == 0) & (dz > curve_snow[idx] * 2)
+        return split_layer(current_state, should_split, idx, params), None
+
+    layers_idx = jnp.arange(n_layers - 1)
+    state, _ = jax.lax.scan(_scan_splits, state, layers_idx)
+    return state
+
+
+def check_layer_sizes_merge_internal_probe(state, params, stop_after_merge_phase, restrict_to_site=None):
     """
     Debug-only: runs check_layer_sizes' dead-layer zeroing in full, then the
     merge scan using merge_existing_layers_probe (same stop_after_phase for
     every merge in the scan) instead of merge_existing_layers, then returns
     -- no split scan, since this isolates merge_existing_layers' own
     internal structure (see merge_existing_layers_probe for phase meanings).
+
+    restrict_to_site (static int or None): forces merge_mask False
+    everywhere except this one site, and caps at one merge per point per
+    call -- needed since a truncated (stop_after_merge_phase < 7) merge is
+    called repeatedly across the scan, so without the cap a single
+    restricted site that qualifies at multiple layer indices (common in
+    practice) would still cascade through several truncated, torn-state
+    merges instead of exactly one clean isolated one.
 
     Not used by any production path -- see jax_optimize.py's stage-bisection
     diagnostic.
@@ -1357,7 +1610,8 @@ def check_layer_sizes_merge_internal_probe(state, params, stop_after_merge_phase
     )
     min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
 
-    def _scan_merge(current_state, idx):
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
         next_type = current_state.ltype[:, idx + 1]
@@ -1371,15 +1625,158 @@ def check_layer_sizes_merge_internal_probe(state, params, stop_after_merge_phase
 
         any_merge = is_thin_any & ~is_snow
         snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
-        merge_mask = any_merge | snow_merge
+        merge_mask = (any_merge | snow_merge) & ~already_merged
+        if restrict_to_site is not None:
+            site_mask = jnp.arange(current_state.lice.shape[0]) == restrict_to_site
+            merge_mask = merge_mask & site_mask
 
         next_state = merge_existing_layers_probe(
             current_state, merge_mask, idx, params, stop_after_merge_phase
         )
-        return next_state, None
+        next_already_merged = already_merged | merge_mask
+        return (next_state, next_already_merged), None
 
     layers_idx = jnp.arange(n_layers - 1)
-    state, _ = jax.lax.scan(_scan_merge, state, layers_idx)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
+    return state
+
+
+def check_layer_sizes_merge_phase1_skipvar_probe(state, params, skip_var, restrict_to_site=None):
+    """
+    Debug-only: same idea as check_layer_sizes_merge_internal_probe, but
+    calls merge_existing_layers_phase1_skipvar_probe (phase 1 only -- no
+    shift, no downstream at all) instead -- isolates which of the 12
+    phase-1 variables (PHASE1_VAR_NAMES) is responsible, since phase 1 as a
+    whole was confirmed non-finite on a single, clean, isolated real merge.
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic.
+    """
+    properties = state._asdict()
+    n_points, n_layers = properties['lice'].shape
+
+    dead_mask = properties['lice'] < params.min_layer_mass
+    properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
+    properties['lBC'] = jnp.where(dead_mask, 0.0, properties['lBC'])
+    properties['lOC'] = jnp.where(dead_mask, 0.0, properties['lOC'])
+    properties['ldust'] = jnp.where(dead_mask, 0.0, properties['ldust'])
+    state = state._replace(**properties)
+
+    layer_indices = jnp.arange(n_layers)
+    curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
+    min_height_by_depth = jnp.maximum(curve_snow, params.min_dz)
+
+    dt_heat = params.dt / params.n_heat_steps
+    ice_stability_min = 2.0 * jnp.sqrt(
+        4 * params.k_ice * dt_heat / (params.Cp_ice * params.density_ice)
+    )
+    min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
+
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
+        dz = current_state.lheight[:, idx]
+        curr_type = current_state.ltype[:, idx]
+        next_type = current_state.ltype[:, idx + 1]
+
+        is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
+        is_thin_any = (dz < min_height_ice)
+
+        is_snow = curr_type == 0
+        type_matches_below = curr_type == next_type
+        force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
+
+        any_merge = is_thin_any & ~is_snow
+        snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
+        merge_mask = (any_merge | snow_merge) & ~already_merged
+        if restrict_to_site is not None:
+            site_mask = jnp.arange(current_state.lice.shape[0]) == restrict_to_site
+            merge_mask = merge_mask & site_mask
+
+        next_state = merge_existing_layers_phase1_skipvar_probe(
+            current_state, merge_mask, idx, params, skip_var
+        )
+        next_already_merged = already_merged | merge_mask
+        return (next_state, next_already_merged), None
+
+    layers_idx = jnp.arange(n_layers - 1)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
+    return state
+
+
+def check_layer_sizes_merge_skipblock_probe(state, params, skip_block, restrict_to_site=None):
+    """
+    Debug-only: same as check_layer_sizes_merge_internal_probe, but calls
+    merge_existing_layers_skipblock_probe (same skip_block for every merge
+    in the scan) instead of merge_existing_layers_probe -- isolates which
+    post-averaging block (shift, either lheight recompute, add_bottom_layer,
+    update_layer_props) is responsible, WITHOUT the compounding-torn-state
+    artifact of check_layer_sizes_merge_internal_probe (every merge always
+    completes fully here, matching production, except the one skipped block).
+
+    restrict_to_site (static int or None): forces merge_mask False
+    everywhere except this one site, for testing a single isolated merge
+    event -- also caps at one merge per point per call (like
+    check_layer_sizes_probe), since a single restricted site can still
+    qualify at multiple layer indices and would otherwise cascade.
+
+    Not used by any production path -- see jax_optimize.py's stage-bisection
+    diagnostic.
+    """
+    properties = state._asdict()
+    n_points, n_layers = properties['lice'].shape
+
+    dead_mask = properties['lice'] < params.min_layer_mass
+    properties['lice'] = jnp.where(dead_mask, 0.0, properties['lice'])
+    properties['lwater'] = jnp.where(dead_mask, 0.0, properties['lwater'])
+    properties['lheight'] = jnp.where(dead_mask, 0.0, properties['lheight'])
+    properties['lBC'] = jnp.where(dead_mask, 0.0, properties['lBC'])
+    properties['lOC'] = jnp.where(dead_mask, 0.0, properties['lOC'])
+    properties['ldust'] = jnp.where(dead_mask, 0.0, properties['ldust'])
+    state = state._replace(**properties)
+
+    layer_indices = jnp.arange(n_layers)
+    curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
+    min_height_by_depth = jnp.maximum(curve_snow, params.min_dz)
+
+    dt_heat = params.dt / params.n_heat_steps
+    ice_stability_min = 2.0 * jnp.sqrt(
+        4 * params.k_ice * dt_heat / (params.Cp_ice * params.density_ice)
+    )
+    min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
+
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
+        dz = current_state.lheight[:, idx]
+        curr_type = current_state.ltype[:, idx]
+        next_type = current_state.ltype[:, idx + 1]
+
+        is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
+        is_thin_any = (dz < min_height_ice)
+
+        is_snow = curr_type == 0
+        type_matches_below = curr_type == next_type
+        force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
+
+        any_merge = is_thin_any & ~is_snow
+        snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
+        merge_mask = (any_merge | snow_merge) & ~already_merged
+        if restrict_to_site is not None:
+            site_mask = jnp.arange(current_state.lice.shape[0]) == restrict_to_site
+            merge_mask = merge_mask & site_mask
+
+        next_state = merge_existing_layers_skipblock_probe(
+            current_state, merge_mask, idx, params, skip_block
+        )
+        next_already_merged = already_merged | merge_mask
+        return (next_state, next_already_merged), None
+
+    layers_idx = jnp.arange(n_layers - 1)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
     return state
 
 
@@ -1632,11 +2029,7 @@ def update_layer_props(state, DENSITY_ICE):
     do : list-like
         List of any combination of depth, density to be updated
     """
-    # floor at a small-but-nonzero height, not just >0 -- a tiny-but-positive
-    # lheight (e.g. a just-merged/split near-massless layer) still gives an
-    # unbounded d(lice/lheight)/d(lheight) as lheight->0, even though the
-    # forward value stays finite. Called at the end of both
-    # merge_existing_layers and split_layer.
+    # floor at a small-but-nonzero height
     safe_lheight = jnp.where(state.lheight > 1e-6, state.lheight, 1e-6)
 
     new_ice_mask = state.ltype == 2

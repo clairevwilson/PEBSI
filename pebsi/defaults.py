@@ -94,7 +94,7 @@ bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment fi
 # TEMPORAL
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time in UTC
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time in UTC
-temporal_chunk_years = 1                    # Length of a temporal chunk, in years (fractions allowed, e.g. 0.5)
+temporal_chunk_years = 1                    # Length of a temporal chunk, in years (1/x fractions allowed, e.g. 0.5)
 n_spinup_years = 1                          # Number of years to repeat forcings to spin-up the model
 dynamics_period_years = 1                   # Interval (whole years) between GLIDE coupling steps, if option_dynamics
 

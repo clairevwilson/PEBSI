@@ -40,17 +40,22 @@ class EnergyBalanceDriver():
         def secant_step(carry, i):
             # unpack the current state of the root finder
             t_prev, t_curr, y_prev, y_curr = carry
-            
+
+            # must mask the whole update for differentiability
+            converged = jnp.abs(y_curr) < 1e-6
+
             # calculate the denominator with divide-by-zero safeguard
             denom = jnp.where(jnp.abs(y_curr - y_prev) < 1e-4, 1e-4, y_curr - y_prev)
-            
-            # standard Secant formula to calculate the next temperature guess
-            t_next = t_curr - y_curr * (t_curr - t_prev) / denom
-            t_next = jnp.clip(t_next, -60.0, 0.0) # clip to physical bounds
-            
+
+            # standard secant formula to calculate the next temperature guess
+            t_next_secant = t_curr - y_curr * (t_curr - t_prev) / denom
+            t_next_secant = jnp.clip(t_next_secant, -60.0, 0.0) # clip to physical bounds
+            t_next = jnp.where(converged, t_curr, t_next_secant)
+
             # evaluate the new energy balance residual with the updated temperature
-            y_next, _ = self.compute_fluxes(t_next, state, forcings, point_attrs)
-            
+            y_next_secant, _ = self.compute_fluxes(t_next, state, forcings, point_attrs)
+            y_next = jnp.where(converged, y_curr, y_next_secant)
+
             # pass the updated values forward to the next iteration
             return (t_curr, t_next, y_curr, y_next), None
 
