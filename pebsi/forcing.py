@@ -44,7 +44,7 @@ def adjust_temperature(forcings, point_attrs, params):
     return forcings._replace(temp=temp)
 
 def adjust_precipitation(forcings, point_attrs, params):
-    """Applies elevation gradient and kp factor to precipitation."""
+    """Applies elevation gradient to precipitation."""
     elev_change = point_attrs.elevation - point_attrs.median_elev
     tp = forcings.tp * (1 + params.precgrad * (elev_change))
     return forcings._replace(tp=tp)
@@ -89,7 +89,7 @@ def adjust_longwave(forcings, point_attrs, params):
     return forcings._replace(longwave_in=forcings.longwave_in + delta)
 
 def apply_parameters(forcings, params):
-    """Applies per-point wind and dust scaling factors."""
+    """Applies per-point wind, precip, and dust scaling factors."""
     return forcings._replace(
         wind=forcings.wind * params.wind_factor,
         dustdry=forcings.dustdry * params.dust_factor,
