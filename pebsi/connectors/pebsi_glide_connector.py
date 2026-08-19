@@ -40,11 +40,12 @@ import jax
 # --------------------------------------------------------------------- #
 
 def latlon_to_glacier_crs(lat, lon, crs):
-    """Project PEBSI point lat/lon (EPSG:4326) into a glacier's metric CRS."""
+    """
+    Project PEBSI point lat/lon (EPSG:4326) into a glacier's metric CRS.
+    """
     transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
     x, y = transformer.transform(np.asarray(lon), np.asarray(lat))
     return np.asarray(x), np.asarray(y)
-
 
 def points_to_grid(x_pts, y_pts, values, x_grid, y_grid,
                     method="linear", fill_method="nearest"):
@@ -77,7 +78,6 @@ def points_to_grid(x_pts, y_pts, values, x_grid, y_grid,
 
     return grid_vals
 
-
 def grid_to_points(x_grid, y_grid, grid_vals, x_pts, y_pts):
     """
     Sample an updated GLIDE grid field (e.g. new surface elevation) back
@@ -93,15 +93,6 @@ def grid_to_points(x_grid, y_grid, grid_vals, x_pts, y_pts):
         (y_grid, x_grid), grid_vals, bounds_error=False, fill_value=None
     )
     return interp(np.column_stack([y_pts, x_pts]))
-
-
-def mwe_to_ice_thickness(mb_mwe, density_ice, density_water):
-    """
-    Converts net surface mass balance (m water equivalent)
-    to ice-equivalent thickness (m).
-    """
-    return mb_mwe * density_water / density_ice
-
 
 # --------------------------------------------------------------------- #
 #                              GlideCoupler
@@ -121,8 +112,11 @@ class GlideCoupler:
     """
 
     def __init__(self, terrain, params):
+        # load in classes
         self.terrain = terrain
         self.params = params
+
+        # load in dynamics parameters from PEBSI
         self.n_levels = params.dynamics_n_levels
         self.dx = params.dynamics_dx
         self.margin = params.dynamics_margin
@@ -132,6 +126,7 @@ class GlideCoupler:
         self.sliding_beta = params.dynamics_sliding_beta
         self.sliding_m = params.dynamics_sliding_m
 
+        # build lookup table for the glaciers in this simulation
         self._o2_of_gid = self._build_o2_lookup(terrain)
 
         # group this run's glaciers by O2 sub-region
@@ -302,9 +297,8 @@ class GlideCoupler:
 
             # push this period's SMB as an annual rate
             mb_rate_mwe = period_mb_mwe[region_idx] / dt_years  # m w.e. yr-1
-            smb_ice_rate = mwe_to_ice_thickness(
-                mb_rate_mwe, self.params.density_ice, self.params.density_water
-            )  # m ice yr-1
+            smb_ice_rate = mb_rate_mwe * self.params.density_water / self.params.density_ice # m i.e. yr-1
+
             smb_grid = points_to_grid(x_pts, y_pts, smb_ice_rate, grid["x"], grid["y"])
             self._push_forcing(region, smb_grid)
             self._advance(region, t=float(t_years), dt=dt_years)
