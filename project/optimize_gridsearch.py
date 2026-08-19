@@ -18,7 +18,7 @@ rgi_map = {}
 for glacier, numbers in translate_rgi.items():
     rgi_map[numbers['6']] = glacier
 
-output_fp = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_dense_2/'
+output_fp = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_0/'
 ds_all = xr.open_zarr(output_fp + 'output.zarr')
 
 # --- TEMP: this store isn't chunked by point (chunks span all points), so
@@ -27,14 +27,15 @@ ds_all = xr.open_zarr(output_fp + 'output.zarr')
 # repeating that full-chunk read per point. Delete this block once reading
 # from output.zarr generated with the new point-chunked rechunk_final().
 # print('loading dataset into memory (unchunked-by-point workaround)...', flush=True)
-ds_all = ds_all[['melt', 'accumulation', 'refreeze', 'albedo']].load()
-print('done loading', flush=True)
+print(ds_all)
+# ds_all = ds_all[['melt', 'accumulation', 'refreeze', 'albedo']].load()
+# print('done loading', flush=True)
 # --- END TEMP
 
 model_t0 = ds_all.time.values[0]
 model_t1 = ds_all.time.values[-1]
 
-with open(output_fp + 'config_gridsearch.yaml') as f:
+with open(output_fp + 'config.yaml') as f:
     config = yaml.safe_load(f)
 
 # precompute site/rgiid -> matching config indices once, instead of
@@ -92,15 +93,38 @@ def process_site(rgiid, site):
     kp = np.array([config['kp'][idx] for idx in idx_site])
     kw = np.array([config['wind_factor'][idx] for idx in idx_site])
 
-    # kp controls precipitation/accumulation, so pick it off winter MAE;
-    # then, holding that kp fixed, pick wind_factor off summer MAE
-    best_kp = kp[np.argmin(winter)]
-    kp_mask = kp == best_kp
-    best_idx = np.where(kp_mask)[0][np.argmin(summer[kp_mask])]
+    def select_kp(kw_fixed):
+        mask = kw == kw_fixed
+        return kp[mask][np.argmin(winter[mask])]
+
+    def select_kw(kp_fixed):
+        mask = kp == kp_fixed
+        return kw[mask][np.argmin(summer[mask])]
+
+    def combined_err(kp_v, kw_v):
+        idx = np.where((kp == kp_v) & (kw == kw_v))[0][0]
+        return winter[idx] + summer[idx], idx
+
+    # alternate kp<-winter MAE / kw<-summer MAE until the pair stabilizes,
+    # so neither parameter is chosen from a point coupled to an arbitrary
+    # value of the other
+    max_iters = 10
+    cur_kw = 1.0  # neutral start: no wind adjustment
+    visited = {}
+    for _ in range(max_iters):
+        cur_kp = select_kp(cur_kw)
+        new_kw = select_kw(cur_kp)
+        state = (cur_kp, new_kw)
+        converged = new_kw == cur_kw or state in visited
+        visited[state] = combined_err(cur_kp, new_kw)
+        if converged:
+            break
+        cur_kw = new_kw
+
+    (best_kp, best_kw), (_, best_idx) = min(visited.items(), key=lambda kv: kv[1][0])
 
     best_summer = summer[best_idx]
     best_winter = winter[best_idx]
-    best_kw = kw[best_idx]
 
     best_point = idx_site[best_idx]
     best_ds = ds_all.sel(point=best_point) # [['melt', 'accumulation', 'refreeze']]
@@ -135,8 +159,11 @@ with ThreadPoolExecutor(max_workers=min(32, len(tasks) or 1)) as executor:
 
         summer_errors = mb.mod[mb.idx_summer] - mb.meas[mb.idx_summer]
         winter_errors = mb.mod[mb.idx_winter] - mb.meas[mb.idx_winter]
-        if np.all(summer_errors < 0) or np.all(summer_errors > 0) or np.all(winter_errors < 0) or np.all(winter_errors > 0):
-            print(f'Throwing out {rgiid}/{site} because of bias mass balance')
+        if np.all(summer_errors < -0.1) or np.all(summer_errors > 0.1) or np.all(winter_errors < -0.1) or np.all(winter_errors > 0.1):
+            print(f'Throwing out {rgiid}/{site} because of biased mass balance')
+
+            fig, ax = mb.plot_mb(savefig=plot_dir + f'{rgiid}_{site}_not_kept.png')
+            plt.close(fig)
             pass
         else:
             out_dict[rgiid][site] = {'winter_MAE': best_winter, 'summer_MAE': best_summer,
@@ -148,7 +175,9 @@ with ThreadPoolExecutor(max_workers=min(32, len(tasks) or 1)) as executor:
 
             all_best_idx.append(best_point)
 
-ds_best = ds_all.sel(point=all_best_idx)
+ds_best = ds_all.sel(point=all_best_idx).chunk({'point': len(all_best_idx)})
+for var in ds_best.variables:
+    ds_best[var].encoding = {}
 ds_best.to_zarr(output_fp + 'best_params.zarr', mode='w')
 
 with open('calibrated_grid.pkl', 'wb') as f:

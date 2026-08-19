@@ -16,8 +16,8 @@ import os
 sites_fn = 'project/sites.pkl'
 out_config_fn = 'config_gridsearch.yaml'
 
-wind_factors = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3]
-kps = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5]
+wind_factors = [0.3, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3]
+kps = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5]
 
 # initialize parameter storage
 configs = {}
@@ -36,11 +36,12 @@ configs['debug'] = True
 configs['store_data'] = True
 configs['progress_bar'] = False
 configs['store_vars'] = ['minimal']
+configs['bias_vars'] = ['temp']
 
 # FILEPATHS
 configs['climate_fp'] = '/ocean/projects/ees260009p/cwilson4/climate_data/'
 configs['rgi_fp'] = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
-configs['output_fp'] = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch_dense/'
+configs['output_fp'] = '/ocean/projects/ees260009p/cwilson4/Output/gridsearch/'
 configs['cop30_vrt_path'] = '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
 configs['shading_fp'] = '/ocean/projects/ees260009p/cwilson4/data/shading/'
 configs['ice_albedo_fn'] = '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
