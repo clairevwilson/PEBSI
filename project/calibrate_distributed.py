@@ -76,13 +76,9 @@ for rgi_id in np.unique(ds_output['rgiid'].values):
     else:
         fig_w, fig_h = 8 * dx / dy, 8
 
-    mae_2d = (mae.to_series()
-               .groupby(level=['x', 'y']).mean()
-               .to_xarray()
-               .reindex(x=albedo_glac.ds.x.values, y=albedo_glac.ds.y.values))
-
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    mae_2d.plot(ax=ax, cmap='viridis', x='x', y='y')
+    sc = ax.scatter(mae.x.values, mae.y.values, c=mae.values, cmap='viridis')
+    fig.colorbar(sc, ax=ax)
     outline_proj.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1)
     plt.tight_layout()
     plt.savefig(f'../../figs/albedo_error/{name}_albedo_mae.png', dpi=300)
