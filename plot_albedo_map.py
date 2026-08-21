@@ -5,7 +5,6 @@ a two-panel map: satellite albedo (left) and kriged simulation albedo (right).
 Edit USER_GUESS and output_dir before running.
 """
 import sys
-import glob
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -18,10 +17,10 @@ import rasterio.features
 import rasterio.transform
 
 # ===================== USER CONFIG =====================
-DATE  = '2020-07-20'          # date to search near
-output_dir  = '../Output/big_gulkana_4/'   # simulation zarrs
-albedo_dir  = '/Users/cvw/local/data/rs/albedo/'
-rgi_fp      = '/Users/cvw/local/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
+DATE = '2024-09-20'          # date to search near
+output_dir = '../Output/gulkana_windfactor_precgrad_0/'   # simulation zarrs
+albedo_dir = '../data/albedo/'
+rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 COVERAGE_THRESH = 0.90              # fraction of glacier pixels required
 
 # Gulkana IDs (from translate_rgi)
@@ -84,32 +83,27 @@ sat_y    = albedo_map.y.values
 xx_sat, yy_sat = np.meshgrid(sat_x, sat_y)
 
 # ===================== LOAD SIMULATION POINTS =====================
-fns = sorted(glob.glob(f'{output_dir}/*.zarr'))
-assert len(fns) > 0, f'No zarr files found in {output_dir}'
+ds_sim = xr.open_zarr(f'{output_dir}/output.zarr')
+ds_sim['time'] = ds_sim.time - pd.Timedelta(hours=8)
 
-lats, lons, vals_alb, rgi_ids = [], [], [], set()
+idx_id = np.where(ds_sim['rgiid'].values == RGI6_ID)[0]
+assert len(idx_id) > 0, f'RGI ID {RGI6_ID} not found in output.zarr'
+points = ds_sim.point.values[idx_id]
+model_glac = ds_sim.sel(point=points, layer=0)
 
-for fn in fns:
-    ds = xr.open_zarr(fn, consolidated=False)
+# albedo is computed once daily at 14:00 local
+target_mask = (
+    (model_glac.time.dt.year  == best_date.year)  &
+    (model_glac.time.dt.month == best_date.month) &
+    (model_glac.time.dt.day   == best_date.day)   &
+    (model_glac.time.dt.hour  == 14)
+)
+alb_day = model_glac['albedo'].where(target_mask, drop=True)
+vals_alb = alb_day.isel(time=0).values if alb_day.sizes['time'] > 0 else np.full(len(points), np.nan)
 
-    # albedo is computed once daily at 14:00 local (UTC-8 = 22:00 UTC)
-    target_mask = (
-        (ds.time.dt.year  == best_date.year)  &
-        (ds.time.dt.month == best_date.month) &
-        (ds.time.dt.day   == best_date.day)   &
-        (ds.time.dt.hour  == 22)
-    )
-    alb_day = ds['albedo'].where(target_mask, drop=True)
-    vals_alb.append(float(alb_day.values[0]) if alb_day.size > 0 else np.nan)
-
-    lats.append(float(ds.attrs['lat']))
-    lons.append(float(ds.attrs['lon']))
-    rgi_ids.add(ds.attrs['id'])
-    ds.close()
-
-lats     = np.array(lats)
-lons     = np.array(lons)
-vals_alb = np.array(vals_alb)
+lats = model_glac.lat.values
+lons = model_glac.lon.values
+rgi_ids = {RGI6_ID}
 
 # ===================== CRS + GLACIER OUTLINE =====================
 clon = float(np.mean(lons))

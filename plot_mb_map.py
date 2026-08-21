@@ -12,33 +12,31 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/base/base_0/' # /ocean/projects/ees260009p/cwilson4
-rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
-plot_var = 'mass_balance'
+output_dir = '../Output/nowindmap_distributed_0/' # /ocean/projects/ees260009p/cwilson4
+rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
+plot_var = 'wind'
 cm = 'RdBu_r'
 
 # ===================== LOAD DATA =====================
-# ds_map = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False).load()
-# ds_nomap = xr.open_zarr(f'{output_dir.replace("wind", "no_wind")}/output.zarr', consolidated=False).load()
+ds_map = xr.open_zarr(f'{output_dir.replace("now", "w")}/output.zarr', consolidated=False)
+ds_nomap = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
-# ds = ds_map 
-
-# if plot_var == 'mass_balance':
-#     vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
-# else:
-#     vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values / max(n_years, 1)
-
-ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
-
+ds = ds_map 
 n_years = len(np.unique(ds.time.dt.year.values))
-vals = ds[plot_var].sum('time').values / max(n_years, 1)
+
+if plot_var == 'mass_balance':
+    vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
+else:
+    vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values
+
+# ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
+
+# vals = ds[plot_var].sum('time').values / max(n_years, 1)
 
 lats = ds['lat'].values
 lons = ds['lon'].values
 rgi_ids = set(ds['rgiid'].values.tolist())
 n_points = ds.sizes['point']
-
-ds.close()
 
 # ===================== CRS SETUP =====================
 # build a local LAEA centered on the glacier
@@ -76,8 +74,8 @@ z_masked = np.where(glacier_mask == 1, z_grid, np.nan)
 if plot_var == 'wind':
     vmin, vmax = 0.5, 1.5
 else:
-    vmin = -2 # np.nanpercentile(np.abs(vals), 1)
-    vmax = 2 # np.nanpercentile(np.abs(vals), 95)
+    vmin = -0.5 # np.nanpercentile(np.abs(vals), 1)
+    vmax = 0.5 # np.nanpercentile(np.abs(vals), 95)
 
 fig, ax = plt.subplots(figsize=(8, 7))
 

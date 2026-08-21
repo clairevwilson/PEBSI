@@ -14,27 +14,26 @@ store_data: true
 debug: true 
 progress_bar: true
 
-start_date: '2018-04-20 00:00'
-end_date: '2019-04-22 00:00'
+start_date: '2020-04-20 00:00'
+end_date: '2025-08-20 00:00'
 # temporal_chunks: 384
 # dem_fn: '../DEMs/gulkana_dem.tif'
 
 rgi_ids: ['01.00570'] # ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
-method_distribute: 'scatter'
 n_points: 300
-temporal_chunk_years: 0.1
+# temporal_chunk_years: 1
 
-# option_windmaps: True
-wind_factor: 1.5 
+option_ice_albedo_tif: true
+option_windmaps: true
+
+wind_factor: 3 
 precgrad: 0.000130
-output_fp: '../Output/wind_maps_short/'
+output_fp: '../Output/gulkana_windfactor_precgrad/'
 
-# rgi_ids: ['01.00570','01.00570','01.00570']
-# sites: ['A','AU','B']
+# rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
+# sites: ['A','AU','B','D','T']
 
-store_vars: ['climate', 'MB'] # ['MB','EB','climate']
-
-# option_ice_albedo_tif: true
+store_vars: ['climate', 'MB', 'EB'] # ['MB','EB','climate']
 
 # option_dynamics: true 
 # thickness_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif'
