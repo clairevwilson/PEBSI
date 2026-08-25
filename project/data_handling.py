@@ -515,7 +515,7 @@ class Albedo():
             self.glac_no = '01.06469'
 
         # open dataframes
-        self.albedo_fp = base_fp + 'data/albedo/updated/' # updated/
+        self.albedo_fp = base_fp + 'data/albedo/' # updated/
 
         # find the site location lat/lon
         glac_no_6 = translate_rgi[name]['6']
@@ -689,20 +689,24 @@ class Albedo():
         self.dtype = self.dtype[valid_steps]
         self.mod = ds.sel(time=self.time, method='nearest').albedo.values
         self.meas = self.data
+        self.model_ds = ds
 
         if snow_only:
             self.snow_only()
         self.format = 'values'
         return
     
-    def get_deltas(self, method='max'):
+    def get_deltas(self, method='march_mean'):
         """
-        choose method from 'first', 'max'
+        choose method from 'first', 'max', 'march_mean'
         """
-        dates = self.time 
+        dates = pd.to_datetime(self.time)
 
-        for year in np.unique(pd.to_datetime(dates).year):
-            idx = np.where(pd.to_datetime(dates).year == year)[0]
+        all_meas_march = []
+        all_mod_march = []
+
+        for year in np.unique(dates.year):
+            idx = np.where(dates.year == year)[0]
             if method == 'first':
                 first_mod = self.mod[idx[0]]
                 first_meas = self.meas[idx[0]]
@@ -714,6 +718,34 @@ class Albedo():
                 max_meas = max(self.meas[idx])
                 self.mod[idx] -= max_mod 
                 self.meas[idx] -= max_meas 
+
+            elif method == 'march_mean':
+                march_idx = np.where((dates.year == year) & (dates.month == 3))[0]
+
+                if len(march_idx) > 0:
+                    march_meas = np.mean(self.meas[march_idx])
+                else:
+                    march_meas = np.nan 
+
+                march_mod = self.model_ds.sel(time=slice(f'{year}-03-01', f'{year}-04-01')).squeeze().albedo.mean().values
+
+                all_meas_march.append(march_meas)
+                all_mod_march.append(march_mod)
+
+        if method == 'march_mean':
+            mean_meas = np.nanmean(all_meas_march)
+            all_meas_march = np.array(all_meas_march)
+            all_meas_march[np.isnan(all_meas_march)] = mean_meas
+
+            mean_mod = np.nanmean(all_mod_march)
+            all_mod_march = np.array(all_mod_march)
+            all_mod_march[np.isnan(all_mod_march)] = mean_mod
+
+            for year, modm, measm in zip(np.unique(dates.year), all_mod_march, all_meas_march):
+                idx = np.where(dates.year == year)[0]
+                self.mod[idx] -= modm 
+                self.meas[idx] -= measm
+
         self.format = 'deltas'
         return
     
