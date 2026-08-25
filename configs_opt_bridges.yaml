@@ -1,10 +1,4 @@
-# /trace/group/rounce/cvwilson/
-# /ocean/projects/ees260009p/cwilson4
-climate_fp: '/ocean/projects/ees260009p/cwilson4/climate_data/'
-rgi_fp: '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
-output_fp: '/ocean/projects/ees260009p/cwilson4/Output/recalibrate/'
-cop30_vrt_path: '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
-shading_fp: '/ocean/projects/ees260009p/cwilson4/data/shading/'
+
 
 rgi_ids:
 - '01.09162'

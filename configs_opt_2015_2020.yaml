@@ -1,0 +1,38 @@
+# Site set for the 2015-2020 "normal run" test (see jax_optimize.py
+# NORMAL_RUN_2015_2020) -- only used by load_reduced_site_dict, which reads
+# rgi_ids/sites as parallel lists. Every site here has benchmark mass
+# balance data spanning the full 2015-04-01 to 2020-04-01 window.
+rgi_ids:
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.22193'
+- '01.22193'
+- '01.01104'
+- '01.01104'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+sites:
+- N
+- S
+- Y
+- C
+- B
+- K53
+- K17b
+- C
+- D
+- T
+- X
+- V
+- AU
+- AB
+- D
+- B

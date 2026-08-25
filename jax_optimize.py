@@ -182,6 +182,8 @@ if 'trace' in socket.gethostname():
     host = 'trace'
 elif 'bridges' in socket.gethostname():
     host = 'bridges'
+else:
+    host = 'lantern'
 
 import sys
 import os
@@ -239,6 +241,7 @@ HOST_PATHS = {
         shading_fp='/ocean/projects/ees260009p/cwilson4/data/shading/',
         ice_albedo_fn='/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
     ),
+    'lantern': {}
 }
 
 
