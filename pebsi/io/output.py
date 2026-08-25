@@ -38,10 +38,16 @@ class Output():
         self.all_vars = OUTPUT_GROUPS
 
         # make sure the requested storage variables are valid
-        for v in params.store_vars: assert v in OUTPUT_GROUPS, f'Invalid output group: {v}'
+        all_vars_flat = [vv for vvs in OUTPUT_GROUPS.values() for vv in vvs]
+        for v in params.store_vars: 
+            if v not in OUTPUT_GROUPS and v not in all_vars_flat:
+                assert v in OUTPUT_GROUPS, f'Invalid output group or variable: {v}'
 
         # extract the actual variables to store
-        self.store = [v for g in params.store_vars for v in OUTPUT_GROUPS[g]]
+        self.store = [
+            v for g in params.store_vars 
+            for v in (OUTPUT_GROUPS[g] if g in OUTPUT_GROUPS else [g])
+        ]
 
         # find the filepath to store the data
         self.get_output_name()

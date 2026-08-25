@@ -8,6 +8,7 @@ All functions operate on JAX arrays and are called inside the time loop.
 @author: clairevwilson
 """
 import jax.numpy as jnp
+import jax
 
 def expand_forcings(forcings, point_attrs):
     """

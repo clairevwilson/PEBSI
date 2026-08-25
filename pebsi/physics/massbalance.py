@@ -146,8 +146,12 @@ class MassBalanceDriver:
         # update age 
         new_age = state.lage + 1
 
+        # update surface type 
+        new_surftype = state.ltype[:, 0]
+
         # store updated properties to state
         state = state._replace(
+            surftype = new_surftype,
             lgrainsize = new_grainsize,
             roughness = new_roughness,
             lage = new_age

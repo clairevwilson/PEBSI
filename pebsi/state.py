@@ -23,6 +23,7 @@ OUTPUT_GROUPS = {
                  'sublimation', 'deposition', 'evaporation',
                  'condensation', 'accumulation', 'rainfall', 'error',
                  'total_mass'],
+    'surface':  ['surftemp', 'surftype', 'albedo'],
     'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
                  'longwave_in', 'longwave_out', 'sensible_heat',
                  'latent_heat', 'rain_heat', 'ground_heat',
@@ -42,9 +43,13 @@ def make_step_outputs_class(store_vars):
     """
     fields = []
     for group in store_vars:
-        for f in OUTPUT_GROUPS[group]:
-            if f not in fields:
-                fields.append(f)
+        if group in OUTPUT_GROUPS:
+            for f in OUTPUT_GROUPS[group]:
+                if f not in fields:
+                    fields.append(f)
+        else:
+            if group not in fields:
+                fields.append(group)
     return namedtuple('StepOutputs', fields)
 
 class GlacierState(NamedTuple):
@@ -63,6 +68,7 @@ class GlacierState(NamedTuple):
     albedo: jnp.ndarray         # Albedo [-]
     albedo_surr: jnp.ndarray    # Albedo of off-glacier surroundings [-]
     surftemp: jnp.ndarray       # Surface temperature [C]
+    surftype: jnp.ndarray       # Surface type [-]
     roughness: jnp.ndarray      # Surface roughness [m]
     last_snow: jnp.ndarray      # Time index of last snowfall [-]
 

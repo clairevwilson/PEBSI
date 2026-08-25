@@ -209,6 +209,7 @@ class PEBSI():
             albedo=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
             albedo_surr=jnp.full((N_POINTS,), params.albedo_fresh_snow, dtype=jnp.float64),
             surftemp=jnp.full((N_POINTS,), params.surftemp_guess, dtype=jnp.float64),
+            surftype=jnp.zeros((N_POINTS,), dtype=jnp.int32),
             roughness=jnp.full((N_POINTS,), params.roughness_fresh_snow / 1000, dtype=jnp.float64),
             last_snow=jnp.zeros((N_POINTS,), dtype=jnp.int32),
 

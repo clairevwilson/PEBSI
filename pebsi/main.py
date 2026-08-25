@@ -162,6 +162,10 @@ def main(
             if field in requested_fields:
                 out[field] = value / params.density_water
 
+        # surface type
+        if 'surftype' in requested_fields:
+            out['surftype'] = getattr(next_state, 'surftype')
+
         # layer fields
         for field in OUTPUT_GROUPS['layers']:
             if field in requested_fields:
