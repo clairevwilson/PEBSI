@@ -727,8 +727,8 @@ def merge_existing_layers(state, mask, idx, params):
         target_vals = data[:, target_idx]
 
         if var == 'ltype':
-            # merges never promote to a more-advanced type (snow < firn < ice)
-            merged_vals = jnp.minimum(removed_vals, target_vals).astype(jnp.int32)
+            # merged layer takes the type of whichever side has more mass
+            merged_vals = jnp.where(m_removed > m_target, removed_vals, target_vals).astype(jnp.int32)
         else:
             # calculate mass-weighted average of values (N_POINTS)
             merged_vals = (target_vals * m_target + removed_vals * m_removed) / m_safe
@@ -1310,8 +1310,8 @@ def merge_new_layer(state, mask, new_layer, params):
         target_vals = data[:, 0]
 
         if var == 'ltype':
-            # merges never promote to a more-advanced type (snow < firn < ice)
-            merged_vals = jnp.minimum(new_vals, target_vals).astype(jnp.int32)
+            # merged layer takes the type of whichever side has more mass
+            merged_vals = jnp.where(m_new > m_target, new_vals, target_vals).astype(jnp.int32)
         else:
             # calculate mass-weighted average of values (N_POINTS)
             merged_vals = (target_vals * m_target + new_vals * m_new) / m_safe
