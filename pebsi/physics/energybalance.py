@@ -212,15 +212,12 @@ class EnergyBalanceDriver():
 
         # unpack climate variables
         airtemp = forcings.temp
-        surftemp = state.surftemp 
+        surftemp = state.surftemp
         precip_rate = forcings.tp / SPH
 
-        # define rain vs snow scaling
-        rain_scale = jnp.linspace(0,1,20)
-        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW,SNOW_THRESHOLD_HIGH,20)
-        
-        # get fraction of precip that is rain
-        frac_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
+        # linear rain fraction ramp between the two thresholds
+        threshold_range = SNOW_THRESHOLD_HIGH - SNOW_THRESHOLD_LOW
+        frac_rain = jnp.clip((forcings.temp - SNOW_THRESHOLD_LOW) / threshold_range, 0.0, 1.0)
 
         Qp = (airtemp - surftemp)*precip_rate*frac_rain*DENSITY_WATER*CP_WATER
         return Qp

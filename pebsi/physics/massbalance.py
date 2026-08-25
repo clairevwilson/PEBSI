@@ -207,18 +207,11 @@ class MassBalanceDriver:
         SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
         DENSITY_WATER = self.params.density_water
 
-        # define rain vs snow scaling 
-        rain_scale = jnp.linspace(0, 1, 20)
-        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW, SNOW_THRESHOLD_HIGH, 20)
-
-        # calculate fraction of rain
-        fraction_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
-        rain = forcings.tp * fraction_rain * DENSITY_WATER 
+        # linear rain fraction ramp between the two thresholds
+        threshold_range = SNOW_THRESHOLD_HIGH - SNOW_THRESHOLD_LOW
+        fraction_rain = jnp.clip((forcings.temp - SNOW_THRESHOLD_LOW) / threshold_range, 0.0, 1.0)
+        rain = forcings.tp * fraction_rain * DENSITY_WATER
         snow = forcings.tp * (1-fraction_rain) * DENSITY_WATER
-
-        # make sure amounts to the boundaries correctly
-        rain = jnp.where(forcings.temp <= SNOW_THRESHOLD_LOW, 0, rain)
-        snow = jnp.where(forcings.temp > SNOW_THRESHOLD_HIGH, 0, snow)
         
         return rain,snow # kg m-2
 
@@ -1081,11 +1074,11 @@ class MassBalanceDriver:
         # Boone / Anderson (1976) method (COSIPY)
         if params.method_densification in ['Boone']:
             # EMPIRICAL PARAMETERS
-            c1 = params.Boone_c1
-            c2 = params.Boone_c2
-            c3 = params.Boone_c3
-            c4 = params.Boone_c4
-            c5 = params.Boone_c5
+            c1 = params.Boone_c1[:, None]
+            c2 = params.Boone_c2[:, None]
+            c3 = params.Boone_c3[:, None]
+            c4 = params.Boone_c4[:, None]
+            c5 = params.Boone_c5[:, None]
 
             # shift cumulative mass down by one (top layer has no weight above)
             cumulative_mass = jnp.cumsum(lmass, axis=1)[:, :-1]
@@ -1141,7 +1134,7 @@ class MassBalanceDriver:
 
         # check if any water was squeezed out by densification
         if params.constant_irrwater:
-            frac_irreduc = jnp.full_like(new_ldensity, params.Sr)
+            frac_irreduc = jnp.broadcast_to(params.Sr[:, None], new_ldensity.shape)
         else:
             frac_irreduc = jnp.where(new_ldensity > 500.0, params.Sr_dense, params.Sr_light)
         porosity = 1 - new_ldensity / DENSITY_ICE 
@@ -1224,7 +1217,7 @@ class MassBalanceDriver:
         # CONSTANTS
         WET_C = params.wet_grain_C
         PI = jnp.pi
-        RFZ_GRAINSIZE = params.grainsize_rfz
+        RFZ_GRAINSIZE = params.grainsize_rfz[:, None]
         FIRN_GRAINSIZE = params.grainsize_firn
         ICE_GRAINSIZE = params.grainsize_ice
         CTOK = params.celsius_to_kelvin
@@ -1338,25 +1331,13 @@ class MassBalanceDriver:
             
             # determine actual dry grain growth rate from parameters
             safe_kap = jnp.maximum(kap, 1e-6)
-            # DIAGNOSTIC (see decompose_gradient_by_field.py): threshold-based
-            # stop_gradient on just the base argument of jnp.power (two prior
-            # attempts, at 1e-6 and 1e-2) did not fix -- and made it WORSE --
-            # the huge lgrainsize gradient. Full ablation to isolate whether
-            # dry metamorphism as a whole (base AND exponent paths, plus its
-            # recursive feedback through grainsize->denominator->base each
-            # hour) is really the source, before guessing at a real fix.
-            drdrydt = jax.lax.stop_gradient(dr0 * jnp.power(safe_base, 1.0 / safe_kap) / dt)
+            drdrydt = dr0 * jnp.power(safe_base, 1.0 / safe_kap) / dt
             drdry = drdrydt * dt
 
         # WET METAMORPHISM
         grainsize_m = grainsize / 1e6
         safe_grainsize_m_sq = jnp.where(grainsize_m > 0, grainsize_m ** 2, 1.0)
-        # DIAGNOSTIC (see decompose_gradient_by_field.py): same shape of bug
-        # as drdry -- 1/grainsize_m**2 is forward-safe (only floored at
-        # exactly <=0) but its gradient ~ -2/grainsize_m**3 is unbounded as
-        # grainsize_m->0. Full ablation to test whether this (via density/
-        # albedo) is what's driving the huge lice gradient at 27360-27405h.
-        drwetdt = jax.lax.stop_gradient(WET_C * (f_liq ** 3) / (4.0 * PI * safe_grainsize_m_sq))
+        drwetdt = WET_C * (f_liq ** 3) / (4.0 * PI * safe_grainsize_m_sq)
         drwet = drwetdt * dt * 1e6
         
         # accelerate grain growth?

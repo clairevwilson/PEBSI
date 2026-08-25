@@ -57,14 +57,16 @@ static_fields = [
 # Dynamic args are parameters / constants which are 
 # allowed to be passed as scalars or as (N_POINTS, ) arrays.
 
-dynamic_fields = ['kp','wind_factor','precgrad',            
+dynamic_fields = ['kp','wind_factor','precgrad',
                 'dust_factor','lapse_rate',
                 'albedo_ice','albedo_firn','albedo_fresh_snow',
                 'temp_depth','roughness_aging_rate',
                 'roughness_fresh_snow', 'roughness_aged_snow',
                 'roughness_firn','roughness_ice',
                 'ksp_BC', 'ksp_OC', 'ksp_dust',
-                'initial_snow_depth', 'initial_firn_depth']
+                'initial_snow_depth', 'initial_firn_depth',
+                'Sr','Boone_c1','Boone_c2','Boone_c3','Boone_c4','Boone_c5',
+                'grainsize_rfz','snow_threshold_low','snow_threshold_high']
 
 # External args are those which are only needed in the
 # CPU intiialization / output functions but are not used 
