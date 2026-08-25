@@ -10,39 +10,56 @@
 # ================================================
 #               SIMULATION METADATA
 # ================================================
+output_fp: '/ocean/projects/ees260009p/cwilson4/Output/gulkana_testing/'
+
 store_data: true
 debug: true 
-progress_bar: true
+progress_bar: false
+store_vars: ['climate', 'surftype']
 
 start_date: '2020-04-20 00:00'
-end_date: '2025-08-20 00:00'
-# temporal_chunks: 384
-# dem_fn: '../DEMs/gulkana_dem.tif'
+end_date: '2021-04-20 00:00'
 
-rgi_ids: ['01.00570'] # ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
-n_points: 300
+# ================================================
+#                GLACIER POINTS
+# ================================================
+# # BIG DISTRIBUTED SIMULATION ON GULKANA
+# rgi_ids: ['01.00570']
+# n_points: 300
 # temporal_chunk_years: 1
 
+# SMALL GULKANA SIMULATION
+rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
+sites: ['A','AU','B','D','T']
+
+# # MULTI-GLACIER SIMULATION
+# rgi_ids: ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
+# sites: ['B','B','K53','GTH','D','D']
+
+# ================================================
+#                     PHYSICS
+# ================================================
 option_ice_albedo_tif: true
 option_windmaps: true
+option_accel_grains: true 
+option_flat_plates: true
+option_dynamics: false
+constant_freshgrainsize: 54.5
 
+dust_factor: 10
 wind_factor: 3 
+kp: 2.5
 precgrad: 0.000130
-output_fp: '../Output/gulkana_windfactor_precgrad/'
 
-# rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
-# sites: ['A','AU','B','D','T']
+bias_vars: ['temp']
 
-store_vars: ['climate', 'MB', 'EB'] # ['MB','EB','climate']
-
-# option_dynamics: true 
-# thickness_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif'
-
-# climate_fp: '/ocean/projects/ees260009p/cwilson4/climate_data/'
-# rgi_fp: '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
-# output_fp: '/ocean/projects/ees260009p/cwilson4/Output/recalibrate/'
-# cop30_vrt_path: '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
-# shading_fp: '/ocean/projects/ees260009p/cwilson4/data/shading/'
-# ice_albedo_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
-
-# deposition_data: 'UKESM'
+# ================================================
+#                   FILE PATHS
+# ================================================
+climate_fp: '/ocean/projects/ees260009p/cwilson4/climate_data/'
+rgi_fp: '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/'
+cop30_vrt_path: '/ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt'
+shading_fp: '/ocean/projects/ees260009p/cwilson4/data/shading/'
+ice_albedo_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif'
+thickness_fn: '/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif'
+windmap_fn: '/ocean/projects/ees260009p/cwilson4/data/windmapper/{gid}.nc'
