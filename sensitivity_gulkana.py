@@ -78,9 +78,9 @@ baseline = {
 
 # low/high bound for each perturbed parameter
 bounds = {
-    'dust_factor': (1, 20),
+    'dust_factor': (1, 200),
     'wind_factor': (1, 5),
-    'kp': (1, 4),
+    'kp': (0.5, 4),
     'lapse_rate': (-9.0, -4.0),
     'roughness_fresh_snow': (0.1, 1.0),
     'roughness_aged_snow': (2, 20),
@@ -92,7 +92,7 @@ bounds = {
     'Boone_c2': (0.021, 0.084),
     'Boone_c3': (0.023, 0.092),
     'Boone_c4': (0.0405, 0.162),
-    'Boone_c5': (0.008, 0.032),
+    'Boone_c5': (0.012, 0.032),
     'grainsize_rfz': (750, 3000),
 }
 

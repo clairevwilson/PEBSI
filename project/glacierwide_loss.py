@@ -217,6 +217,21 @@ class Albedo():
         meas = self.meas if meas is None else meas
         return np.nanmean(np.abs(mod - meas))
 
+    def log_loss(self, mod=None, meas=None, sigma=0.03):
+        """
+        Gaussian negative log-likelihood of the albedo residuals
+        [nats], assuming observations are mod ~ N(meas, sigma^2).
+        Puts albedo error on the same log-likelihood scale as the
+        Bernoulli log-loss used for snowline/melt, so the two can
+        be summed into one calibration objective. sigma should
+        reflect the albedo product's actual measurement/retrieval
+        uncertainty, not be tuned as a free weight.
+        """
+        mod = self.mod if mod is None else mod
+        meas = self.meas if meas is None else meas
+        residual = mod - meas
+        return np.nanmean(0.5 * np.log(2 * np.pi * sigma**2) + residual**2 / (2 * sigma**2))
+
     def bias(self, mod=None, meas=None):
         mod = self.mod if mod is None else mod
         meas = self.meas if meas is None else meas
@@ -363,6 +378,8 @@ class SnowlineMelt():
         if 'layerwater' in model_ds.variables:
             daily_layer_water = model_ds['layerwater'].sum(dim='layer').resample(time='1d').min()
             mod_melt = daily_layer_water > 0.05
+        elif 'lwc' in model_ds.variables:
+            mod_melt = model_ds['lwc'].resample(time='1d').min() > 0.05
         elif 'surftemp' in model_ds.variables:
             mod_melt = model_ds['surftemp'].resample(time='1d').min() == 0.0
 
@@ -389,7 +406,7 @@ class SnowlineMelt():
         assert self.mod_melt.shape == self.meas_melt.shape
         return
 
-    def bernoulli_loss(self, mod_snow=None, meas_snow=None, mod_melt=None, meas_melt=None, eps=1e-7):
+    def bernoulli_loss(self, mod_snow=None, meas_snow=None, mod_melt=None, meas_melt=None, eps=1e-3):
         def bce(mod, meas):
             p = np.clip(np.asarray(mod, dtype=float), eps, 1 - eps)
             y = np.asarray(meas, dtype=float)
