@@ -431,13 +431,16 @@ class PEBSI():
             )
 
         # run main for this temporal chunk
-        state, chunk_records = main(state, chunk_forcings, self.point_attrs, 
+        state, chunk_records = main(state, chunk_forcings, self.point_attrs,
                                     static_args, dynamic_args)
         jax.effects_barrier()
 
-        # crop the output records to the actual chunk size
+        # crop the output records to the actual chunk size (in output periods,
+        # not hours, since records may be aggregated to daily/monthly resolution)
         if actual_length < chunk_size:
-            chunk_records = jax.tree.map(lambda x: x[:actual_length], chunk_records)
+            steps_per_output = static_args.steps_per_output
+            n_periods = -(-actual_length // steps_per_output)  # ceil division
+            chunk_records = jax.tree.map(lambda x: x[:n_periods], chunk_records)
 
         return state, chunk_records
     
@@ -597,8 +600,35 @@ class PEBSI():
 
         # =============== CHUNKING SETUP ===============
         total_steps = len(self.dates)
-        chunk_size = params.temporal_chunk_hours
-        n_chunks = (total_steps - start_from + chunk_size - 1) // chunk_size
+
+        if params.output_freq == 'monthly':
+            # chunks stay ~temporal_chunk_hours long, snapped to whole months
+            month_periods = self.dates.to_period('M').values
+            change_idx = np.flatnonzero(np.r_[True, month_periods[1:] != month_periods[:-1]])
+            month_bounds = list(zip(change_idx.tolist(), change_idx[1:].tolist() + [total_steps]))
+
+            target = params.temporal_chunk_hours
+            groups, current, current_len = [], [], 0
+            for s, e in month_bounds:
+                if current and current_len + (e - s) > target:
+                    groups.append(current)
+                    current, current_len = [], 0
+                current.append((s, e))
+                current_len += e - s
+            if current:
+                groups.append(current)
+
+            groups = [g for g in groups if g[0][0] >= start_from]
+            chunk_starts = [g[0][0] for g in groups]
+            chunk_lengths = {g[0][0]: sum(e - s for s, e in g) for g in groups}
+            chunk_month_lengths = {g[0][0]: tuple(e - s for s, e in g) for g in groups}
+        else:
+            chunk_size = params.temporal_chunk_hours
+            chunk_starts = list(range(start_from, total_steps, chunk_size))
+            chunk_lengths = {s: chunk_size for s in chunk_starts}
+            chunk_month_lengths = {}
+
+        n_chunks = len(chunk_starts)
 
         # single-chunk runs: spinner only (progress bar is meaningless with no prior timing)
         if n_chunks == 1 and params.progress_bar:
@@ -615,19 +645,25 @@ class PEBSI():
         # ================== MAIN SIMULATION ==================
         chunk_i = 0
         self._chunk_label = (0, n_chunks)  # (current, total) for use in sub-methods
-        for start in range(start_from, total_steps, chunk_size):
+        for start in chunk_starts:
             chunk_i += 1
             self._chunk_label = (chunk_i, n_chunks)
+            call_chunk_size = chunk_lengths[start]
             # get dates in this chunk
-            chunk_dates = self.dates[start:start + chunk_size]
+            chunk_dates = self.dates[start:start + call_chunk_size]
             actual_size = len(chunk_dates)
+
+            # monthly: pass this chunk's per-month segment lengths
+            chunk_static_args = static_args
+            if params.output_freq == 'monthly':
+                chunk_static_args = static_args._replace(month_lengths=chunk_month_lengths[start])
 
             # start timer / progress bar
             progress.start_chunk(start, actual_size, prev_duration)
             chunk_start = time.time()
 
             # simulate one chunk
-            state, chunk_records = self._run_chunk(state, static_args, dynamic_args, chunk_dates, start, chunk_size)
+            state, chunk_records = self._run_chunk(state, chunk_static_args, dynamic_args, chunk_dates, start, call_chunk_size)
 
             # update progress bar
             chunk_end = time.time()
@@ -657,7 +693,13 @@ class PEBSI():
             if params.store_data:
                 if not self.params.progress_bar:
                     print(f'\033[2K\r~ Storing output   [{chunk_i}/{n_chunks}] ~', end='', flush=True)
-                model_output.store_chunk(chunk_records, chunk_dates, start)
+                # one timestamp (period start) per output row
+                if params.output_freq == 'monthly':
+                    offsets = np.cumsum((0,) + chunk_month_lengths[start][:-1])
+                    record_dates = chunk_dates[offsets]
+                else:
+                    record_dates = chunk_dates[::chunk_static_args.steps_per_output]
+                model_output.store_chunk(chunk_records, record_dates, start)
                 self.save_checkpoint(state, start + actual_size, model_output.output_fp)
             del chunk_records
 

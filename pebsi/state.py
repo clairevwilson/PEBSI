@@ -34,6 +34,63 @@ OUTPUT_GROUPS = {
     'climate':  ['airtemp', 'rh', 'wind', 'winddir', 'sp', 'tp'],
 }
 
+# how to collapse hourly step records into one daily/monthly output record:
+# 'sum' fluxes, 'mean' rates/snapshots, 'last' cumulative or categorical
+AGG_METHOD = {
+    # energy balance (instantaneous rates)
+    'melt_energy':    'mean',
+    'shortwave_in':    'mean',
+    'shortwave_ref':   'mean',
+    'longwave_in':     'mean',
+    'longwave_out':    'mean',
+    'sensible_heat':   'mean',
+    'latent_heat':     'mean',
+    'rain_heat':       'mean',
+    'ground_heat':     'mean',
+    'albedo':          'mean',
+    'surftemp':        'mean',
+
+    # mass balance (per-timestep fluxes)
+    'error':           'sum',
+    'melt':            'sum',
+    'refreeze':        'sum',
+    'accumulation':    'sum',
+    'runoff':          'sum',
+    'rainfall':        'sum',
+    'sublimation':     'sum',
+    'deposition':      'sum',
+    'evaporation':     'sum',
+    'condensation':    'sum',
+    # already-cumulative running totals: sum would double-count, take the
+    # end-of-period value instead
+    'cumrefreeze':     'last',
+    'total_mass':      'last',
+
+    # climate (instantaneous conditions, except precipitation)
+    'airtemp':         'mean',
+    'rh':              'mean',
+    'wind':            'mean',
+    'winddir':         'mean',
+    'tp':              'sum',
+    'sp':              'mean',
+
+    # layers (state snapshots, except the categorical type code)
+    'layerheight':     'mean',
+    'layertemp':       'mean',
+    'layerwater':      'mean',
+    'layerdensity':    'mean',
+    'layerrefreeze':   'mean',
+    'layergrainsize':  'mean',
+    'layertype':       'last',
+    'layerage':        'mean',
+    'layerBC':         'mean',
+    'layerOC':         'mean',
+    'layerdust':       'mean',
+
+    # surface type code (categorical)
+    'surftype':        'last',
+}
+
 
 def make_step_outputs_class(store_vars):
     """

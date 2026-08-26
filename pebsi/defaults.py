@@ -138,6 +138,7 @@ initial_firn_depth = 10                 # default amount of initial firn [m] (on
 
 # OUTPUT
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
+output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', or 'monthly' (lower resolution reduces VRAM and disk usage)
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS

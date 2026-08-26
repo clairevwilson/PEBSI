@@ -30,8 +30,8 @@ import pebsi.defaults as defaults
 # Statics args are needed to initialize the model and
 # make choices in the compilation (e.g., options / methods)
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 
-    'store_vars', 'differentiable',
+    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps',
+    'store_vars', 'differentiable', 'steps_per_output', 'month_lengths',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
     'carbon_vars','climate_all_vars','climate_optional_vars',
@@ -76,7 +76,7 @@ external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
     'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
-    'testing', 'progress_bar', 'debug'
+    'testing', 'progress_bar', 'debug', 'output_freq'
 ]
 
 # Any other parameters from defaults.py not listed here:
@@ -245,6 +245,28 @@ class Config():
         temporal_chunk_years = getattr(self.args, 'temporal_chunk_years')
         hours_in_year = 365 * 24
         self.args.temporal_chunk_hours = round(temporal_chunk_years * hours_in_year)
+
+        # OUTPUT RESOLUTION
+        output_freq = getattr(self.args, 'output_freq')
+        assert output_freq in ('hourly', 'daily', 'monthly'), \
+            f"output_freq must be 'hourly', 'daily', or 'monthly', got {output_freq!r}"
+
+        # set per-chunk in simulation.py when output_freq == 'monthly'
+        self.args.month_lengths = ()
+
+        if output_freq == 'hourly':
+            self.args.steps_per_output = 1
+        elif output_freq == 'daily':
+            self.args.steps_per_output = 24
+            # chunks must divide evenly into whole days
+            self.args.temporal_chunk_hours = 24 * round(self.args.temporal_chunk_hours / 24)
+            # self.dates is an inclusive date_range, so +1 vs raw hour diff
+            total_steps = len(pd.date_range(self.args.start_date, self.args.end_date, freq='h'))
+            assert total_steps % 24 == 0, \
+                'output_freq=daily requires the simulation to span whole days: ' \
+                'len(date_range(start_date, end_date, freq="h")) must be a multiple of 24 '
+        else:  # monthly; month_lengths drives aggregation instead
+            self.args.steps_per_output = 1
 
         # GLACIER DYNAMICS
         if getattr(self.args, 'option_dynamics'):

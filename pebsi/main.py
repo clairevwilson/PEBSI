@@ -25,7 +25,7 @@ import jax.numpy as jnp
 from pebsi.physics.energybalance import EnergyBalanceDriver
 from pebsi.physics.massbalance import MassBalanceDriver
 from pebsi.forcing import domain_expansion
-from pebsi.state import make_step_outputs_class, OUTPUT_GROUPS
+from pebsi.state import make_step_outputs_class, OUTPUT_GROUPS, AGG_METHOD
 
 @functools.partial(jax.jit, static_argnames=['static_args'])
 def main(
@@ -180,11 +180,69 @@ def main(
         step_records = StepOutputs(**out)
         return next_state, step_records
 
+    def aggregate_period(hourly_records):
+        """
+        Collapses one output period's hourly step records (leading axis =
+        hours in the period) down to a single record, using each field's
+        AGG_METHOD ('sum', 'mean', or 'last').
+        """
+        agg = {}
+        for field in hourly_records._fields:
+            vals = getattr(hourly_records, field)
+            method = AGG_METHOD.get(field, 'last')
+            if method == 'sum':
+                agg[field] = jnp.sum(vals, axis=0)
+            elif method == 'mean':
+                agg[field] = jnp.mean(vals, axis=0)
+            else:
+                agg[field] = vals[-1]
+        return StepOutputs(**agg)
+
     # execute the model (need to use checkpoint for forward/backward solving)
     scan_step = jax.checkpoint(step) if static_args.differentiable else step
-    final_state, records = jax.lax.scan(
-        scan_step, initial_state, all_forcings, unroll=1
-    )
+
+    steps_per_output = params.steps_per_output
+    month_lengths = params.month_lengths
+
+    if month_lengths:
+        # monthly: unrolled Python loop over statically-known calendar-month
+        # segments, so each month's length can vary within the same chunk
+        state = initial_state
+        period_records = []
+        offset = 0
+        for length in month_lengths:
+            month_forcings = jax.tree.map(
+                lambda x: jax.lax.slice_in_dim(x, offset, offset + length, axis=0),
+                all_forcings
+            )
+            state, hourly_records = jax.lax.scan(scan_step, state, month_forcings, unroll=1)
+            period_records.append(aggregate_period(hourly_records))
+            offset += length
+        final_state = state
+        records = jax.tree.map(lambda *xs: jnp.stack(xs, axis=0), *period_records)
+
+    elif steps_per_output <= 1:
+        # native hourly resolution: one output record per scanned step
+        final_state, records = jax.lax.scan(
+            scan_step, initial_state, all_forcings, unroll=1
+        )
+
+    else:
+        # daily: nest an inner hourly scan inside an outer scan over fixed-size
+        # output periods, so only one record per period is retained on-device
+        def period_step(period_state, period_forcings):
+            next_state, hourly_records = jax.lax.scan(
+                scan_step, period_state, period_forcings, unroll=1
+            )
+            return next_state, aggregate_period(hourly_records)
+
+        periodized_forcings = jax.tree.map(
+            lambda x: x.reshape((x.shape[0] // steps_per_output, steps_per_output) + x.shape[1:]),
+            all_forcings
+        )
+        final_state, records = jax.lax.scan(
+            period_step, initial_state, periodized_forcings, unroll=1
+        )
 
     # ===== COMPLETED SIMULATION: STORE DATA =====
     return final_state, records

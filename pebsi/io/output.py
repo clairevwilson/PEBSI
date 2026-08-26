@@ -120,12 +120,14 @@ class Output():
 
         if chunk_idx == 0:
             # make sure time is chunked in a reasonable chunk; keep point/layer whole
+            time_chunk = {'hourly': 24 * 7, 'daily': 30, 'monthly': 12}.get(
+                getattr(self.params, 'output_freq', 'hourly'), 24 * 7)
             encoding = {}
             for var in ds_chunk.data_vars:
                 if ds_chunk[var].ndim == 2:
-                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS)}
+                    encoding[var] = {'chunks': (time_chunk, self.N_POINTS)}
                 else:
-                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS, self.N_LAYERS)}
+                    encoding[var] = {'chunks': (time_chunk, self.N_POINTS, self.N_LAYERS)}
             ds_chunk.to_zarr(self.out_fn, mode='w', consolidated=False, encoding=encoding)
             
             # write site info right away

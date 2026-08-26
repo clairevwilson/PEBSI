@@ -13,12 +13,13 @@
 output_fp: '/ocean/projects/ees260009p/cwilson4/Output/gulkana_testing/'
 
 store_data: true
-debug: true 
+debug: true
 progress_bar: false
 store_vars: ['climate', 'surftype']
+output_freq: 'daily'   # 'hourly' (default), 'daily', or 'monthly' -- lower resolution reduces VRAM and disk usage
 
 start_date: '2020-04-20 00:00'
-end_date: '2021-04-20 00:00'
+end_date: '2021-04-20 23:00'
 
 # ================================================
 #                GLACIER POINTS
