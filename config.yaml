@@ -10,28 +10,28 @@
 # ================================================
 #               SIMULATION METADATA
 # ================================================
-output_fp: '/ocean/projects/ees260009p/cwilson4/Output/gulkana_testing/'
+output_fp: '/ocean/projects/ees260009p/cwilson4/Output/kahiltna_testing/'
 
 store_data: true
 debug: true
 progress_bar: false
-store_vars: ['climate', 'surftype']
-output_freq: 'daily'   # 'hourly' (default), 'daily', or 'monthly' -- lower resolution reduces VRAM and disk usage
+store_vars: ['minimal']
+output_freq: 'monthly' 
 
-start_date: '2020-04-20 00:00'
-end_date: '2021-04-20 23:00'
+start_date: '2015-04-20 00:00'
+end_date: '2021-04-19 23:00'
 
 # ================================================
 #                GLACIER POINTS
 # ================================================
-# # BIG DISTRIBUTED SIMULATION ON GULKANA
-# rgi_ids: ['01.00570']
-# n_points: 300
-# temporal_chunk_years: 1
+# BIG DISTRIBUTED SIMULATION
+rgi_ids: ['01.22193']
+n_points: 5000
+temporal_chunk_years: 1
 
 # SMALL GULKANA SIMULATION
-rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
-sites: ['A','AU','B','D','T']
+# rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
+# sites: ['A','AU','B','D','T']
 
 # # MULTI-GLACIER SIMULATION
 # rgi_ids: ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104', '01.01390']
@@ -47,10 +47,9 @@ option_flat_plates: true
 option_dynamics: false
 constant_freshgrainsize: 54.5
 
-dust_factor: 10
 wind_factor: 3 
 kp: 2.5
-precgrad: 0.000130
+precgrad: 0.00010
 
 bias_vars: ['temp']
 

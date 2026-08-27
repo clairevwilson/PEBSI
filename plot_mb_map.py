@@ -12,26 +12,27 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '../Output/nowindmap_distributed_0/' # /ocean/projects/ees260009p/cwilson4
-rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
-plot_var = 'wind'
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/kahiltna_testing_2/' # 
+rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
+plot_var = 'mass_balance'
 cm = 'RdBu_r'
 
 # ===================== LOAD DATA =====================
-ds_map = xr.open_zarr(f'{output_dir.replace("now", "w")}/output.zarr', consolidated=False)
-ds_nomap = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
+# ds_map = xr.open_zarr(f'{output_dir.replace("now", "w")}/output.zarr', consolidated=False)
+# ds_nomap = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
-ds = ds_map 
+# ds = ds_map 
+
+ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
+
 n_years = len(np.unique(ds.time.dt.year.values))
 
-if plot_var == 'mass_balance':
-    vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
-else:
-    vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values
+# if plot_var == 'mass_balance':
+#     vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
+# else:
+#     vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values
 
-# ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
-
-# vals = ds[plot_var].sum('time').values / max(n_years, 1)
+vals = ds[plot_var].sum('time').values / max(n_years, 1)
 
 lats = ds['lat'].values
 lons = ds['lon'].values
@@ -74,8 +75,8 @@ z_masked = np.where(glacier_mask == 1, z_grid, np.nan)
 if plot_var == 'wind':
     vmin, vmax = 0.5, 1.5
 else:
-    vmin = -0.5 # np.nanpercentile(np.abs(vals), 1)
-    vmax = 0.5 # np.nanpercentile(np.abs(vals), 95)
+    vmin = -4 # -0.5 # np.nanpercentile(np.abs(vals), 1)
+    vmax = 4# 0.5 # np.nanpercentile(np.abs(vals), 95)
 
 fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -83,7 +84,8 @@ fig, ax = plt.subplots(figsize=(8, 7))
 im = ax.pcolormesh(xx, yy, z_masked, cmap=cm, vmin=vmin, vmax=vmax, shading='auto')
 
 # glacier outline
-glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
+if len(np.column_stack([xs, ys]).flatten()) <= 500:
+    glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
 
 # scatter points on top
 ax.scatter(xs, ys, c=vals, cmap=cm, vmin=vmin, vmax=vmax,

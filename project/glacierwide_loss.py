@@ -421,6 +421,118 @@ class SnowlineMelt():
         melt_loss = bce(mod_melt, meas_melt)
         return snow_loss, melt_loss
 
+class MassBalance():
+    def __init__(self, name, density=850, density_err=60, meas_period=20):
+        """
+        Grabs the glacier-wide mass balance for
+        the given glacier over the 2000 - 2019
+        time period using the Hugonnet dataset
+        with the recommended density conversion
+        (850 +/- 60 kg m-3).
+
+        Parameters
+        name : str
+            Glacier name
+        density : float
+            Ice density used to convert dh/dt to mass balance [kg m-3]
+        density_err : float
+            Uncertainty on the ice density conversion [kg m-3]
+        meas_period : float
+            Number of years in the observation period [yr]
+        """
+        # store input attributes
+        self.name = name
+        self.density = density
+        self.density_err = density_err
+        self.density_water = 1000
+        self.meas_period = meas_period
+
+        # open the DEM to get the glacier's outline and RGI region
+        self.dem_obj = DEM(name)
+        self.shp = self.dem_obj.shp
+        self.region = self.dem_obj.glac_no[:2]
+
+        # grab the glacier-wide mass balance
+        self.get_glacierwide_mb()
+        return
+
+    def _load_clipped_raster(self, fp):
+        """
+        Opens a region-wide raster mosaic and crops it to the glacier
+        outline, windowing to the glacier's bounding box before loading
+        since the full mosaic is too large to read into memory whole.
+        """
+        da = xr.open_dataarray(fp, engine='rasterio').squeeze()
+
+        shp = self.shp.to_crs(da.rio.crs)
+        minx, miny, maxx, maxy = shp.total_bounds
+        da = da.rio.clip_box(minx, miny, maxx, maxy).load()
+
+        da = da.rio.clip(shp.geometry.values, shp.crs)
+        return da.where(da != da.rio.nodata)
+
+    def get_glacierwide_mb(self):
+        """
+        Crops the full dhdt dataset to the glacier queried
+        and calculates the glacier-wide mass balance in m w.e.
+        """
+        dhdt_fp = base_fp + f'data/mass_balance/dhdt/dhdt_reg{self.region}.vrt'
+        da_dhdt = self._load_clipped_raster(dhdt_fp)
+
+        # transform rate into direct dh
+        da_dh = da_dhdt * self.meas_period
+
+        # convert to glacier-wide mass balance [m w.e.]
+        self.meas = float(da_dh.mean().values) * self.density / self.density_water
+
+        self.get_meas_uncertainty(da_dh)
+        return
+
+    def get_model_mb(self, ds):
+        """
+        Grabs the glacier-wide mass balance from a model 
+        output dataset, assuming the output contains unique 
+        points on one glacier with sufficient density to 
+        represent the whole glacier.
+        """
+        model_start_in_range = ds.time.values[0] <= pd.to_datetime('2000-01-01')
+        model_end_in_range = ds.time.values[-1] >= pd.to_datetime('2020-01-01')
+        assert model_start_in_range and model_end_in_range, 'Model run does not cover 20-year period'
+
+        mb_20 = ds.sel(time=slice('2000-01-01', '2020-01-01')).mass_balance.sum(dim='time')
+        self.mod = mb_20.mean(dim='point').values
+        return
+
+    def get_meas_uncertainty(self):
+        """
+        Combines the dh/dt retrieval uncertainty (the Hugonnet dhdt_err
+        raster) and the +/-60 kg m-3 ice density conversion uncertainty
+        into a single sigma on the glacier-wide mass balance, propagated
+        in quadrature since the two error sources are independent:
+        mb = mean(dh) * density / density_water, so
+        sigma_mb^2 = (density / density_water * sigma_dh)^2
+                   + (mean(dh) / density_water * density_err)^2
+
+        """
+
+        # sigma_meas = dh_err * self.density / self.density_water
+        # sigma_density = float(da_dh.mean().values) * self.density_err / self.density_water
+        # self.sigma = np.sqrt(sigma_meas**2 + sigma_density**2)
+        return
+
+    def log_loss(self, mod=None, meas=None, sigma=None):
+        """
+        Gaussian negative log-likelihood of the mass balance residual
+        [nats], assuming mod ~ N(meas, sigma^2). sigma reflects the
+        actual measurement uncertainty (dh/dt retrieval error combined
+        with the ice density conversion error), not a tuned weight.
+        """
+        mod = self.mod if mod is None else mod
+        meas = self.meas if meas is None else meas
+        sigma = self.sigma if sigma is None else sigma
+        residual = mod - meas
+        return 0.5 * np.log(2 * np.pi * sigma**2) + residual**2 / (2 * sigma**2)
+
 class DEM():
     def __init__(self, name, epsg='default'):
         # store input attributes
