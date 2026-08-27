@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from pyproj import Transformer
 import rioxarray
 from scipy.stats import gaussian_kde
+import warnings
 
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/'
@@ -281,11 +282,6 @@ class Albedo():
 class SnowlineMelt():
     def __init__(self, name, direction='Ascending'):
         self.name = name
-        self.direction = direction
-
-        # load the DEM and note its CRS
-        self.dem_obj = DEM(name)
-        self.crs = self.dem_obj.dem.rio.crs.to_wkt()
 
         # find rgi7 glacier number
         rgi7id = translate_rgi[name]['7']
@@ -422,7 +418,8 @@ class SnowlineMelt():
         return snow_loss, melt_loss
 
 class MassBalance():
-    def __init__(self, name, density=850, density_err=60, meas_period=20):
+    def __init__(self, name, density=850, density_err=60, 
+                 meas_period=20, dates=None):
         """
         Grabs the glacier-wide mass balance for
         the given glacier over the 2000 - 2019
@@ -439,53 +436,58 @@ class MassBalance():
             Uncertainty on the ice density conversion [kg m-3]
         meas_period : float
             Number of years in the observation period [yr]
+        dates : tuple of strings
+            Start and end date (must be month start) to replace
+            2000-01-01 - 2020-01-01 default range.
         """
         # store input attributes
         self.name = name
         self.density = density
         self.density_err = density_err
         self.density_water = 1000
-        self.meas_period = meas_period
 
-        # open the DEM to get the glacier's outline and RGI region
-        self.dem_obj = DEM(name)
-        self.shp = self.dem_obj.shp
-        self.region = self.dem_obj.glac_no[:2]
+        if dates != None:
+            self.start = pd.to_datetime(dates[0])
+            self.end = pd.to_datetime(dates[1])
+        else:
+            self.start = pd.to_datetime('2000-01-01')
+            self.end = pd.to_datetime('2020-01-01')
 
-        # grab the glacier-wide mass balance
-        self.get_glacierwide_mb()
-        return
+        if self.start != pd.to_datetime('2000-01-01'):
+            warnings.warn('\n   Uncertainty is not properly constrained for periods starting after 2000-01-01.'
+                          '\n   For a real error estimate, start the simulation earlier.',
+                          UserWarning)
 
-    def _load_clipped_raster(self, fp):
-        """
-        Opens a region-wide raster mosaic and crops it to the glacier
-        outline, windowing to the glacier's bounding box before loading
-        since the full mosaic is too large to read into memory whole.
-        """
-        da = xr.open_dataarray(fp, engine='rasterio').squeeze()
+        rgiid = translate_rgi[name]['6']
 
-        shp = self.shp.to_crs(da.rio.crs)
-        minx, miny, maxx, maxy = shp.total_bounds
-        da = da.rio.clip_box(minx, miny, maxx, maxy).load()
+        # File is huge so need to handle it in chunks to find the RGIId requested
+        chunk_size = 10_000  # Number of rows per chunk
+        filtered_chunks = []
 
-        da = da.rio.clip(shp.geometry.values, shp.crs)
-        return da.where(da != da.rio.nodata)
+        data_fp = base_fp + 'data/mass_balance/dh_01_rgi60_pergla_cumul.csv'
+        for chunk in pd.read_csv(data_fp, chunksize=chunk_size, usecols=['rgiid', 'time','dh','err_dh']):
+            # Filter rows directly as the chunk is read
+            matching_rows = chunk[chunk['rgiid'] == f'RGI60-{rgiid}']
+            filtered_chunks.append(matching_rows)
 
-    def get_glacierwide_mb(self):
-        """
-        Crops the full dhdt dataset to the glacier queried
-        and calculates the glacier-wide mass balance in m w.e.
-        """
-        dhdt_fp = base_fp + f'data/mass_balance/dhdt/dhdt_reg{self.region}.vrt'
-        da_dhdt = self._load_clipped_raster(dhdt_fp)
+        # Combine only the filtered rows into a single DataFrame
+        df = pd.concat(filtered_chunks, ignore_index=True)
+        df['time'] = pd.to_datetime(df['time'])
+        
+        start_argmin = np.argmin(np.abs(df['time'] - self.start))
+        end_argmin = np.argmin(np.abs(df['time'] - self.end))
 
-        # transform rate into direct dh
-        da_dh = da_dhdt * self.meas_period
+        start_bal = df.iloc[start_argmin]['dh']
+        end_bal = df.iloc[end_argmin]['dh']
+        balance = end_bal - start_bal
 
-        # convert to glacier-wide mass balance [m w.e.]
-        self.meas = float(da_dh.mean().values) * self.density / self.density_water
+        err = df.iloc[end_argmin]['err_dh']
 
-        self.get_meas_uncertainty(da_dh)
+        self.meas_dh = balance
+        self.meas = balance * self.density / self.density_water
+        self.meas_err = err * self.density / self.density_water
+
+        self.get_meas_uncertainty()
         return
 
     def get_model_mb(self, ds):
@@ -495,11 +497,15 @@ class MassBalance():
         points on one glacier with sufficient density to 
         represent the whole glacier.
         """
-        model_start_in_range = ds.time.values[0] <= pd.to_datetime('2000-01-01')
-        model_end_in_range = ds.time.values[-1] >= pd.to_datetime('2020-01-01')
-        assert model_start_in_range and model_end_in_range, 'Model run does not cover 20-year period'
+        model_start = pd.to_datetime(ds.time.values[0]).date()
+        model_end = pd.to_datetime(ds.time.values[-1]).date()
 
-        mb_20 = ds.sel(time=slice('2000-01-01', '2020-01-01')).mass_balance.sum(dim='time')
+        model_start_in_range = ds.time.values[0] <= pd.to_datetime(self.start)
+        model_end_in_range = ds.time.values[-1] >= pd.to_datetime(self.end)
+        assert model_start_in_range and model_end_in_range, \
+            f'Model run does not cover requested period (spans {model_start} to {model_end})'
+
+        mb_20 = ds.sel(time=slice(self.start, self.end)).mass_balance.sum(dim='time')
         self.mod = mb_20.mean(dim='point').values
         return
 
@@ -514,10 +520,9 @@ class MassBalance():
                    + (mean(dh) / density_water * density_err)^2
 
         """
-
-        # sigma_meas = dh_err * self.density / self.density_water
-        # sigma_density = float(da_dh.mean().values) * self.density_err / self.density_water
-        # self.sigma = np.sqrt(sigma_meas**2 + sigma_density**2)
+        sigma_meas = self.meas_err
+        sigma_density = float(self.meas_dh) * self.density_err / self.density_water
+        self.sigma = np.sqrt(sigma_meas**2 + sigma_density**2)
         return
 
     def log_loss(self, mod=None, meas=None, sigma=None):
