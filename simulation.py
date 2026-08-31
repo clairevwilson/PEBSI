@@ -468,6 +468,9 @@ class PEBSI():
         n_spinup_years = params.n_spinup_years
         n_spinup_steps = n_spinup_years * 8760
 
+        # spin-up only needs the final state, do not store anything
+        spinup_static_args = self.config.static_args._replace(store_vars=())
+
         # avoid a short final chunk, which _run_chunk would pad with zeros
         chunk_size = params.temporal_chunk_hours
         if n_spinup_steps > 0 and (chunk_size > n_spinup_steps or n_spinup_steps % chunk_size != 0):
@@ -496,7 +499,7 @@ class PEBSI():
         for i, start in enumerate(range(0, len(spinup_dates), chunk_size)):
             chunk_dates = spinup_dates[start:start + chunk_size]
             state, _ = self._run_chunk(state,
-                                       self.config.static_args, self.config.dynamic_args,
+                                       spinup_static_args, self.config.dynamic_args,
                                        chunk_dates, start, chunk_size, spinup=True)
             spinup_chunk[0] = i + 1
 
