@@ -280,84 +280,35 @@ class Albedo():
         plt.show()
 
 class SnowlineMelt():
-    def __init__(self, name, direction='Ascending'):
+    def __init__(self, name, direction=None):
+        """
+        Loads the snow / melting preprocessed 2D dataset.
+
+        Parameters
+        ----------
+        name : glacier common name 
+        direction : ascending, descending, or None for both
+        """
         self.name = name
+        self.direction = direction
 
         # find rgi7 glacier number
         rgi7id = translate_rgi[name]['7']
-        folder = base_fp + 'data/sar/' + rgi7id + '/'
+        folder = base_fp + 'data/sar/sar_cubes/'
+        fn = folder + f'{rgi7id}_snow_melting_cube.nc'
 
-        # load dataframe containing path/row pairs
-        pathframe_fn = folder + '../Vertex_Path_Frame_info.csv'
-        df_pathframe = pd.read_csv(pathframe_fn, dtype=str)
-        df_pathframe['Path'] = df_pathframe['Path'].apply(lambda x: f"{int(x):03d}")
-        df_pathframe['Frame'] = df_pathframe['Frame'].apply(lambda x: f"{int(x):03d}")
-        
-        for fn in os.listdir(folder):
-            if 'melt_extent_elev_percentile' in fn and not 'ea' in fn and not 'eos' in fn:
-                fn_melt = fn 
-            if 'snowline_elev_percentile' in fn and not 'ea' in fn and not 'eos' in fn:
-                fn_snow = fn 
+        # load dataset
+        ds = xr.open_dataset(fn)
+        if direction is not None:
+            ds = ds.sel(time=ds['pass_direction'] == direction)
 
-        for fn in os.listdir(folder):
-            # filter out extraneous files
-            if 'elev_percentile' in fn and not 'ea' in fn and not 'eos' in fn:
-                # find the path and frame number of this scene
-                path = fn.split('ile_')[1][:3]
-                frame = fn.split(path)[1].split('.csv')[0][1:]
-                if len(frame) > 3:
-                    frames = [str(f) for f in frame.split('_')]
-                else:
-                    frames = [str(frame)]
+        self.crs = ds.attrs['projection']
+        self.dem = ds['dem']
+        self.glacier_mask = ds['glacier_mask']
 
-                # select the pathframe dataset at this path and frame(s)
-                df_path = df_pathframe.loc[df_pathframe['Path'] == path]
-                df_frame = df_path.loc[df_path['Frame'].isin(frames)]
-                
-                # determine direction of this path and frame(s)
-                dir_frame = df_frame['Direction'].values
-                if len(dir_frame) > 1 and len(np.unique(dir_frame)) > 1:
-                    assert 1==0, 'Frames have mismatched direction! Yikes. Ask Albin awwells@cmu.edu'
-                else:
-                    dir_frame = dir_frame[0]
-
-                # only use this fn if the direction is Ascending
-                if dir_frame == direction and 'snow' in fn:
-                    fn_snow = fn
-                elif dir_frame == direction and 'melt' in fn:
-                    fn_melt = fn 
-        
-        df_snow = pd.read_csv(folder + fn_snow, parse_dates=True, index_col=0)
-        df_melt = pd.read_csv(folder + fn_melt, parse_dates=True, index_col=0)
-
-        # reindex to a continuous daily record
-        self.df_snow = df_snow.reindex(pd.date_range(df_snow.index[0], df_snow.index[-1])).ffill()
-        self.df_melt = df_melt.reindex(pd.date_range(df_melt.index[0], df_melt.index[-1])).ffill()
-
-        # build distributed boolean masks on the DEM grid from the elevation thresholds
-        self.get_snowline_melt()
-        return
-
-    def get_snowline_melt(self):
-        dem = self.dem_obj.dem
-        elev = dem.values
-
-        snow_elev = self.df_snow['snowline_elev_m'].values
-        melt_elev = self.df_melt['melt_extent_elev_m'].values
-
-        # a cell is snow-covered when its elevation is above the snowline,
-        # and melting when its elevation is below the melt extent
-        snow_bool = elev[None, :, :] >= snow_elev[:, None, None]
-        melt_bool = elev[None, :, :] <= melt_elev[:, None, None]
-
-        self.ds_meas_snow = xr.DataArray(
-            snow_bool, dims=('time', 'y', 'x'),
-            coords={'time': self.df_snow.index, 'y': dem.y, 'x': dem.x},
-        )
-        self.ds_meas_melt = xr.DataArray(
-            melt_bool, dims=('time', 'y', 'x'),
-            coords={'time': self.df_melt.index, 'y': dem.y, 'x': dem.x},
-        )
+        # per-pixel snow/melt masks are already gridded, use them directly
+        self.ds_meas_snow = ds['is_snow'].astype(bool)
+        self.ds_meas_melt = ds['is_melting'].astype(bool)
         return
 
     def get_model_snow(self, model_ds):
@@ -369,7 +320,6 @@ class SnowlineMelt():
             mod_snow = daily_snow_depth > 0.05
         elif 'surftype' in model_ds.variables:
             mod_snow = model_ds['surftype'].resample(time='1d').max() == 0 
-
 
         if 'layerwater' in model_ds.variables:
             daily_layer_water = model_ds['layerwater'].sum(dim='layer').resample(time='1d').min()
@@ -388,15 +338,27 @@ class SnowlineMelt():
         meas_melt = self.ds_meas_melt.sel(
             x=xr.DataArray(x, dims='point'), y=xr.DataArray(y, dims='point'), method='nearest')
 
-        # clip to the overlapping time range
+        # keep only measurement times inside the model's time range
         start = max(mod_snow.time.values[0], meas_snow.time.values[0])
         end = min(mod_snow.time.values[-1], meas_snow.time.values[-1])
+        meas_snow = meas_snow.sel(time=slice(start, end))
+        meas_melt = meas_melt.sel(time=slice(start, end))
 
-        self.mod_snow = mod_snow.sel(time=slice(start, end)).values
-        self.mod_melt = mod_melt.sel(time=slice(start, end)).values
-        self.meas_snow = meas_snow.sel(time=slice(start, end)).values
-        self.meas_melt = meas_melt.sel(time=slice(start, end)).values
-        self.time = pd.date_range(start, end, freq='1d')
+        # measurement times are sparse and irregular, so match each one to
+        # its nearest model timestep instead of slicing on a shared range
+        tolerance = pd.Timedelta('12h')
+        mod_snow_matched = mod_snow.reindex(time=meas_snow.time, method='nearest', tolerance=tolerance)
+        mod_melt_matched = mod_melt.reindex(time=meas_melt.time, method='nearest', tolerance=tolerance)
+
+        # drop measurement times with no model timestep close enough to match
+        valid_snow = mod_snow_matched.notnull().all(dim='point')
+        valid_melt = mod_melt_matched.notnull().all(dim='point')
+
+        self.mod_snow = mod_snow_matched.sel(time=valid_snow).values.astype(bool)
+        self.meas_snow = meas_snow.sel(time=valid_snow).values
+        self.mod_melt = mod_melt_matched.sel(time=valid_melt).values.astype(bool)
+        self.meas_melt = meas_melt.sel(time=valid_melt).values
+        self.time = meas_snow.sel(time=valid_snow).time.values
 
         assert self.mod_snow.shape == self.meas_snow.shape
         assert self.mod_melt.shape == self.meas_melt.shape
