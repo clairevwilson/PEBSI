@@ -152,7 +152,7 @@ class Albedo():
         assert valid_times[0] <= model_ds.time.values[-1], f'Measurements start after model period\nModel: {mod_period}\nMeasured: {meas_period}'
         assert valid_times[-1] >= model_ds.time.values[0], f'Measurements end before model period\nModel: {mod_period}\nMeasured: {meas_period}'
 
-        modeled = model_ds.sel(time=measured.time, method='nearest').drop_duplicates('time')
+        modeled = model_ds.sel(time=measured.time, method='nearest')
 
         self.mod = modeled['albedo'].values
         self.meas = measured['albedo'].values
@@ -324,6 +324,8 @@ class SnowlineMelt():
         if 'layerwater' in model_ds.variables:
             daily_layer_water = model_ds['layerwater'].sum(dim='layer').resample(time='1d').min()
             mod_melt = daily_layer_water > 0.05
+        elif 'total_water' in model_ds.variables:
+            mod_melt = model_ds['total_water'].resample(time='1d').min() > 0.05
         elif 'lwc' in model_ds.variables:
             mod_melt = model_ds['lwc'].resample(time='1d').min() > 0.05
         elif 'surftemp' in model_ds.variables:
