@@ -12,10 +12,10 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/kahiltna_testing_2/' # 
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/test_point_setup_2/' # 
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
-plot_var = 'mass_balance'
-cm = 'RdBu_r'
+plot_var = 'albedo'
+cm = 'Greys_r'
 
 # ===================== LOAD DATA =====================
 # ds_map = xr.open_zarr(f'{output_dir.replace("now", "w")}/output.zarr', consolidated=False)
@@ -27,16 +27,25 @@ ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
 n_years = len(np.unique(ds.time.dt.year.values))
 
+rgi_ids = ['01.00570'] # [np.unique(ds['rgiid'].values)[0]]
+points = ds.point.values[ds['rgiid'].values == rgi_ids[0]]
+ds = ds.sel(point=points)
+
 # if plot_var == 'mass_balance':
 #     vals = (ds[plot_var] - ds_nomap[plot_var]).sum('time').values / max(n_years, 1)
 # else:
 #     vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values
 
-vals = ds[plot_var].sum('time').values / max(n_years, 1)
+if plot_var == 'mass_balance':
+    vals = ds[plot_var].sum('time').values / max(n_years, 1)
+elif plot_var == 'albedo':
+    vals = ds[plot_var].sel(time='2019-08-01', method='nearest').values
+else:
+    vals = ds[plot_var].mean('time').values
 
 lats = ds['lat'].values
 lons = ds['lon'].values
-rgi_ids = set(ds['rgiid'].values.tolist())
+# rgi_ids = set(ds['rgiid'].values.tolist())
 n_points = ds.sizes['point']
 
 # ===================== CRS SETUP =====================
@@ -74,6 +83,8 @@ z_masked = np.where(glacier_mask == 1, z_grid, np.nan)
 # ===================== PLOT =====================
 if plot_var == 'wind':
     vmin, vmax = 0.5, 1.5
+elif plot_var == 'albedo':
+    vmin, vmax = 0.1, 0.9
 else:
     vmin = -4 # -0.5 # np.nanpercentile(np.abs(vals), 1)
     vmax = 4# 0.5 # np.nanpercentile(np.abs(vals), 95)
@@ -96,7 +107,7 @@ if plot_var == 'mass_balance':
 elif plot_var == 'wind':
     cbar = fig.colorbar(im, ax=ax, label='Wind speed mapped / unmapped', shrink=0.8)
 else:
-    cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+    cbar = fig.colorbar(im, ax=ax, label=plot_var, shrink=0.8)
 
 ax.set_xlabel('Easting [m]')
 ax.set_ylabel('Northing [m]')
@@ -104,6 +115,6 @@ ax.set_ylabel('Northing [m]')
 ax.set_aspect('equal')
 
 plt.tight_layout()
-plt.savefig(f'{output_dir}/{plot_var}_map.png', dpi=150)
+plt.savefig(f'{output_dir}{rgi_ids[0]}_{plot_var}_map.png', dpi=150)
 plt.show()
-print(f'saved to {output_dir}{plot_var}_map.png')
+print(f'saved to {output_dir}{rgi_ids[0]}_{plot_var}_map.png')

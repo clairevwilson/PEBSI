@@ -196,7 +196,7 @@ class Output():
             'layerdensity': 'kg m-3', 'layerBC':'ppb',
             'layerOC': 'ppb', 'layerdust':'ppm',
             'layergrainsize': 'um', 'layerage': 'days',
-            'layertype': '-',
+            'layertype': '-', 'total_water': 'kg m-2',
         }
 
         z = zarr.open(self.out_fn, mode='a')
@@ -222,8 +222,7 @@ class Output():
           - Net mass balance MB [m w.e.]
           - Summed snow, firn and ice heights [m]
         """
-        # open lazily (dask-backed) so derived variables stay chunked instead
-        # of materializing the entire store (all points x time x layers) in RAM
+        # open lazily (dask-backed) so derived variables stay chunked
         ds = xr.open_zarr(self.out_fn, consolidated=False, chunks={})
         new_vars = {}
 
@@ -249,8 +248,9 @@ class Output():
             new_vars['longwave_net'] = LWnet.assign_attrs(units='W m-2')
             new_vars['net_radiation'] = NetRad.assign_attrs(units='W m-2')
 
-        # add summed mass balance term
-        if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
+        # add summed mass balance term, unless it was already stored 
+        have_mb_terms = np.all([f in self.store for f in ['accumulation','refreeze','melt']])
+        if 'mass_balance' not in self.store and have_mb_terms:
             MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
             new_vars['mass_balance'] = MB.assign_attrs(units='m w.e.')
 

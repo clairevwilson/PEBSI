@@ -120,6 +120,11 @@ def main(
         mass_fluxes['rainfall'] = rainfall
         mass_fluxes['refreeze'] = jnp.sum(current_state.ldrefreeze, axis=1)
         mass_fluxes['cumrefreeze'] = jnp.sum(current_state.lrefreeze, axis=1)
+        mass_fluxes['mass_balance'] = (
+            mass_fluxes['accumulation'] + mass_fluxes['refreeze'] - mass_fluxes['melt']
+            + mass_fluxes['deposition'] + mass_fluxes['condensation']
+            - mass_fluxes['sublimation'] - mass_fluxes['evaporation']
+        )
 
         # ===================== STEP 6 =====================
         #          annual checks and tracker updates
@@ -165,6 +170,10 @@ def main(
         if 'surftype' in requested_fields:
             out['surftype'] = getattr(next_state, 'surftype')
 
+        # total column liquid water [kg m-2]
+        if 'total_water' in requested_fields:
+            out['total_water'] = jnp.sum(next_state.lwater, axis=1)
+
         # layer fields
         for field in OUTPUT_GROUPS['layers']:
             if field in requested_fields:
@@ -184,7 +193,7 @@ def main(
         """
         Collapses one output period's hourly step records (leading axis =
         hours in the period) down to a single record, using each field's
-        AGG_METHOD ('sum', 'mean', or 'last').
+        AGG_METHOD ('sum', 'mean', 'min', or 'last').
         """
         agg = {}
         for field in hourly_records._fields:
@@ -194,6 +203,8 @@ def main(
                 agg[field] = jnp.sum(vals, axis=0)
             elif method == 'mean':
                 agg[field] = jnp.mean(vals, axis=0)
+            elif method == 'min':
+                agg[field] = jnp.min(vals, axis=0)
             else:
                 agg[field] = vals[-1]
         return StepOutputs(**agg)

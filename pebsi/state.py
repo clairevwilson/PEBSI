@@ -22,7 +22,7 @@ OUTPUT_GROUPS = {
     'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
                  'sublimation', 'deposition', 'evaporation',
                  'condensation', 'accumulation', 'rainfall', 'error',
-                 'total_mass'],
+                 'total_mass', 'total_water', 'mass_balance'],
     'surface':  ['surftemp', 'surftype', 'albedo'],
     'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
                  'longwave_in', 'longwave_out', 'sensible_heat',
@@ -35,10 +35,10 @@ OUTPUT_GROUPS = {
 }
 
 # how to collapse hourly step records into one daily/monthly output record:
-# 'sum' fluxes, 'mean' rates/snapshots, 'last' cumulative or categorical
+# 'sum', 'mean', 'min', or 'last'
 AGG_METHOD = {
     # energy balance (instantaneous rates)
-    'melt_energy':    'mean',
+    'melt_energy':     'mean',
     'shortwave_in':    'mean',
     'shortwave_ref':   'mean',
     'longwave_in':     'mean',
@@ -61,10 +61,14 @@ AGG_METHOD = {
     'deposition':      'sum',
     'evaporation':     'sum',
     'condensation':    'sum',
-    # already-cumulative running totals: sum would double-count, take the
-    # end-of-period value instead
+    'mass_balance':    'sum',
+
+    # already-cumulative running totals
     'cumrefreeze':     'last',
     'total_mass':      'last',
+
+    # snapshot, collapsed conservatively 
+    'total_water':     'min',
 
     # climate (instantaneous conditions, except precipitation)
     'airtemp':         'mean',
@@ -81,14 +85,14 @@ AGG_METHOD = {
     'layerdensity':    'mean',
     'layerrefreeze':   'mean',
     'layergrainsize':  'mean',
-    'layertype':       'last',
     'layerage':        'mean',
     'layerBC':         'mean',
     'layerOC':         'mean',
     'layerdust':       'mean',
 
-    # surface type code (categorical)
+    # type codes (categorical)
     'surftype':        'last',
+    'layertype':       'last',
 }
 
 
@@ -286,6 +290,7 @@ class StepOutputs(NamedTuple):
     condensation: jnp.ndarray       # Condensation (vapor->water) [m w.e.]
     cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
     total_mass: jnp.ndarray         # Total mass: layers (ice+water) + basal_reservoir [m w.e.]
+    total_water: jnp.ndarray        # Total water: layers only [kg m-2]
 
     # ============================= Climate ==============================
     airtemp: jnp.ndarray            # Air temperature [C]

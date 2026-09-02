@@ -10,24 +10,24 @@
 # ================================================
 #               SIMULATION METADATA
 # ================================================
-output_fp: '/ocean/projects/ees260009p/cwilson4/Output/kahiltna_testing/'
+output_fp: '/ocean/projects/ees260009p/cwilson4/Output/test_point_setup/'
 
 store_data: true
 debug: true
 progress_bar: false
-store_vars: ['minimal']
-output_freq: 'monthly' 
+store_vars: ['surftype', 'layerwater', 'albedo']
+output_freq: 'daily' 
 
-start_date: '2015-04-20 00:00'
-end_date: '2021-04-19 23:00'
+start_date: '2018-04-20 00:00'
+end_date: '2020-04-18 23:00'
 
 # ================================================
 #                GLACIER POINTS
 # ================================================
 # BIG DISTRIBUTED SIMULATION
-rgi_ids: ['01.22193']
-n_points: 5000
-temporal_chunk_years: 1
+rgi_ids: ['01.00570', '01.09162', '01.22193', '01.15645', '01.01104'] # , '01.01390'
+n_points: 100000
+temporal_chunk_years: 0.5
 
 # SMALL GULKANA SIMULATION
 # rgi_ids: ['01.00570','01.00570','01.00570','01.00570','01.00570']
