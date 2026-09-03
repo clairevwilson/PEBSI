@@ -61,12 +61,19 @@ class Terrain:
             self.elev_n = self.slope_n = self.aspect_n = None
             return
 
-        if self.params.method_distribute == 'scatter':
-            lats, lons, glaciers = self.scatter_points()
+        if self.params.method_distribute == 'grid':
+            lats, lons, glaciers = self.grid_points()
 
             self.elev_n = None
-            self.slope_n = None 
-            self.aspect_n = None 
+            self.slope_n = None
+            self.aspect_n = None
+
+        elif self.params.method_distribute == 'adaptive':
+            lats, lons, glaciers = self.adaptive_points()
+
+            self.elev_n = None
+            self.slope_n = None
+            self.aspect_n = None
 
         elif self.params.method_distribute == 'sites':
             ns = len(self.params.sites)
@@ -131,12 +138,12 @@ class Terrain:
         self.rgi_gdf = gdf
         return
 
-    def scatter_points(self, tolerance=0.05):
+    def grid_points(self, tolerance=0.05):
         """
         Samples approximately n_points, evenly distributed 
-        inside a polygon shapefile using an adaptive grid 
-        spacing search. Glaciers are naturally weighted by
-        their area (bigger = more points).
+        inside a polygon shapefile using a grid spacing search. 
+        Glaciers are naturally weighted by their area 
+        (bigger = proportionally more points).
 
         Parameters
         ==========
@@ -181,48 +188,90 @@ class Terrain:
         for gid in unique_ids:
             target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'points'].item()
             current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
-            
             polygon = current_glacier.unary_union
-            xmin, ymin, xmax, ymax = polygon.bounds
-            area = polygon.area
-            
-            # initial analytical guess for even grid spacing: sqrt(Area / N)
-            spacing = np.sqrt(area / target_n)
-            
-            # optimization loop to fine-tune spacing to hit your exact target N count
-            for _ in range(15):
-                x_coords = np.arange(xmin, xmax, spacing)
-                y_coords = np.arange(ymin, ymax, spacing)
-                
-                # create coordinate meshgrid matrix
-                xv, yv = np.meshgrid(x_coords, y_coords)
-                candidate_points = [geom.Point(x, y) for x, y in zip(xv.ravel(), yv.ravel())]
-                
-                # vectorized boundary clipping mask: Keep points strictly inside the polygon
-                points_inside = [p for p in candidate_points if polygon.contains(p)]
-                current_count = len(points_inside)
-                
-                # check if we are within acceptable tolerance of our target N count
-                if abs(current_count - target_n) / target_n <= tolerance:
-                    break
-                    
-                # adjust grid step density dynamically based on overshoot/undershoot
-                spacing *= np.sqrt(current_count / target_n)
+            xs, ys = self._grid_polygon(polygon, target_n, rgi_gdf.crs, tolerance)
 
-            # package coordinates as lists
-            points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=rgi_gdf.crs)
-            points_latlon = points_gdf.to_crs(epsg=4326)
-            xs = points_latlon.geometry.x.tolist()
-            ys = points_latlon.geometry.y.tolist()
-            
             # append lats and lons to the global list
             for lon, lat in zip(xs, ys):
                 lons.append(lon)
                 lats.append(lat)
                 glaciers.append(gid)
-            
+
         return lats, lons, glaciers
-    
+
+    def adaptive_points(self, tolerance=0.05):
+        """
+        Sets each glacier's point count from its own area
+        using a power law equation relating number of 
+        points to area. (Bigger glaciers have lower
+        spatial resolution.)
+
+        Parameters
+        ==========
+        tolerance : float
+            Acceptable deviation between actual points
+            generated and the target point count
+        """
+        unique_ids = np.unique(self.params.rgi_ids)
+        ids_fmtd = ['RGI60-'+id for id in unique_ids]
+        rgi_df = self.rgi_df.loc[self.rgi_df['RGIId'].isin(ids_fmtd)]
+        rgi_gdf = self.rgi_gdf
+
+        coeff = self.params.adaptive_points_coeff
+        exponent = self.params.adaptive_points_exponent
+
+        lats, lons, glaciers = [], [], []
+        for gid in unique_ids:
+            area = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'Area'].item()
+            target_n = max(round(coeff * area ** exponent), 1)
+            current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
+            polygon = current_glacier.unary_union
+            xs, ys = self._grid_polygon(polygon, target_n, rgi_gdf.crs, tolerance)
+
+            for lon, lat in zip(xs, ys):
+                lons.append(lon)
+                lats.append(lat)
+                glaciers.append(gid)
+
+        return lats, lons, glaciers
+
+    def _grid_polygon(self, polygon, target_n, crs, tolerance):
+        """
+        Fills a polygon with approximately target_n evenly spaced
+        points using an adaptive grid spacing search. Returns lon,
+        lat lists.
+        """
+        xmin, ymin, xmax, ymax = polygon.bounds
+        area = polygon.area
+
+        # initial analytical guess for even grid spacing: sqrt(Area / N)
+        spacing = np.sqrt(area / target_n)
+
+        # optimization loop to fine-tune spacing to hit your exact target N count
+        for _ in range(15):
+            x_coords = np.arange(xmin, xmax, spacing)
+            y_coords = np.arange(ymin, ymax, spacing)
+
+            # create coordinate meshgrid matrix
+            xv, yv = np.meshgrid(x_coords, y_coords)
+            candidate_points = [geom.Point(x, y) for x, y in zip(xv.ravel(), yv.ravel())]
+
+            # vectorized boundary clipping mask: Keep points strictly inside the polygon
+            points_inside = [p for p in candidate_points if polygon.contains(p)]
+            current_count = len(points_inside)
+
+            # check if we are within acceptable tolerance of our target N count
+            if abs(current_count - target_n) / target_n <= tolerance:
+                break
+
+            # adjust grid step density dynamically based on overshoot/undershoot
+            spacing *= np.sqrt(current_count / target_n)
+
+        points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=crs)
+        points_latlon = points_gdf.to_crs(epsg=4326)
+        return points_latlon.geometry.x.tolist(), points_latlon.geometry.y.tolist()
+
+
     def load_dem_info(self, dem, lats_in, lons_in):
         """
         Loads the DEM to get slope, aspect, and elevation 

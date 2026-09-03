@@ -142,7 +142,7 @@ output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', 
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS
-method_distribute = 'scatter'           # 'scatter', 'sites'
+method_distribute = 'grid'              # 'sites', 'grid', 'adaptive'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 
@@ -211,6 +211,9 @@ min_dz = 0.03               # Minimum size a layer can be before it is merged wi
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
+# <<<<<< Point distribution (method_distribute == 'adaptive') >>>>>>
+adaptive_points_coeff = 60.04       # n_points = adaptive_points_coeff * area_km2 ** adaptive_points_exponent (fit to Gulkana@175pts/Kennicott@500pts)
+adaptive_points_exponent = 0.3733   # fit alongside adaptive_points_coeff via point_density_summary.py
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>
 density_water = 1000        # Density of water [kg m-3]
 density_ice = 900           # Density of ice [kg m-3]

@@ -12,7 +12,7 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/test_point_setup_2/' # 
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/test_point_setup_5/' # 
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
 plot_var = 'albedo'
 cm = 'Greys_r'
@@ -27,7 +27,7 @@ ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
 n_years = len(np.unique(ds.time.dt.year.values))
 
-rgi_ids = ['01.00570'] # [np.unique(ds['rgiid'].values)[0]]
+rgi_ids = ['01.22193'] # [np.unique(ds['rgiid'].values)[0]]
 points = ds.point.values[ds['rgiid'].values == rgi_ids[0]]
 ds = ds.sel(point=points)
 
@@ -87,7 +87,7 @@ elif plot_var == 'albedo':
     vmin, vmax = 0.1, 0.9
 else:
     vmin = -4 # -0.5 # np.nanpercentile(np.abs(vals), 1)
-    vmax = 4# 0.5 # np.nanpercentile(np.abs(vals), 95)
+    vmax = 4  # 0.5 # np.nanpercentile(np.abs(vals), 95)
 
 fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -95,8 +95,10 @@ fig, ax = plt.subplots(figsize=(8, 7))
 im = ax.pcolormesh(xx, yy, z_masked, cmap=cm, vmin=vmin, vmax=vmax, shading='auto')
 
 # glacier outline
-if len(np.column_stack([xs, ys]).flatten()) <= 500:
-    glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
+# if len(np.column_stack([xs, ys]).flatten()) <= 1000:
+glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
+
+print('N POINTS:', len(vals.flatten()))
 
 # scatter points on top
 ax.scatter(xs, ys, c=vals, cmap=cm, vmin=vmin, vmax=vmax,
