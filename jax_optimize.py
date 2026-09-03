@@ -175,6 +175,7 @@ STATE_DUMP_HOUR = int(os.environ.get('PEBSI_STATE_DUMP_HOUR', '0'))
 # than continuing to infer it through more nested probes.
 REAL_SINGLESITE_TEST = os.environ.get('PEBSI_REAL_SINGLESITE_TEST', '0') == '1'
 REAL_SINGLESITE_INDEX = int(os.environ.get('PEBSI_REAL_SINGLESITE_INDEX', '1'))
+MELT_SMOOTH_ALPHA = int(os.environ.get('PEBSI_MELT_SMOOTH_ALPHA', '0'))
 
 
 import socket
@@ -321,6 +322,7 @@ def build_generated_config(site_dict, host, start_date='2024-04-01', end_date='2
         option_accel_grains=False,
         option_flat_plates=True,
         constant_freshgrainsize=54.5,
+        constant_snowfall_density=150,
         debug=False,
         progress_bar=False,
         store_data=False,
@@ -1597,7 +1599,8 @@ def run_real_single_site_test(site_index=1, probe_hours=BISECT_CHUNK_SIZE):
     return baseline_ok, no_merge_ok
 
 
-def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_snapshots=5):
+def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_snapshots=5,
+                            blowup_threshold=1e3):
     """
     Reproduces ONE site's real optimization trajectory in isolation (no
     other sites in the model at all), running the same MAE loss / lr /
@@ -1652,7 +1655,10 @@ def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_sn
         'log_wind_factor': jnp.zeros(1, dtype=jnp.float32),
         'log_kp': jnp.zeros(1, dtype=jnp.float32),
     }
-    optimizer = optax.chain(optax.clip_by_global_norm(clip_norm), optax.adam(lr))
+    if clip_norm < float('inf'):
+        optimizer = optax.chain(optax.clip_by_global_norm(clip_norm), optax.adam(lr))
+    else:
+        optimizer = optax.adam(lr)
     opt_state = optimizer.init(params)
 
     def wrapped_loss(p):
@@ -1660,6 +1666,8 @@ def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_sn
 
     grad_fn = jax.jit(jax.value_and_grad(wrapped_loss, has_aux=True))
 
+    clip_str = f"clip={clip_norm}" if clip_norm < float('inf') else "no clip"
+    print(f"investigate_site_blowup: lr={lr}, {clip_str}, blowup_threshold={blowup_threshold}", flush=True)
     print(f"{'step':>4} {'wf':>8} {'kp':>8} {'summer_mae':>11} {'winter_mae':>11} "
           f"{'wf_grad':>12} {'kp_grad':>12}", flush=True)
     wf_val = kp_val = None
@@ -1676,7 +1684,7 @@ def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_sn
               f"{float(winter_mae):>11.4f} {wf_grad:>12.3e} {kp_grad:>12.3e} "
               f"({time.time()-t0:.1f}s)", flush=True)
 
-        if abs(wf_grad) > 1e3 or abs(kp_grad) > 1e3:
+        if abs(wf_grad) > blowup_threshold or abs(kp_grad) > blowup_threshold:
             print(f"  blowup at step {i} -- params going into this step: "
                   f"wf={wf_val:.4f} kp={kp_val:.4f}", flush=True)
             exploded = True
@@ -1723,7 +1731,7 @@ def investigate_site_blowup(site_index, n_steps=10, lr=5e-2, clip_norm=1.0, n_sn
 # 5. Optimization
 # ---------------------------------------------------------------------------
 
-def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=100, lr=1e-2, clip_norm=1.0):
+def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=100, lr=1e-2, clip_norm=1.0, grad_warn_threshold=1e4):
     params = {
         'log_wind_factor': jnp.log(jnp.array(init_wind_factors, dtype=jnp.float32)),
         'log_kp': jnp.log(jnp.array(init_kp, dtype=jnp.float32)),
@@ -1735,10 +1743,12 @@ def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=10
     # see update_layer_props/merge_existing_layers) can't blow up the whole
     # trajectory the way it did at lr=5e-2/step 4 (wf/kp grad norms jumping
     # from O(1) to O(1e7) in one step). clip_norm=1.0 is comfortably above
-    # the O(0.2-1.0) per-parameter norms seen in a normal step, so it's a
-    # no-op most of the time and only engages on an actual spike.
+    # Per-parameter element-wise clipping instead of global-norm clipping.
+    # Global-norm clip causes a dominant site (e.g. K53 at 1e11) to eat the
+    # entire update budget, leaving the other 15 sites effectively frozen.
+    # Element-wise clip lets every site receive a bounded update independently.
     optimizer = optax.chain(
-        optax.clip_by_global_norm(clip_norm),
+        optax.clip(clip_norm),
         optax.adam(lr),
     )
     opt_state = optimizer.init(params)
@@ -1754,12 +1764,24 @@ def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=10
     def _report_nan_grads(step, grads):
         found = False
         for name, g in (('wind_factor', grads['log_wind_factor']), ('kp', grads['log_kp'])):
-            bad = np.where(~np.isfinite(np.asarray(g)))[0]
+            arr = np.asarray(g)
+            bad = np.where(~np.isfinite(arr))[0]
             if len(bad):
                 found = True
                 bad_sites = [site_order[j] for j in bad]
                 print(f"  step {step}: non-finite grad for {name} at {len(bad)} site(s): {bad_sites}", flush=True)
         return found
+
+    large_grad_counts = {}  # site -> count of large-gradient steps
+    def _report_large_grads(step, grads):
+        for name, g in (('wind_factor', grads['log_wind_factor']), ('kp', grads['log_kp'])):
+            arr = np.asarray(g)
+            bad = np.where(np.isfinite(arr) & (np.abs(arr) > grad_warn_threshold))[0]
+            for j in bad:
+                site = site_order[j]
+                large_grad_counts[site] = large_grad_counts.get(site, 0) + 1
+                print(f"  step {step}: LARGE grad {name} at {site}: {arr[j]:+.3e} "
+                      f"(threshold {grad_warn_threshold:.1e})", flush=True)
 
     # Per-site breakdown so a spike like the lr=5e-2 run's step 3/4 (kp grad
     # norm 0.17 -> 8.5 -> 5.8e7) points straight at the responsible site
@@ -1778,19 +1800,28 @@ def run_optimization(loss_fn, init_wind_factors, init_kp, site_order, n_steps=10
         if _report_nan_grads(i, grads):
             print("  Stopping: non-finite gradient detected (see above).", flush=True)
             break
+        _report_large_grads(i, grads)
 
-        raw_global_norm = float(optax.global_norm(grads))
+        grads_f64 = jax.tree_util.tree_map(lambda g: g.astype(jnp.float64), grads)
+        raw_global_norm = float(optax.global_norm(grads_f64))
         updates, opt_state = optimizer.update(grads, opt_state)
         params = optax.apply_updates(params, updates)
 
-        wf_grad_norm = float(jnp.linalg.norm(grads['log_wind_factor']))
-        kp_grad_norm = float(jnp.linalg.norm(grads['log_kp']))
+        wf_grad_norm = float(jnp.linalg.norm(grads['log_wind_factor'].astype(jnp.float64)))
+        kp_grad_norm = float(jnp.linalg.norm(grads['log_kp'].astype(jnp.float64)))
         print(f"{i:>6}  {float(summer_mae):>12.4f}  {float(winter_mae):>12.4f}  "
               f"{wf_grad_norm:>10.3e}  {kp_grad_norm:>10.3e}  ({time.time()-t0:.1f}s)", flush=True)
         print(f"    top wf grad sites: {_top_grad_sites(grads['log_wind_factor'])}", flush=True)
         print(f"    top kp grad sites: {_top_grad_sites(grads['log_kp'])}", flush=True)
-        if raw_global_norm > clip_norm:
-            print(f"    clipped: raw global grad norm {raw_global_norm:.3e} -> {clip_norm}", flush=True)
+        n_clipped = int(np.sum(np.abs(np.asarray(grads['log_wind_factor'])) > clip_norm) +
+                        np.sum(np.abs(np.asarray(grads['log_kp'])) > clip_norm))
+        if n_clipped:
+            print(f"    clipped: {n_clipped} param(s) |grad|>{clip_norm}  raw global norm {raw_global_norm:.3e}", flush=True)
+
+    if large_grad_counts:
+        print("\nLarge-gradient event summary (sites with |grad| > {:.1e}):".format(grad_warn_threshold), flush=True)
+        for site, count in sorted(large_grad_counts.items(), key=lambda x: -x[1]):
+            print(f"  {site}: {count} step(s)", flush=True)
 
     return jnp.exp(params['log_wind_factor']), jnp.exp(params['log_kp'])
 
@@ -1811,7 +1842,13 @@ if __name__ == '__main__':
     if INVESTIGATE_SITE_BLOWUP:
         print(f"PEBSI_INVESTIGATE_SITE_BLOWUP=1: reproducing site {INVESTIGATE_SITE_INDEX}'s real "
               f"optimization trajectory in isolation to find and scan the blowup...\n", flush=True)
-        investigate_site_blowup(site_index=INVESTIGATE_SITE_INDEX)
+        investigate_site_blowup(
+            site_index=INVESTIGATE_SITE_INDEX,
+            n_steps=int(os.environ.get('PEBSI_BLOWUP_N_STEPS', '20')),
+            lr=float(os.environ.get('PEBSI_BLOWUP_LR', '5e-2')),
+            clip_norm=float(os.environ.get('PEBSI_BLOWUP_CLIP', '1.0')),
+            blowup_threshold=float(os.environ.get('PEBSI_BLOWUP_THRESHOLD', '1e8')),
+        )
         sys.exit(0)
 
     site_dict = load_site_dict()
@@ -1828,6 +1865,14 @@ if __name__ == '__main__':
         temporal_chunk_years=(BISECT_CHUNK_SIZE / 8760) if (NAN_BISECT or STAGE_BISECT) else 1,
     )
     print(f"Generated config for {len(site_order)} sites -> {config_fp}")
+
+    if MELT_SMOOTH_ALPHA > 0:
+        with open(config_fp) as f:
+            _cfg = yaml.safe_load(f)
+        _cfg['melt_smooth_alpha'] = MELT_SMOOTH_ALPHA
+        with open(config_fp, 'w') as f:
+            yaml.dump(_cfg, f, sort_keys=False)
+        print(f"Patched config: melt_smooth_alpha={MELT_SMOOTH_ALPHA}")
 
     print("Loading observations...")
     obs_by_season = load_all_observations(site_dict)

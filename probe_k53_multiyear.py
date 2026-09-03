@@ -1,0 +1,97 @@
+"""
+Multi-year gradient probe for K53: check gradient sign at WF_A vs WF_B
+for cumulative 1-5 year windows. Writes to log file for live monitoring.
+"""
+import os, sys
+os.environ['PEBSI_NORMAL_RUN_2015_2020'] = '1'
+os.environ['PEBSI_DEBUG_NANS'] = '0'
+
+LOG = '/tmp/probe_k53_multiyear.log'
+_lf = open(LOG, 'w', buffering=1)
+
+def log(msg):
+    _lf.write(msg + '\n')
+    _lf.flush()
+    print(msg, flush=True)
+
+log("starting imports...")
+import jax
+jax.config.update('jax_debug_nans', False)
+jax.config.update('jax_debug_infs', False)
+import yaml, time, numpy as np, jax.numpy as jnp
+import jax_optimize as jo
+jax.config.update('jax_debug_nans', False)
+jax.config.update('jax_debug_infs', False)
+log("imports done")
+
+MELT_SMOOTH_ALPHA = int(os.environ.get('PEBSI_MELT_SMOOTH_ALPHA', '100'))
+WF_A = float(os.environ.get('PROBE_WF_A', '1.0'))
+WF_B = float(os.environ.get('PROBE_WF_B', '0.99'))
+log(f"alpha={MELT_SMOOTH_ALPHA}  WF_A={WF_A}  WF_B={WF_B}")
+
+
+def build_model(end_date):
+    config_fp = jo.build_generated_config(
+        {'kahiltna': ['K53']}, jo.host,
+        start_date=jo.DEBUG_START_DATE,
+        end_date=end_date,
+        temporal_chunk_years=1,
+    )
+    with open(config_fp) as f:
+        cfg = yaml.safe_load(f)
+    cfg['melt_smooth_alpha'] = MELT_SMOOTH_ALPHA
+    with open(config_fp, 'w') as f:
+        yaml.dump(cfg, f, sort_keys=False)
+    return jo.init_pebsi(config_fp)
+
+
+def grad_at_wf(model, wf, label):
+    obs = jo.load_all_observations({'kahiltna': ['K53']})
+    summer_labels, summer_meas, summer_mask, summer_starts, summer_ends = obs['summer']
+    winter_labels, winter_meas, winter_mask, winter_starts, winter_ends = obs['winter']
+    summer_idx = jo.build_period_indices(model.dates, summer_starts, summer_ends)
+    winter_idx = jo.build_period_indices(model.dates, winter_starts, winter_ends)
+    loss_fn = jo.make_loss_fn(
+        model, [('kahiltna', 'K53')],
+        summer=(summer_labels, summer_idx, summer_meas, summer_mask),
+        winter=(winter_labels, winter_idx, winter_meas, winter_mask),
+    )
+    log_wf = jnp.array([np.log(wf)], dtype=jnp.float32)
+    log_kp = jnp.zeros(1, dtype=jnp.float32)
+    def scalar_loss(lw):
+        return loss_fn(lw, log_kp)[0]
+    t0 = time.time()
+    grad_fn = jax.jit(jax.grad(scalar_loss))
+    g = grad_fn(log_wf)
+    jax.block_until_ready(g)
+    elapsed = time.time() - t0
+    val = float(g[0])
+    log(f"  [{label}] grad={val:+.4e}  ({elapsed:.1f}s)")
+    return val
+
+
+WINDOWS = [
+    ('Year 1 (2015-2016)', '2016-04-01'),
+    ('Year 2 (2015-2017)', '2017-04-01'),
+    ('Year 3 (2015-2018)', '2018-04-01'),
+    ('Year 4 (2015-2019)', '2019-04-01'),
+    ('Year 5 (2015-2020)', '2020-04-01'),
+]
+
+log("\n" + "="*60)
+log("K53 multi-year gradient probe")
+log("="*60)
+
+for label, end_date in WINDOWS:
+    log(f"\n--- {label} ---")
+    t0 = time.time()
+    model = build_model(end_date)
+    log(f"  model built in {time.time()-t0:.1f}s")
+    g_a = grad_at_wf(model, WF_A, 'WF_A')
+    g_b = grad_at_wf(model, WF_B, 'WF_B')
+    same_sign = (g_a * g_b > 0)
+    status = "OK" if same_sign else "SIGN FLIP"
+    log(f"  RESULT: grad@{WF_A}={g_a:+.4e}  grad@{WF_B}={g_b:+.4e}  -> {status}")
+
+log("\nDone.")
+_lf.close()

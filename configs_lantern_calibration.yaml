@@ -3,7 +3,7 @@ rgi_ids:
 sites:
 - K53
 n_points: 1
-temporal_chunk_years: 1
+temporal_chunk_years: 0.0027397260273972603
 bias_vars:
 - temp
 start_date: '2015-04-01'
@@ -19,8 +19,10 @@ option_ice_albedo_tif: true
 option_accel_grains: false
 option_flat_plates: true
 constant_freshgrainsize: 54.5
+constant_snowfall_density: 150
 debug: false
 progress_bar: false
 store_data: false
 store_vars:
 - minimal
+melt_smooth_alpha: 100
