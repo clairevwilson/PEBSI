@@ -76,20 +76,22 @@ class Terrain:
             elevs, slopes, aspects = [], [], []
 
             metadata_fn = self.params.metadata_fn
-            metadata = pd.read_csv(metadata_fn, dtype=str, index_col='rgiid')
-            for gid, site in zip(self.params.rgi_ids, self.params.sites):
-                assert gid in metadata.index, \
-                    f'To index by site, glacier ID must be associated with name in glacier_metadata ({gid})'
+            metadata = pd.read_csv(metadata_fn, dtype=str)
+            metadata = metadata.set_index(['rgiid', 'site'])
 
-                gid_df = metadata.loc[gid]
-                gid_df = gid_df.set_index('site')
+            missing_gids = set(self.params.rgi_ids) - set(metadata.index.get_level_values('rgiid'))
+            assert not missing_gids, \
+                f'To index by site, glacier ID must be associated with name in glacier_metadata ({missing_gids})'
 
-                lats.append(float(gid_df.loc[site, 'lat']))
-                lons.append(float(gid_df.loc[site, 'lon']))
-                elevs.append(float(gid_df.loc[site, 'elevation']))
-                slopes.append(float(gid_df.loc[site, 'slope']))
-                aspects.append(float(gid_df.loc[site, 'aspect']))
-                glaciers.append(gid)
+            keys = list(zip(self.params.rgi_ids, self.params.sites))
+            rows = metadata.loc[keys]
+
+            lats = rows['lat'].astype(float).tolist()
+            lons = rows['lon'].astype(float).tolist()
+            elevs = rows['elevation'].astype(float).tolist()
+            slopes = rows['slope'].astype(float).tolist()
+            aspects = rows['aspect'].astype(float).tolist()
+            glaciers = list(self.params.rgi_ids)
 
             self.elev_n = np.array(elevs)
             self.slope_n = np.array(slopes)
