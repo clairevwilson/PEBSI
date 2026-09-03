@@ -297,9 +297,8 @@ class MassBalanceDriver:
         
         # define conditions for making a new layer for accumulation
         surf_not_snow = (state.ltype[:, 0] > 0)
-        density_threshold = (state.ldensity[:, 0] > (new_density * 3))
         large_top_layer = (state.lheight[:, 0] > params.dz_toplayer * 2)
-        new_layer_cond = surf_not_snow | density_threshold | large_top_layer
+        new_layer_cond = surf_not_snow | large_top_layer
 
         # check for small surface snow layer (merge new snow with it no matter what)
         small_top_layer = (state.lheight[:, 0] < 1e-3) & (state.ltype[:, 0] == 0)
@@ -308,19 +307,16 @@ class MassBalanceDriver:
         create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= params.min_dz)
         delay_mask = new_layer_cond & (~small_top_layer) & (new_height < params.min_dz)
         merge_new_mask = (~new_layer_cond) | small_top_layer
-
         action_taken_mask = create_new_mask | merge_new_mask
 
-        # handle cases 1 & 3: create a new layer and merge snowfall with existing layer
+        # handle cases 1 & 2: create a new layer or merge snowfall with existing layer
         state = layers.add_top_layer(state, create_new_mask, new_layer)
         state = layers.merge_new_layer(state, merge_new_mask, new_layer, params)
 
-        # handle case 2: delaying this snowfall to the next timestep
+        # case 3: delay thin snowfall on ice/firn until there's enough for a full layer
         updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
         updated_delayed_snow = jnp.where(action_taken_mask, 0.0, updated_delayed_snow)
         actual_snowfall = jnp.where(delay_mask, 0.0, total_snowfall)
-
-        # update surface snow timestemp
         updated_last_snow = jnp.where(action_taken_mask, time_idx, state.last_snow)
 
         state = state._replace(
@@ -493,22 +489,27 @@ class MassBalanceDriver:
             # energy needed to warm this layer to 0.
             energy_to_zero = -1 * ltemp * lmass * lcp
             
-            # check if we have more energy tha needed to warm to 0.
-            warmed_past_zero = total_heat_in > energy_to_zero
-            
             # calculate temperature from all heat, regardless of how much
             safe_denom = jnp.where(lmass * lcp > 0, lmass * lcp, 1.0)
             partial_warm_temp = jnp.where(lmass > 0, ltemp + (total_heat_in / safe_denom), ltemp)
-            # clip ptemperature of points that were warmed past melting point
-            intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
-            
-            # leftover energy after melting to 0. converted to mass
-            melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
-            potential_melt = melt_energy_available / LH_RF
-            
-            # actual melt is capped by how much solid ice physically exists in this layer
-            actual_melt = jnp.minimum(potential_melt, lice)
-            
+
+            # < smooth melt energy for smooth differentiability through melt transition >
+            alpha = params.melt_smooth_alpha
+            if alpha > 0:
+                melt_energy_available = jax.nn.softplus((total_heat_in - energy_to_zero) * alpha) / alpha
+                intermediate_temp = jnp.where(lmass > 0,
+                                               ltemp + (total_heat_in - melt_energy_available) / safe_denom,
+                                               ltemp)
+                potential_melt = melt_energy_available / LH_RF
+
+                actual_melt = jnp.maximum(0., lice - jax.nn.softplus((lice - potential_melt) * alpha) / alpha)
+            else:
+                warmed_past_zero = total_heat_in > energy_to_zero
+                intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
+                melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
+                potential_melt = melt_energy_available / LH_RF
+                actual_melt = jnp.minimum(potential_melt, lice)
+
             # calculate unspent melt energy that must cascade lower [W m-2]
             carry = jnp.maximum(
                 0., (melt_energy_available - (actual_melt * LH_RF)) / dt

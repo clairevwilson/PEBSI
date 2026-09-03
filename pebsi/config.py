@@ -52,6 +52,7 @@ static_fields = [
 
     'constant_snowfall_density','constant_freshgrainsize',
     'constant_drdry','constant_irrwater',
+    'melt_smooth_alpha',
 ]
 
 # Dynamic args are parameters / constants which are 

@@ -208,6 +208,7 @@ max_nlayers = 50            # Maximum number of vertical layers allowed (more la
 min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
 min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
+melt_smooth_alpha = 0       # Softplus sharpness for 0°C melt threshold. 0=hard (default). ~100 suppresses gradient kinks.
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>
