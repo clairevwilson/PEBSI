@@ -17,7 +17,7 @@ from project.scatter_sites import get_scattered_sites
 from project.glacierwide_loss import translate_rgi
 
 GLACIER = 'gulkana'
-N_POINTS = 30000
+N_POINTS = 300_000
 
 if __name__ == '__main__':
     rgi_id = translate_rgi[GLACIER]['6']
@@ -29,14 +29,13 @@ if __name__ == '__main__':
     configs = dict(BASE_CONFIG)
     
     configs['n_spinup_years'] = 0 
-    configs['temporal_chunk_years'] = 5
+    configs['temporal_chunk_years'] = 1
 
     configs['start_date'] = start_date
     configs['end_date'] = end_date
     configs['metadata_fn'] = metadata_fn
     configs['output_fp'] = '/ocean/projects/ees260009p/cwilson4/Output/bayes_pointscaletest/'
-    configs['sites'] = site_names
-    configs['rgi_ids'] = [rgi_id] * len(site_names)
+    configs['rgi_ids'] = ['01.00570','01.22193','01.15645']
     configs['n_points'] = len(site_names)
     configs['kp'] = baseline['kp']
     configs['wind_factor'] = baseline['wind_factor']
