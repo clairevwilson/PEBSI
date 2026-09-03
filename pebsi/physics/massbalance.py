@@ -493,22 +493,11 @@ class MassBalanceDriver:
             safe_denom = jnp.where(lmass * lcp > 0, lmass * lcp, 1.0)
             partial_warm_temp = jnp.where(lmass > 0, ltemp + (total_heat_in / safe_denom), ltemp)
 
-            # < smooth melt energy for smooth differentiability through melt transition >
-            alpha = params.melt_smooth_alpha
-            if alpha > 0:
-                melt_energy_available = jax.nn.softplus((total_heat_in - energy_to_zero) * alpha) / alpha
-                intermediate_temp = jnp.where(lmass > 0,
-                                               ltemp + (total_heat_in - melt_energy_available) / safe_denom,
-                                               ltemp)
-                potential_melt = melt_energy_available / LH_RF
-
-                actual_melt = jnp.maximum(0., lice - jax.nn.softplus((lice - potential_melt) * alpha) / alpha)
-            else:
-                warmed_past_zero = total_heat_in > energy_to_zero
-                intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
-                melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
-                potential_melt = melt_energy_available / LH_RF
-                actual_melt = jnp.minimum(potential_melt, lice)
+            warmed_past_zero = total_heat_in > energy_to_zero
+            intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
+            melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
+            potential_melt = melt_energy_available / LH_RF
+            actual_melt = jnp.minimum(potential_melt, lice)
 
             # calculate unspent melt energy that must cascade lower [W m-2]
             carry = jnp.maximum(
@@ -921,32 +910,27 @@ class MassBalanceDriver:
         state = state._replace(**properties)
         return state, total_runoff, surface_mass_fluxes
         
-    def resolve_temperature_profile(self, state):    
+    def resolve_temperature_profile(self, state):
         """
-        Resolves the temperature profile with vertical
-        heat conduction following an explicit, linearized
-        Forward-in-Time, Central-in-Space (FTCS) scheme.
+        Vertical heat conduction dispatched to 
+        explicit FTCS or backward-Euler implicit.
         Uses a Dirichlet boundary condition at the top layer
         and the temperate boundary at the bottom.
-        """   
+        """
         params = self.params
 
         # CONSTANTS
         CP_ICE = params.Cp_ice
         DENSITY_ICE = params.density_ice
         DENSITY_WATER = params.density_water
-        TEMP_TEMP = params.temp_temp
         TEMP_DEPTH = params.temp_depth
         K_ICE = params.k_ice
         K_WATER = params.k_water
         K_AIR = params.k_air
-        MAX_DT = params.max_temp_change
 
         # load inputs
-        surftemp = state.surftemp
         lheight = state.lheight
         ldensity = state.ldensity
-        ltemp = state.ltemp
         lice = state.lice
         lwater = state.lwater
         ldepth = state.ldepth
@@ -981,12 +965,30 @@ class MassBalanceDriver:
             # mask ice layers with constant conductivity
             lcond = jnp.where(ice_mask, K_ICE, lcond)
 
-        # get timestep for heat equation
+        if params.method_heateq == 'implicit':
+            return self.implicit_conduction(state, params, lcond, is_temperate)
+        else:
+            return self.explicit_conduction(state, params, lcond, is_temperate)
+
+    def explicit_conduction(self, state, params, lcond, is_temperate):
+        """
+        FTCS explicit heat conduction with n_heat_steps 
+        substeps and dT clipping. Non-differentiable.
+        """
+        CP_ICE = params.Cp_ice
+        TEMP_TEMP = params.temp_temp
+        MAX_DT = params.max_temp_change
+
+        surftemp = state.surftemp
+        lheight = state.lheight
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+
+        safe_lheight = jnp.where(lheight > 0, lheight, 1)
         dt_heat = params.dt / params.n_heat_steps
         dT_limit = MAX_DT / params.n_heat_steps
 
-        # inter-layer spacing
-        # dz is the distance between center of layer i and layer i+1
+        # inter-layer spacing (distance between center of layer i and layer i+1)
         dz = 0.5 * (lheight[:, :-1] + lheight[:, 1:])
         safe_dz = jnp.where(dz > 0, dz, 1.0)
         k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
@@ -1030,22 +1032,73 @@ class MassBalanceDriver:
 
             # overlay layers below TEMP_DEPTH with temperate temperature
             next_temps = jnp.where(is_temperate, TEMP_TEMP, next_temps)
-            
             return next_temps
 
         # execute time-stepping loop
         final_temperatures = jax.lax.fori_loop(
             0, params.n_heat_steps, _conduction_step, ltemp
         )
+        return state._replace(ltemp=final_temperatures)
 
-        # save back to state
-        state = state._replace(ltemp = final_temperatures)
-        
-        return state
+    def implicit_conduction(self, state, params, lcond, is_temperate):
+        """
+        Backward-Euler heat conduction: unconditionally stable, 
+        single dt step, differentiable.
+        """
+        # CONSTANTS
+        CP_ICE = params.Cp_ice
+        TEMP_TEMP = params.temp_temp
+
+        surftemp = state.surftemp
+        lheight = state.lheight
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+
+        n_l = ltemp.shape[1]
+        safe_lheight = jnp.where(lheight > 0, lheight, 1.0)
+
+        # inter-layer spacing (distance between center of layer i and layer i+1)
+        dz = 0.5 * (lheight[:, :-1] + lheight[:, 1:])
+        safe_dz = jnp.where(dz > 0, dz, 1.0)
+        k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
+        k_iface = k_inter / safe_dz
+        k_top = lcond[:, 0] / (0.5 * safe_lheight[:, 0])
+
+        # thermal mass and implicit timestep weight
+        therm_mass = CP_ICE * ldensity * safe_lheight
+        valid = (lheight > 0) & (therm_mass > 0)
+        cap_dt = jnp.where(valid, therm_mass, 1.0) / params.dt
+
+        # build tridiagonal system
+        lower = jnp.zeros_like(ltemp).at[:, 1:].set(-k_iface)
+        upper = jnp.zeros_like(ltemp).at[:, :-1].set(-k_iface)
+        diag = cap_dt - lower - upper
+        diag = diag.at[:, 0].add(k_top)
+        b_vec = cap_dt * ltemp
+        b_vec = b_vec.at[:, 0].add(k_top * surftemp)
+
+        # Dirichlet rows for empty, temperate, and bottom layers
+        frozen = (~valid) | is_temperate
+        frozen = frozen.at[:, -1].set(True)
+        lower = jnp.where(frozen, 0.0, lower)
+        upper = jnp.where(frozen, 0.0, upper)
+        diag = jnp.where(frozen, 1.0, diag)
+        b_vec = jnp.where(frozen, ltemp, b_vec)
+
+        # assemble and solve dense matrix (batched over sites)
+        idx = jnp.arange(n_l)
+        A = jnp.zeros(ltemp.shape[:1] + (n_l, n_l), dtype=ltemp.dtype)
+        A = A.at[:, idx, idx].set(diag)
+        A = A.at[:, idx[1:], idx[:-1]].set(lower[:, 1:])
+        A = A.at[:, idx[:-1], idx[1:]].set(upper[:, :-1])
+        final_temperatures = jnp.linalg.solve(A, b_vec[..., None])[..., 0]
+        final_temperatures = jnp.where(is_temperate, TEMP_TEMP, final_temperatures)
+
+        return state._replace(ltemp=final_temperatures)
 
     def densification(self, state):
         """
-        Calculates densification of layers due to 
+        Calculates densification of layers due to
         compression from overlying mass.
 
         Returns

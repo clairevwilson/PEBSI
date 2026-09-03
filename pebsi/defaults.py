@@ -165,12 +165,13 @@ constant_irrwater = True                # True or False to estimate from density
 # TIMESTEP
 dt = 3600                   # Model timestep [s]
 daily_dt = 86400            # Seconds in a day [s]
-n_heat_steps = 5            # Number of times to run heat equation per dt [-]
+n_heat_steps = 5            # Number of times to run heat equation per dt [-] (explicit scheme only)
+method_heateq = 'implicit'  # 'explicit' (FTCS substeps + dT clips) or 'implicit' (backward Euler, unconditionally stable) -- EXPERIMENT 2026-09-03, revert to 'explicit' if the implicit adjoint test fails
 
 # GRAIN SIZE INITIALIZATION
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 
-# INTENSIVE AND EXTENSIVE LAYER VARIABLES
+# INTENSIVE & EXTENSIVE LAYER VARIABLES
 intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
 extensive_vars = ['lice','lwater','lBC','lOC','ldust','ldrefreeze','lrefreeze']
 all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
@@ -208,7 +209,6 @@ max_nlayers = 50            # Maximum number of vertical layers allowed (more la
 min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
 min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
-melt_smooth_alpha = 0       # Softplus sharpness for 0°C melt threshold. 0=hard (default). ~100 suppresses gradient kinks.
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>
