@@ -1,0 +1,212 @@
+diff --git a/pebsi/defaults.py b/pebsi/defaults.py
+index b84d432..a16618e 100644
+--- a/pebsi/defaults.py
++++ b/pebsi/defaults.py
+@@ -208,7 +208,7 @@ max_nlayers = 50            # Maximum number of vertical layers allowed (more la
+ min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
+ min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
+ min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
+-melt_smooth_alpha = 0       # Softplus sharpness for 0°C melt threshold. 0=hard (default). ~100 suppresses gradient kinks.
++melt_smooth_alpha = 100     # Softplus sharpness for 0°C melt threshold. 0=hard, 100=smooth (default).
+ min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
+ max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
+ # <<<<<< Physical properties of snow, ice, water and air >>>>>>
+diff --git a/pebsi/physics/albedo.py b/pebsi/physics/albedo.py
+index 91ecc42..6199c26 100644
+--- a/pebsi/physics/albedo.py
++++ b/pebsi/physics/albedo.py
+@@ -78,6 +78,9 @@ def get_albedo(state, params, forcings):
+     cOC = state.lOC[:, 0] / safe_lh * 1e6
+     cdust = state.ldust[:, 0] / safe_lh * 1e6
+ 
++    # < smooth wet/refreeze state for smooth differentiability through mass thresholds >
++    w_dry_rfz = jax.nn.sigmoid((1e-3 - state.lrefreeze[:, 0]) * 1000.0)
++    w_dry_wat = jax.nn.sigmoid((1e-3 - state.lwater[:, 0]) * 1000.0)
+     has_refreeze = state.lrefreeze[:, 0] > 1e-3
+     has_water = state.lwater[:, 0] > 1e-3
+ 
+@@ -86,8 +89,8 @@ def get_albedo(state, params, forcings):
+ 
+     # hex plates for dry snow with no refreeze; spheres otherwise
+     if params.option_flat_plates:
+-        dry = ~has_refreeze & ~has_water
+-        shp = jnp.where(dry, 2.0, 0.0)
++        # < smooth grain shape switch for smooth differentiability through wet/refreeze state >
++        shp = w_dry_rfz * w_dry_wat * 2.0
+     else:
+         shp = jnp.full_like(cBC, 0.0)
+ 
+@@ -118,9 +121,10 @@ def get_albedo(state, params, forcings):
+ 
+     albedo_firn = jnp.where(albedo_firn < 1, albedo_firn, params.albedo_firn)
+ 
+-    final_albedo = jnp.where(
+-        state.ltype[:, 0] == 0,
+-        albedo,
+-        jnp.where(state.ltype[:, 0] == 1, albedo_firn, params.albedo_ice)
+-    )
++    # < smooth albedo type switch for smooth differentiability through snow/firn/ice transitions >
++    rho_surf = state.ldensity[:, 0]
++    w_ice = jax.nn.sigmoid((rho_surf - params.density_ice) * 0.05)
++    w_snow = (1.0 - w_ice) * jax.nn.sigmoid((550.0 - rho_surf) * 0.05)
++    w_firn = 1.0 - w_ice - w_snow
++    final_albedo = w_snow * albedo + w_firn * albedo_firn + w_ice * params.albedo_ice
+     return final_albedo, new_annual_min_albedo
+diff --git a/pebsi/physics/energybalance.py b/pebsi/physics/energybalance.py
+index 358c0b9..fc5c222 100644
+--- a/pebsi/physics/energybalance.py
++++ b/pebsi/physics/energybalance.py
+@@ -278,9 +278,9 @@ class EnergyBalanceDriver():
+         tempK = forcings.temp + params.celsius_to_kelvin
+         density_air = forcings.sp / R_GAS / tempK * MM_AIR
+ 
+-        # latent heat term depends on direction of heat exchange
+-        is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
+-        Lv = jnp.where(is_evaporating, params.Lv_evap, params.Lv_sub)
++        # < smooth latent heat coefficient for smooth differentiability through freezing point >
++        w_liq = jax.nn.sigmoid(surftemp * 10.0)
++        Lv = w_liq * params.Lv_evap + (1.0 - w_liq) * params.Lv_sub
+ 
+         # calculate richardson number
+         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
+@@ -293,12 +293,11 @@ class EnergyBalanceDriver():
+         csT = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0t))
+         csQ = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0q))
+ 
+-        # Psi stability factor (Beljaars & Holtslag)
+-        psi = jnp.where(
+-            RICHARDSON <= 0.0,
+-            jnp.sqrt(jnp.maximum(1.0 - 15.0 * RICHARDSON, 1e-10)),
+-            jnp.exp(-5.0 * RICHARDSON)
+-        )
++        # < smooth stability correction for smooth differentiability through Ri=0 >
++        psi_unstable = jnp.sqrt(jnp.maximum(1.0 - 15.0 * RICHARDSON, 1e-10))
++        psi_stable = jnp.exp(-5.0 * RICHARDSON)
++        w_unstable = jax.nn.sigmoid(-RICHARDSON * 20.0)
++        psi = w_unstable * psi_unstable + (1.0 - w_unstable) * psi_stable
+         
+         # final flux calculation
+         Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.temp - surftemp) * jnp.cos(slope)
+@@ -320,11 +319,11 @@ class EnergyBalanceDriver():
+         elif method in ['Sonntag']:
+             # follows COSIPY
+             airtempK = airtemp + CTOK
+-            P = jnp.where(
+-                airtempK > CTOK,
+-                0.6112*jnp.exp(17.67*(airtemp-CTOK)/(airtemp-29.66)), # over water
+-                0.6112*jnp.exp(22.46*(airtemp-CTOK)/(airtemp-0.55)) # over ice
+-            )
++            # < smooth SVP formula for smooth differentiability through 0°C >
++            w_water = jax.nn.sigmoid((airtempK - CTOK) * 10.0)
++            P_water = 0.6112 * jnp.exp(17.67 * (airtemp - CTOK) / (airtemp - 29.66))
++            P_ice_svp = 0.6112 * jnp.exp(22.46 * (airtemp - CTOK) / (airtemp - 0.55))
++            P = w_water * P_water + (1.0 - w_water) * P_ice_svp
+ 
+         # return vapor pressure in Pa
+         return P*1000
+diff --git a/pebsi/physics/massbalance.py b/pebsi/physics/massbalance.py
+index a3468f0..f7337ad 100644
+--- a/pebsi/physics/massbalance.py
++++ b/pebsi/physics/massbalance.py
+@@ -261,11 +261,11 @@ class MassBalanceDriver:
+         else:
+             # CLM formulation of grain size (CLM5.0 Documentation)
+             airtemp = temp
+-            new_grainsize = jnp.select(
+-                [airtemp <= -30, airtemp < 0],
+-                [54.5, 54.5 + 5 * (airtemp + 30)],
+-                default=204.5
+-            )
++            # < smooth grain size initialization for smooth differentiability through temperature thresholds >
++            w_cold = jax.nn.sigmoid((-30.0 - airtemp) * 1.0)
++            w_warm = jax.nn.sigmoid(airtemp * 1.0)
++            g_mid = 54.5 + 5.0 * (airtemp + 30.0)
++            new_grainsize = w_cold * 54.5 + (1.0 - w_cold) * (w_warm * 204.5 + (1.0 - w_warm) * g_mid)
+ 
+         # height and age of new layer
+         new_height = total_snowfall/new_density
+@@ -608,7 +608,9 @@ class MassBalanceDriver:
+         if params.constant_irrwater:
+             frac_irreduc = jnp.full_like(porosity, params.Sr)
+         else:
+-            frac_irreduc = jnp.where(scan_ldensity > 500.0, params.Sr_dense, params.Sr_light)
++            # < smooth irreducible water fraction for smooth differentiability through density threshold >
++            w_dense = jax.nn.sigmoid((scan_ldensity - 500.0) * 0.05)
++            frac_irreduc = w_dense * params.Sr_dense + (1.0 - w_dense) * params.Sr_light
+         water_irreduc_capacity = porosity * scan_lheight * DENSITY_WATER * frac_irreduc
+ 
+         # pack all the inputs
+@@ -787,8 +789,9 @@ class MassBalanceDriver:
+             E_cold, jnp.minimum(E_water, E_pore)
+         ) / LH_RF
+ 
+-        # mask amount of refreeze to layers that were below 0.
+-        dm_rfz = jnp.where(ltemp < 0, dm_rfz, 0)
++        # < smooth refreeze cold gate for smooth differentiability through freezing point >
++        cold_weight = jax.nn.sigmoid(-ltemp * 10.0)
++        dm_rfz = dm_rfz * cold_weight
+ 
+         # calculate temperature change due to refreezing
+         dT_rfz = dm_rfz * LH_RF / safe_heat_capacity
+@@ -843,9 +846,10 @@ class MassBalanceDriver:
+         
+         dm_sub_pot = (latent_heat * dt) / LV_SUB
+         dm_vap_pot = (latent_heat * dt) / LV_VAP
+-        
+-        # calculate mass loss/gain potential
+-        dm_potential = jnp.where(is_sublimation_phase, dm_sub_pot, dm_vap_pot)
++
++        # < smooth phase change Lv for smooth differentiability through freezing point >
++        w_sub = jax.nn.sigmoid(-surftemp * 10.0)
++        dm_potential = w_sub * dm_sub_pot + (1.0 - w_sub) * dm_vap_pot
+ 
+         # separate into mass gain (deposition, condensation) 
+         mass_gain = jnp.maximum(0.0, dm_potential)
+@@ -1107,12 +1111,11 @@ class MassBalanceDriver:
+             b = jnp.zeros_like(ldensity)
+             ltemp_K = ltemp + CTOK
+ 
+-            b = jnp.where(ldensity < 550, 1, 0.5)
+-            k = jnp.where(
+-                ldensity < 550, 
+-                11 * jnp.exp(-10160 / (R * ltemp_K)),
+-                575 * jnp.exp(-21400 / (R * ltemp_K))
+-            )
++            # < smooth HerronLangway stage transition for smooth differentiability through density threshold >
++            w_stage1 = jax.nn.sigmoid((550.0 - ldensity) * 0.05)
++            b = w_stage1 * 1.0 + (1.0 - w_stage1) * 0.5
++            k = w_stage1 * 11 * jnp.exp(-10160 / (R * ltemp_K)) + \
++                (1.0 - w_stage1) * 575 * jnp.exp(-21400 / (R * ltemp_K))
+             dRho = k * a**b * (DENSITY_ICE - ldensity) / DENSITY_ICE * dt
+ 
+         # Kojima (1967) method (JULES)
+@@ -1140,8 +1143,10 @@ class MassBalanceDriver:
+         if params.constant_irrwater:
+             frac_irreduc = jnp.full_like(new_ldensity, params.Sr)
+         else:
+-            frac_irreduc = jnp.where(new_ldensity > 500.0, params.Sr_dense, params.Sr_light)
+-        porosity = 1 - new_ldensity / DENSITY_ICE 
++            # < smooth irreducible water fraction for smooth differentiability through density threshold >
++            w_dense_d = jax.nn.sigmoid((new_ldensity - 500.0) * 0.05)
++            frac_irreduc = w_dense_d * params.Sr_dense + (1.0 - w_dense_d) * params.Sr_light
++        porosity = 1 - new_ldensity / DENSITY_ICE
+         water_irreduc = porosity * new_lheight * DENSITY_WATER * frac_irreduc
+     
+         # update water in squeezed_out and new_lwater
+@@ -1235,11 +1240,11 @@ class MassBalanceDriver:
+         if params.constant_freshgrainsize:
+             FRESH_GRAINSIZE = params.constant_freshgrainsize
+         else:
+-            FRESH_GRAINSIZE = jnp.select(
+-                [airtemp <= -30, airtemp < 0],
+-                [54.5, 54.5 + 5 * (airtemp + 30)],
+-                default=204.5
+-            )[:, None]
++            # < smooth fresh grain size for smooth differentiability through temperature thresholds >
++            w_cold_gs = jax.nn.sigmoid((-30.0 - airtemp) * 1.0)
++            w_warm_gs = jax.nn.sigmoid(airtemp * 1.0)
++            g_mid_gs = 54.5 + 5.0 * (airtemp + 30.0)
++            FRESH_GRAINSIZE = (w_cold_gs * 54.5 + (1.0 - w_cold_gs) * (w_warm_gs * 204.5 + (1.0 - w_warm_gs) * g_mid_gs))[:, None]
+ 
+         # define snow, firn and ice masks 
+         snow_mask = state.snow_mask 

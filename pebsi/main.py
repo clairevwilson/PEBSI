@@ -16,6 +16,7 @@ Executed in the following order:
   7. Tracks mass error accumulated since previous timestep
 """
 # Internal libraries
+import os
 from types import SimpleNamespace
 import functools
 # External libraries
@@ -27,6 +28,12 @@ from pebsi.physics.massbalance import MassBalanceDriver
 from pebsi.forcing import domain_expansion
 from pebsi.physics.layers import *
 from pebsi.state import make_step_outputs_class, OUTPUT_GROUPS
+
+# DIAGNOSTIC (adjoint decomposition): comma-separated state fields whose
+# hour-to-hour recurrence is cut in the BACKWARD pass only (stop_gradient at
+# the top of each step; forward bit-identical). Localizes which carried
+# field(s) the exploding adjoint compounds through.
+_DETACH_CARRY_FIELDS = [f for f in os.environ.get('PEBSI_DETACH_CARRY_FIELDS', '').split(',') if f]
 
 @functools.partial(jax.jit, static_argnames=['static_args'])
 def main(
@@ -71,6 +78,12 @@ def main(
         Runs all processes for a single timestep and
         updates the records.
         """
+        if _DETACH_CARRY_FIELDS:
+            current_state = current_state._replace(**{
+                f: jax.lax.stop_gradient(getattr(current_state, f))
+                for f in _DETACH_CARRY_FIELDS
+            })
+
         # expand forcings from grid cell to simulation points
         current_forcings = domain_expansion(
             current_forcings, point_attrs, params

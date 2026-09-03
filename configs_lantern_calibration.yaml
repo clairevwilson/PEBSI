@@ -1,9 +1,39 @@
 rgi_ids:
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.09162'
+- '01.09162'
 - '01.22193'
+- '01.22193'
+- '01.01104'
+- '01.01104'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
+- '01.00570'
 sites:
+- N
+- S
+- Y
+- C
+- B
 - K53
-n_points: 1
-temporal_chunk_years: 0.0027397260273972603
+- K17b
+- C
+- D
+- T
+- X
+- V
+- AU
+- AB
+- D
+- B
+n_points: 16
+temporal_chunk_years: 1
 bias_vars:
 - temp
 start_date: '2015-04-01'
@@ -13,7 +43,37 @@ ksp_BC: 1
 ksp_OC: 1
 kp:
 - 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
 wind_factor:
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
+- 1.0
 - 1.0
 option_ice_albedo_tif: true
 option_accel_grains: false
@@ -25,4 +85,3 @@ progress_bar: false
 store_data: false
 store_vars:
 - minimal
-melt_smooth_alpha: 100
