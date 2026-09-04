@@ -1,0 +1,38 @@
+option_ice_albedo_tif: true
+option_windmaps: true
+option_accel_grains: true
+option_flat_plates: true
+option_dynamics: false
+constant_freshgrainsize: 54.5
+constant_irrwater: true
+precgrad: 0.0001
+bias_vars:
+- temp
+rgi_ids:
+- '01.00570'
+- '01.22193'
+- '01.15645'
+- '01.09162'
+- '01.01104'
+method_distribute: adaptive
+start_date: 2000-01-01 00:00
+end_date: 2020-03-31 23:00
+output_freq: daily
+store_vars:
+- mass_balance
+- albedo
+- total_water
+- snowdepth
+store_data: false
+debug: false
+progress_bar: false
+kp: 2.5
+wind_factor: 3.0
+climate_fp: /ocean/projects/ees260009p/cwilson4/climate_data/
+rgi_fp: /ocean/projects/ees260009p/cwilson4/RGI/rgi60/00_rgi60_attribs/
+output_fp: /ocean/projects/ees260009p/cwilson4/Output/AD_optimize/
+cop30_vrt_path: /ocean/projects/ees260009p/cwilson4/data/dems/COP30/COP30_reg01.vrt
+shading_fp: /ocean/projects/ees260009p/cwilson4/data/shading/
+ice_albedo_fn: /ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif
+thickness_fn: /ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif
+windmap_fn: /ocean/projects/ees260009p/cwilson4/data/windmapper/{gid}.nc
