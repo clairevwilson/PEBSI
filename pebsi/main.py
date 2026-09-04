@@ -174,6 +174,12 @@ def main(
         if 'total_water' in requested_fields:
             out['total_water'] = jnp.sum(next_state.lwater, axis=1)
 
+        # depth of the snow column [m], for differentiability against SAR
+        if 'snowdepth' in requested_fields:
+            out['snowdepth'] = jnp.sum(
+                jnp.where(next_state.ltype < 1, next_state.lheight, 0.0), axis=1
+            )
+
         # layer fields
         for field in OUTPUT_GROUPS['layers']:
             if field in requested_fields:
@@ -246,6 +252,14 @@ def main(
                 scan_step, period_state, period_forcings, unroll=1
             )
             return next_state, aggregate_period(hourly_records)
+
+        # reverse-mode over a scan retains one carry per scanned element, so
+        # without this the outer scan holds all steps_per_output hourly states
+        # of every period at once. Checkpointing the period keeps only the
+        # per-period boundary states and rematerializes each period's hourly
+        # scan on the backward pass.
+        if static_args.differentiable:
+            period_step = jax.checkpoint(period_step)
 
         periodized_forcings = jax.tree.map(
             lambda x: x.reshape((x.shape[0] // steps_per_output, steps_per_output) + x.shape[1:]),

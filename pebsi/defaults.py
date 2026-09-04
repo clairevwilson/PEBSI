@@ -166,12 +166,13 @@ constant_irrwater = True                # True or False to estimate from density
 # TIMESTEP
 dt = 3600                   # Model timestep [s]
 daily_dt = 86400            # Seconds in a day [s]
-n_heat_steps = 5            # Number of times to run heat equation per dt [-]
+n_heat_steps = 5            # Number of times to run heat equation per dt [-] (explicit scheme only)
+method_heateq = 'implicit'  # 'explicit' (FTCS substeps + dT clips) or 'implicit' (backward Euler, unconditionally stable) -- EXPERIMENT 2026-09-03, revert to 'explicit' if the implicit adjoint test fails
 
 # GRAIN SIZE INITIALIZATION
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 
-# INTENSIVE AND EXTENSIVE LAYER VARIABLES
+# INTENSIVE & EXTENSIVE LAYER VARIABLES
 intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
 extensive_vars = ['lice','lwater','lBC','lOC','ldust','ldrefreeze','lrefreeze']
 all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']

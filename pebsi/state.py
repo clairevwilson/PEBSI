@@ -69,6 +69,7 @@ AGG_METHOD = {
 
     # snapshot, collapsed conservatively 
     'total_water':     'min',
+    'snowdepth':       'min',
 
     # climate (instantaneous conditions, except precipitation)
     'airtemp':         'mean',
