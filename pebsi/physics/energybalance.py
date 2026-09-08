@@ -291,10 +291,12 @@ class EnergyBalanceDriver():
         csQ = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0q))
 
         # Psi stability factor (Beljaars & Holtslag)
+        ri_unstable = jnp.minimum(RICHARDSON, 0.0)
+        ri_stable = jnp.maximum(RICHARDSON, 0.0)
         psi = jnp.where(
             RICHARDSON <= 0.0,
-            jnp.sqrt(jnp.maximum(1.0 - 15.0 * RICHARDSON, 1e-10)),
-            jnp.exp(-5.0 * RICHARDSON)
+            jnp.sqrt(1.0 - 15.0 * ri_unstable),
+            jnp.exp(-5.0 * ri_stable)
         )
         
         # final flux calculation
