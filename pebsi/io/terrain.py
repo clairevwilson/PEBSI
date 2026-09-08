@@ -741,6 +741,9 @@ class Terrain:
 
             ds.close()
 
+        missing = len(np.where(np.isnan(spdup_n).any(axis=1))[0])
+        assert missing == 0, f'Missing wind data for {missing} points'
+
         self.spdup_n = spdup_n
 
         if self.params.debug:

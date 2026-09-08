@@ -167,7 +167,7 @@ constant_irrwater = True                # True or False to estimate from density
 dt = 3600                   # Model timestep [s]
 daily_dt = 86400            # Seconds in a day [s]
 n_heat_steps = 5            # Number of times to run heat equation per dt [-] (explicit scheme only)
-method_heateq = 'implicit'  # 'explicit' (FTCS substeps + dT clips) or 'implicit' (backward Euler, unconditionally stable) -- EXPERIMENT 2026-09-03, revert to 'explicit' if the implicit adjoint test fails
+method_heateq = 'implicit'  # 'explicit' (FTCS substeps) or 'implicit' (backward Euler, unconditionally stable)
 
 # GRAIN SIZE INITIALIZATION
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
@@ -212,7 +212,6 @@ min_dz = 0.03               # Minimum size a layer can be before it is merged wi
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
-# <<<<<< Point distribution (method_distribute == 'adaptive') >>>>>>
 adaptive_points_coeff = 60.04       # n_points = adaptive_points_coeff * area_km2 ** adaptive_points_exponent (fit to Gulkana@175pts/Kennicott@500pts)
 adaptive_points_exponent = 0.3733   # fit alongside adaptive_points_coeff via point_density_summary.py
 # <<<<<< Physical properties of snow, ice, water and air >>>>>>

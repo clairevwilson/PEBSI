@@ -217,6 +217,7 @@ def main(
 
     # execute the model (need to use checkpoint for forward/backward solving)
     scan_step = jax.checkpoint(step) if static_args.differentiable else step
+    inner_step = step
 
     steps_per_output = params.steps_per_output
     month_lengths = params.month_lengths
@@ -245,19 +246,14 @@ def main(
         )
 
     else:
-        # daily: nest an inner hourly scan inside an outer scan over fixed-size
-        # output periods, so only one record per period is retained on-device
+        # daily: only one record per period is retained on-device
         def period_step(period_state, period_forcings):
             next_state, hourly_records = jax.lax.scan(
-                scan_step, period_state, period_forcings, unroll=1
+                inner_step, period_state, period_forcings, unroll=1
             )
             return next_state, aggregate_period(hourly_records)
 
-        # reverse-mode over a scan retains one carry per scanned element, so
-        # without this the outer scan holds all steps_per_output hourly states
-        # of every period at once. Checkpointing the period keeps only the
-        # per-period boundary states and rematerializes each period's hourly
-        # scan on the backward pass.
+        # checkpoint to limit what is stored in-memory for backward pass
         if static_args.differentiable:
             period_step = jax.checkpoint(period_step)
 
