@@ -1051,7 +1051,6 @@ class MassBalanceDriver:
         ldensity = state.ldensity
         ltemp = state.ltemp
 
-        n_l = ltemp.shape[1]
         safe_lheight = jnp.where(lheight > 0, lheight, 1.0)
 
         # inter-layer spacing (distance between center of layer i and layer i+1)
@@ -1082,13 +1081,9 @@ class MassBalanceDriver:
         diag = jnp.where(frozen, 1.0, diag)
         b_vec = jnp.where(frozen, ltemp, b_vec)
 
-        # assemble and solve dense matrix (batched over sites)
-        idx = jnp.arange(n_l)
-        A = jnp.zeros(ltemp.shape[:1] + (n_l, n_l), dtype=ltemp.dtype)
-        A = A.at[:, idx, idx].set(diag)
-        A = A.at[:, idx[1:], idx[:-1]].set(lower[:, 1:])
-        A = A.at[:, idx[:-1], idx[1:]].set(upper[:, :-1])
-        final_temperatures = jnp.linalg.solve(A, b_vec[..., None])[..., 0]
+        # lower[:, 0] and upper[:, -1] are already zero, as the primitive requires
+        final_temperatures = jax.lax.linalg.tridiagonal_solve(
+            lower, diag, upper, b_vec[..., None])[..., 0]
         final_temperatures = jnp.where(is_temperate, TEMP_TEMP, final_temperatures)
 
         return state._replace(ltemp=final_temperatures)
@@ -1381,7 +1376,12 @@ class MassBalanceDriver:
                 tau + 1e-6, # avoid 0 denominator
                 tau + grainsize - FRESH_GRAINSIZE
             )
-            safe_base = jnp.maximum(jnp.where(denominator > 0, tau / denominator, 1e-6), 1e-10)
+
+            positive_denom = denominator > 0
+            safe_denominator = jnp.where(positive_denom, denominator, 1.0)
+            safe_base = jnp.clip(
+                jnp.where(positive_denom, tau / safe_denominator, 1e-6),
+                1e-10, 1.0)
             
             # determine actual dry grain growth rate from parameters
             safe_kap = jnp.maximum(kap, 1e-6)
