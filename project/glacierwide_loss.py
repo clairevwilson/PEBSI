@@ -34,6 +34,9 @@ translate_rgi = {
                  'lemon_creek':{'6':'01.01104','7':'01.19406'}, # LEMON CREEK
                  'taku':{'6':'01.01390','7':'01.19709'}, # TAKU
                  }
+translate_names = {}
+for glacier, items in translate_rgi.items():
+    translate_names[items['6']] = glacier
 
 class Albedo():
     def __init__(self, name, use='s2'):
