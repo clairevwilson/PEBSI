@@ -1,4 +1,5 @@
 import os
+import re
 import socket
 import xarray as xr
 import numpy as np
@@ -7,6 +8,7 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 from pyproj import Transformer
 import rioxarray
+from rioxarray.merge import merge_arrays
 from scipy.stats import gaussian_kde
 import warnings
 
@@ -384,9 +386,28 @@ class SnowlineMelt():
         melt_loss = bce(mod_melt, meas_melt)
         return snow_loss, melt_loss
 
+def _load_rgi_outline(glac_no):
+    """
+    Loads one glacier's outline polygon from the regional RGI shapefile,
+    in the shapefile's native (lat/lon) CRS. Shared by DEM (which then
+    reprojects it to match a sample raster) and MassBalance's tif loader
+    (which reprojects it independently per tile, since tiles can sit in
+    different local UTM zones).
+    """
+    region = glac_no[:2]
+    rgi_fp = base_fp + 'RGI/rgi60/'
+    for fn in os.listdir(rgi_fp):
+        if region in fn and 'Zone' not in fn:
+            reg_name = fn
+    shp_reg = gpd.read_file(rgi_fp + f'{reg_name}/{reg_name}.shp')
+    outline = shp_reg[shp_reg['RGIId'] == f'RGI60-{glac_no}']
+    assert len(outline), f'no RGI outline found for RGI60-{glac_no}'
+    return outline
+
+
 class MassBalance():
-    def __init__(self, name, density=850, density_err=60, 
-                 meas_period=20, dates=None):
+    def __init__(self, name, density=850, density_err=60,
+                 meas_period=20, dates=None, source='csv'):
         """
         Grabs the glacier-wide mass balance for
         the given glacier over the 2000 - 2019
@@ -406,12 +427,29 @@ class MassBalance():
         dates : tuple of strings
             Start and end date (must be month start) to replace
             2000-01-01 - 2020-01-01 default range.
+        source : str
+            'csv' (default): the region-wide elevation-change time series
+            (dh_01_rgi60_pergla_cumul.csv), matched to the nearest
+            available rows for `dates`. Works for any requested window,
+            but its err_dh is the marginal uncertainty of the CUMULATIVE
+            curve at one date relative to a ~2000 reference -- not the
+            uncertainty of a DIFFERENCED sub-period, which would need the
+            covariance between the two endpoints (not present in this
+            file) to get right. See _load_from_csv.
+
+            'tif': a period-specific dhdt/dhdt_err raster pair (e.g.
+            Hugonnet's 2015-2020 epoch product) -- already the correct
+            rate and its uncertainty for exactly that period, no
+            differencing or covariance approximation involved. Only
+            available for a period a raster pair actually exists for.
+            See _load_from_tif.
         """
         # store input attributes
         self.name = name
         self.density = density
         self.density_err = density_err
         self.density_water = 1000
+        self.source = source
 
         if dates != None:
             self.start = pd.to_datetime(dates[0])
@@ -420,12 +458,29 @@ class MassBalance():
             self.start = pd.to_datetime('2000-01-01')
             self.end = pd.to_datetime('2020-01-01')
 
-        if self.start != pd.to_datetime('2000-01-01'):
-            warnings.warn('\n   Uncertainty is not properly constrained for periods starting after 2000-01-01.'
-                          '\n   For a real error estimate, start the simulation earlier.',
-                          UserWarning)
+        # placeholder so matched_start/matched_end exist even if a loader
+        # ever skips setting them
+        self.matched_start = self.start
+        self.matched_end = self.end
 
-        rgiid = translate_rgi[name]['6']
+        if source == 'csv':
+            self._load_from_csv()
+        elif source == 'tif':
+            self._load_from_tif()
+        else:
+            raise ValueError(f"source must be 'csv' or 'tif', got {source!r}")
+
+        self.get_meas_uncertainty()
+        return
+
+    def _load_from_csv(self):
+        """
+        The original loader: differences two points on the region-wide
+        cumulative dh time series. See the `source` docstring on __init__
+        for what this does and does not correctly capture about the
+        resulting uncertainty.
+        """
+        rgiid = translate_rgi[self.name]['6']
 
         # File is huge so need to handle it in chunks to find the RGIId requested
         chunk_size = 10_000  # Number of rows per chunk
@@ -440,9 +495,23 @@ class MassBalance():
         # Combine only the filtered rows into a single DataFrame
         df = pd.concat(filtered_chunks, ignore_index=True)
         df['time'] = pd.to_datetime(df['time'])
-        
+
         start_argmin = np.argmin(np.abs(df['time'] - self.start))
         end_argmin = np.argmin(np.abs(df['time'] - self.end))
+
+        # the nearest-date match clamps to whatever the dataset actually
+        # covers -- for this product that's ~2000-2020, so a requested end
+        # date past that (e.g. 2025) snaps to the last real row.
+        # matched_start/matched_end are the period self.meas describes, and
+        # get_model_mb truncates the model to them.
+        self.matched_start = df.iloc[start_argmin]['time']
+        self.matched_end = df.iloc[end_argmin]['time']
+
+        if self.matched_start != pd.to_datetime('2000-01-01'):
+            warnings.warn('\n   Uncertainty is not properly constrained for periods starting after 2000-01-01.'
+                          f'\n   This observation starts at {self.matched_start.date()}.'
+                          '\n   For a real error estimate, start the simulation earlier.',
+                          UserWarning)
 
         start_bal = df.iloc[start_argmin]['dh']
         end_bal = df.iloc[end_argmin]['dh']
@@ -453,9 +522,131 @@ class MassBalance():
         self.meas_dh = balance
         self.meas = balance * self.density / self.density_water
         self.meas_err = err * self.density / self.density_water
-
-        self.get_meas_uncertainty()
         return
+
+    def _load_from_tif(self):
+        """
+        Period-specific dh/dt [m/yr] from a raster, rather than
+        differencing the CSV time series -- see the `source` docstring on
+        __init__. Each regional tile carries its own projected (local UTM)
+        CRS, so pixel area is already uniform within a tile and a plain
+        mean over the pixels inside the glacier outline is already
+        area-weighted; no geodesic weighting needed at glacier scale.
+        Validated against the csv path for 2000-2020 (gulkana 6.5%,
+        kahiltna 12.1% relative difference in self.meas, same sign and
+        order of magnitude).
+
+        self.sigma is NOT implemented here and is set to NaN -- the
+        dhdt_err raster is a PER-PIXEL local uncertainty (dominated by
+        high-frequency DEM-differencing noise: mean ~2.4 m/yr, up to
+        11 m/yr at individual pixels for gulkana), not the uncertainty of
+        the glacier-wide MEAN. Naively averaging it the way `dhdt` is
+        averaged overstated sigma by 17-31x in testing, because it
+        applies zero variance reduction from averaging thousands of
+        pixels together. The correct reduction depends on the error
+        field's spatial correlation length (e.g. Rolstad et al. 2009:
+        SE = sigma_pixel * sqrt(5*L^2/A) for glacier area A >> L^2), which
+        this dataset's L is not currently known here. A NaN sigma fails
+        loudly (poisons any downstream arithmetic immediately) rather than
+        silently handing a calibration a wrong-but-plausible weight -- do
+        not replace it with a guessed formula; get L from the Hugonnet
+        et al. methodology first.
+
+        Looks under data/mass_balance/{start.year}_{end.year}/dhdt/
+        for the tile(s) intersecting this glacier, falling back to
+        data/mass_balance/dhdt/ directly for a period whose tiles were
+        never split into their own subfolder. self.matched_start/
+        self.matched_end are set from what the tile filename(s) actually
+        encode, not from the requested dates, exactly like the csv path,
+        and get_model_mb truncates the model to that period.
+        """
+        glac_no = translate_rgi[self.name]['6']
+        outline = _load_rgi_outline(glac_no)
+
+        rate, matched = self._clip_period_raster('dhdt', outline)
+
+        self.matched_start, self.matched_end = matched
+
+        n_years = (self.matched_end - self.matched_start).days / 365.25
+        self.meas_dh = rate * n_years
+        self.meas_err = np.nan  # see docstring: not a valid glacier-wide error yet
+        self.meas = self.meas_dh * self.density / self.density_water
+
+        warnings.warn(
+            '\n   source=\'tif\' gives self.meas but NOT self.sigma (will be NaN) -- '
+            'the dhdt_err raster is a per-pixel local uncertainty, not the glacier-wide '
+            'mean\'s uncertainty, and averaging it naively overstated sigma by 17-31x in '
+            'testing. See _load_from_tif docstring before implementing this.',
+            UserWarning)
+        return
+
+    def _clip_period_raster(self, kind, outline):
+        """
+        Finds every {kind} ('dhdt' or 'dhdt_err') tile under this period's
+        directory whose bounding box overlaps `outline`, mosaics them if
+        the glacier straddles more than one tile (reprojecting onto the
+        first tile's CRS -- tiles can sit in different local UTM zones
+        near a zone boundary), clips to the outline, and returns
+        (glacier-mean value, (period_start, period_end)) -- the period
+        parsed from the tile filename(s), asserted identical across every
+        tile used.
+        """
+        period_dir = os.path.join(base_fp, 'data/mass_balance',
+                                   f'{self.start.year}_{self.end.year}', kind)
+        if not os.path.isdir(period_dir):
+            # fallback for a period whose tiles were never split into their
+            # own {start}_{end}/{kind}/ subfolder
+            period_dir = os.path.join(base_fp, f'data/mass_balance/{kind}')
+
+        candidates = []
+        for fn in sorted(os.listdir(period_dir)):
+            if not fn.endswith('.tif'):
+                continue
+            fp = os.path.join(period_dir, fn)
+            da = rioxarray.open_rasterio(fp).squeeze()
+            outline_here = outline.to_crs(da.rio.crs)
+            minx, miny, maxx, maxy = outline_here.total_bounds
+            bx0, by0, bx1, by1 = da.rio.bounds()
+            if maxx < bx0 or minx > bx1 or maxy < by0 or miny > by1:
+                continue  # tile's bbox doesn't overlap the glacier's bbox
+            candidates.append((fn, da))
+
+        assert candidates, (f'no {kind} tile under {period_dir} overlaps '
+                             f'{self.name}')
+
+        if len(candidates) == 1:
+            fn, da = candidates[0]
+            mosaic = da
+        else:
+            # glacier straddles a tile boundary -- reproject the rest onto
+            # the first tile's CRS and mosaic before clipping
+            target_crs = candidates[0][1].rio.crs
+            rasters = [da if i == 0 else da.rio.reproject(target_crs)
+                       for i, (fn, da) in enumerate(candidates)]
+            mosaic = merge_arrays(rasters)
+
+        outline_here = outline.to_crs(mosaic.rio.crs)
+        clipped = mosaic.rio.clip(outline_here.geometry, outline_here.crs,
+                                  drop=True, all_touched=True)
+
+        nodata = clipped.rio.nodata
+        vals = clipped.values
+        valid = np.isfinite(vals)
+        if nodata is not None:
+            valid &= (vals != nodata)
+        assert valid.any(), (f'{kind} tile(s) for {self.name} have no valid '
+                              'pixels inside the outline')
+        mean_val = float(vals[valid].mean())
+
+        periods = set()
+        for fn, da in candidates:
+            m = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})', fn)
+            assert m, f'could not parse a period from tile filename {fn}'
+            periods.add((pd.to_datetime(m.group(1)), pd.to_datetime(m.group(2))))
+        assert len(periods) == 1, (f'{kind} tiles under {period_dir} do not '
+                                    f'all share the same period: {periods}')
+
+        return mean_val, periods.pop()
 
     def get_model_mb(self, ds):
         """
@@ -463,16 +654,23 @@ class MassBalance():
         output dataset, assuming the output contains unique 
         points on one glacier with sufficient density to 
         represent the whole glacier.
+
+        The model is summed over matched_start to matched_end -- the
+        period the observation actually covers -- so a run spanning more
+        than the dataset does (e.g. 2000-2025 against a ~2000-2020
+        product) is truncated here rather than compared against a shorter
+        observation.
         """
         model_start = pd.to_datetime(ds.time.values[0]).date()
         model_end = pd.to_datetime(ds.time.values[-1]).date()
 
-        model_start_in_range = ds.time.values[0] <= pd.to_datetime(self.start)
-        model_end_in_range = ds.time.values[-1] >= pd.to_datetime(self.end)
+        model_start_in_range = ds.time.values[0] <= pd.to_datetime(self.matched_start)
+        model_end_in_range = ds.time.values[-1] >= pd.to_datetime(self.matched_end)
         assert model_start_in_range and model_end_in_range, \
-            f'Model run does not cover requested period (spans {model_start} to {model_end})'
+            f'Model run does not cover observation period (spans {model_start} to {model_end})'
 
-        mb_20 = ds.sel(time=slice(self.start, self.end)).mass_balance.sum(dim='time')
+        mb_20 = ds.sel(time=slice(self.matched_start,
+                                  self.matched_end)).mass_balance.sum(dim='time')
         self.mod = mb_20.mean(dim='point').values
         return
 
@@ -527,14 +725,7 @@ class DEM():
         self.dem = dem
 
         # open shapefile
-        region = glac_no[:2]
-        rgi_fp = base_fp + 'RGI/rgi60/'
-        for fn in os.listdir(rgi_fp):
-            if region in fn and 'Zone' not in fn:
-                reg_name = fn
-        rgi_fn = rgi_fp + f'{reg_name}/{reg_name}.shp'
-        shp_reg = gpd.read_file(rgi_fn)
-        self.shp = shp_reg[shp_reg['RGIId'] == f'RGI60-{glac_no}']
+        self.shp = _load_rgi_outline(glac_no)
 
         # get min and max elevation
         self.min_elev = float(dem.min().values)

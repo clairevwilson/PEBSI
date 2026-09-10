@@ -39,7 +39,7 @@ class Output():
 
         # make sure the requested storage variables are valid
         all_vars_flat = [vv for vvs in OUTPUT_GROUPS.values() for vv in vvs]
-        for v in params.store_vars: 
+        for v in params.store_vars:
             if v not in OUTPUT_GROUPS and v not in all_vars_flat:
                 assert v in OUTPUT_GROUPS, f'Invalid output group or variable: {v}'
 
@@ -284,6 +284,9 @@ class Output():
             'lon': (['point'], np.array(self.terrain.lon_n, dtype=float)),
             'elev': (['point'], np.array(self.terrain.elev_n, dtype=float))
         }
+
+        if self.terrain.weight_n is not None:
+            site_vars['weight'] = (['point'], np.array(self.terrain.weight_n, dtype=float))
 
         ds_site = xr.Dataset(site_vars, coords={'point': np.arange(self.N_POINTS)})
         ds_site.to_zarr(self.out_fn, mode='a')

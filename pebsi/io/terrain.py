@@ -18,6 +18,8 @@ import geopandas as gpd
 import numpy as np
 from pyproj import CRS, Transformer
 import shapely.geometry as geom
+from shapely.ops import voronoi_diagram
+from shapely import STRtree
 from rasterio.enums import Resampling
 # Local libraries
 from pebsi.shading.shading import Shading
@@ -58,18 +60,18 @@ class Terrain:
             self.rgiid_n = np.array([gid], dtype=str)
             self.rgiid_unique = np.array([gid], dtype=str)
             self.N_POINTS = 1
-            self.elev_n = self.slope_n = self.aspect_n = None
+            self.elev_n = self.slope_n = self.aspect_n = self.weight_n = None
             return
 
         if self.params.method_distribute == 'grid':
-            lats, lons, glaciers = self.grid_points()
+            lats, lons, glaciers, weights = self.grid_points()
 
             self.elev_n = None
             self.slope_n = None
             self.aspect_n = None
 
         elif self.params.method_distribute == 'adaptive':
-            lats, lons, glaciers = self.adaptive_points()
+            lats, lons, glaciers, weights = self.adaptive_points()
 
             self.elev_n = None
             self.slope_n = None
@@ -79,7 +81,7 @@ class Terrain:
             ns = len(self.params.sites)
             ng = len(self.params.rgi_ids)
             assert ns == ng, f'N sites (is {ns}) must equal N rgi_ids (is {ng})'
-            lats, lons, glaciers = [], [], []
+            lats, lons, glaciers, weights = [], [], [], None
             elevs, slopes, aspects = [], [], []
 
             metadata_fn = self.params.metadata_fn
@@ -110,6 +112,7 @@ class Terrain:
         self.rgiid_n = np.array(glaciers, dtype=str)
         self.rgiid_unique = np.unique(self.rgiid_n)
         self.N_POINTS = len(self.lat_n)
+        self.weight_n = np.array(weights) if weights is not None else None
         return
     
     def get_rgi_data(self):
@@ -184,20 +187,22 @@ class Terrain:
                 rgi_df.loc[idx, 'points'] -= 1
 
         # loop through RGI IDs
-        lats, lons, glaciers = [], [], []
+        lats, lons, glaciers, weights = [], [], [], []
         for gid in unique_ids:
             target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'points'].item()
             current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
-            polygon = current_glacier.unary_union
-            xs, ys = self._grid_polygon(polygon, target_n, rgi_gdf.crs, tolerance)
+            metric_crs = self._get_metric_crs(current_glacier)
+            polygon = current_glacier.to_crs(metric_crs).unary_union
+            xs, ys, ws = self._grid_polygon(polygon, target_n, metric_crs, tolerance)
 
             # append lats and lons to the global list
-            for lon, lat in zip(xs, ys):
+            for lon, lat, w in zip(xs, ys, ws):
                 lons.append(lon)
                 lats.append(lat)
                 glaciers.append(gid)
+                weights.append(w)
 
-        return lats, lons, glaciers
+        return lats, lons, glaciers, weights
 
     def adaptive_points(self, tolerance=0.05):
         """
@@ -220,26 +225,54 @@ class Terrain:
         coeff = self.params.adaptive_points_coeff
         exponent = self.params.adaptive_points_exponent
 
-        lats, lons, glaciers = [], [], []
+        lats, lons, glaciers, weights = [], [], [], []
         for gid in unique_ids:
             area = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'Area'].item()
             target_n = max(round(coeff * area ** exponent), 1)
             current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
-            polygon = current_glacier.unary_union
-            xs, ys = self._grid_polygon(polygon, target_n, rgi_gdf.crs, tolerance)
+            metric_crs = self._get_metric_crs(current_glacier)
+            polygon = current_glacier.to_crs(metric_crs).unary_union
+            xs, ys, ws = self._grid_polygon(polygon, target_n, metric_crs, tolerance)
 
-            for lon, lat in zip(xs, ys):
+            for lon, lat, w in zip(xs, ys, ws):
                 lons.append(lon)
                 lats.append(lat)
                 glaciers.append(gid)
+                weights.append(w)
 
-        return lats, lons, glaciers
+        return lats, lons, glaciers, weights
+
+    def voronoi_weights(self, points, polygon):
+        """
+        Weights each point by its Voronoi cell area within 
+        the polygon, normalized to sum to 1.
+        """
+        polygon = polygon.buffer(0)
+
+        # gridded lattice will cause numeric issues so jitter it
+        scale = np.sqrt(polygon.area / len(points)) * 1e-7
+        rng = np.random.default_rng(0)
+        jitter = rng.uniform(-scale, scale, size=(len(points), 2))
+        jittered = [geom.Point(p.x + dx, p.y + dy) for p, (dx, dy) in zip(points, jitter)]
+
+        cells = list(voronoi_diagram(geom.MultiPoint(jittered), envelope=polygon).geoms)
+        tree = STRtree(jittered)
+        weights = np.zeros(len(points))
+        for cell in cells:
+            candidates = tree.query(cell)
+            matches = [i for i in candidates if cell.contains(jittered[i])]
+            assert len(matches) == 1, f'Voronoi cell matched {len(matches)} points, expected 1'
+            weights[matches[0]] = cell.buffer(0).intersection(polygon).area
+        weights /= weights.sum()
+        return weights
 
     def _grid_polygon(self, polygon, target_n, crs, tolerance):
         """
         Fills a polygon with approximately target_n evenly spaced
         points using an adaptive grid spacing search. Returns lon,
-        lat lists.
+        lat, and area-weight lists (weight = each point's Voronoi
+        cell, clipped to the polygon and normalized to sum to 1 --
+        see voronoi_weights above).
         """
         xmin, ymin, xmax, ymax = polygon.bounds
         area = polygon.area
@@ -267,9 +300,11 @@ class Terrain:
             # adjust grid step density dynamically based on overshoot/undershoot
             spacing *= np.sqrt(current_count / target_n)
 
+        weights = self.voronoi_weights(points_inside, polygon)
+
         points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=crs)
         points_latlon = points_gdf.to_crs(epsg=4326)
-        return points_latlon.geometry.x.tolist(), points_latlon.geometry.y.tolist()
+        return points_latlon.geometry.x.tolist(), points_latlon.geometry.y.tolist(), weights.tolist()
 
 
     def load_dem_info(self, dem, lats_in, lons_in):
