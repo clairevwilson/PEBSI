@@ -100,6 +100,7 @@ dynamics_period_years = 1                   # Interval (whole years) between GLI
 
 # SPATIAL 
 n_points = 6                                # Number of points to divide domain into
+point_spacing = 300                         # Target mesh element edge length if method_distribute='mesh' [m]
 
 # WEATHER STATION
 aws_elev = None                             # Elevation of the weather station [m a.s.l.]
@@ -142,7 +143,7 @@ output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', 
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
 
 # METHODS
-method_distribute = 'grid'              # 'sites', 'grid', 'adaptive'
+method_distribute = 'grid'              # 'sites', 'grid', 'adaptive', 'mesh'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 

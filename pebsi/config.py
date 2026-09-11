@@ -246,6 +246,16 @@ class Config():
         hours_in_year = 365 * 24
         self.args.temporal_chunk_hours = round(temporal_chunk_years * hours_in_year)
 
+        # POINT DISTRIBUTION
+        method_distribute = getattr(self.args, 'method_distribute')
+        assert method_distribute in ('sites', 'grid', 'adaptive', 'mesh'), \
+            f"method_distribute must be 'sites', 'grid', 'adaptive' or 'mesh', got {method_distribute!r}"
+
+        if method_distribute == 'mesh':
+            point_spacing = getattr(self.args, 'point_spacing')
+            assert point_spacing > 0, \
+                f'point_spacing must be a positive length in meters, got {point_spacing!r}'
+
         # OUTPUT RESOLUTION
         output_freq = getattr(self.args, 'output_freq')
         assert output_freq in ('hourly', 'daily', 'monthly'), \
