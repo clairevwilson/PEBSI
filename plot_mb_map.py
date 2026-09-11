@@ -12,10 +12,10 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/test_point_setup_5/' # 
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/AD_forward_0/' # 
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
-plot_var = 'albedo'
-cm = 'Greys_r'
+plot_var = 'mass_balance'
+cm = 'RdBu'
 
 # ===================== LOAD DATA =====================
 # ds_map = xr.open_zarr(f'{output_dir.replace("now", "w")}/output.zarr', consolidated=False)
@@ -27,7 +27,7 @@ ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
 n_years = len(np.unique(ds.time.dt.year.values))
 
-rgi_ids = ['01.22193'] # [np.unique(ds['rgiid'].values)[0]]
+rgi_ids = ['01.01104'] # [np.unique(ds['rgiid'].values)[0]]
 points = ds.point.values[ds['rgiid'].values == rgi_ids[0]]
 ds = ds.sel(point=points)
 
@@ -37,6 +37,8 @@ ds = ds.sel(point=points)
 #     vals = (ds[plot_var] / ds_nomap[plot_var]).mean('time').values
 
 if plot_var == 'mass_balance':
+    if plot_var not in ds.variables:
+        ds['mass_balance'] = ds['accumulation'] + ds['refreeze'] - ds['melt']
     vals = ds[plot_var].sum('time').values / max(n_years, 1)
 elif plot_var == 'albedo':
     vals = ds[plot_var].sel(time='2019-08-01', method='nearest').values
@@ -86,8 +88,8 @@ if plot_var == 'wind':
 elif plot_var == 'albedo':
     vmin, vmax = 0.1, 0.9
 else:
-    vmin = -4 # -0.5 # np.nanpercentile(np.abs(vals), 1)
-    vmax = 4  # 0.5 # np.nanpercentile(np.abs(vals), 95)
+    vmin = -5 # -0.5 # np.nanpercentile(np.abs(vals), 1)
+    vmax = 5  # 0.5 # np.nanpercentile(np.abs(vals), 95)
 
 fig, ax = plt.subplots(figsize=(8, 7))
 

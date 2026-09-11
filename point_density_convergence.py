@@ -43,15 +43,30 @@ RESULTS_DIR = 'project/point_density_results/'
 DEFAULT_N_POINTS = [5, 10, 20, 35, 50, 75, 100, 150, 200, 300, 400, 450, 500,
                      550, 600, 670, 700, 750, 800, 850, 900, 950, 1000]
 
+# element edge lengths [m] for the patch-conforming mesh. Unlike a point
+# count these mean the same spatial resolution on every glacier, so the
+# same sweep is comparable between a small glacier and a big one.
+DEFAULT_SPACINGS = [1200, 1000, 800, 700, 600, 500, 450, 400, 350, 300, 250, 200]
+
 START_DATE = '2015-04-01 00:00'
 END_DATE_RAW = '2018-03-29 23:00'
 
 
-def run_one(glacier, rgi_id, n_points, wind_factor):
-    """Runs one grid-point sim, returns (actual_n_points, area_km2, mb_unweighted, mb_weighted)."""
+def run_one(glacier, rgi_id, wind_factor, n_points=None, spacing=None):
+    """
+    Runs one sim, returns (actual_n_points, area_km2, mb_unweighted, mb_weighted).
+
+    Pass n_points to place points on the clipped lattice ('grid'), or
+    spacing to mesh the glacier into triangular elements of that edge
+    length ('mesh') and use one point per element.
+    """
+    assert (n_points is None) != (spacing is None), \
+        'run_one takes exactly one of n_points and spacing'
+
     end_date = align_end_date_for_daily_output(START_DATE, END_DATE_RAW)
 
-    run_output_fp = os.path.join(OUTDIR, f'{glacier}_n{n_points}_wf{wind_factor}')
+    tag = f'n{n_points}' if spacing is None else f'h{spacing}'
+    run_output_fp = os.path.join(OUTDIR, f'{glacier}_{tag}_wf{wind_factor}')
     for old in glob.glob(run_output_fp + '_*'):
         shutil.rmtree(old)
 
@@ -61,15 +76,19 @@ def run_one(glacier, rgi_id, n_points, wind_factor):
     configs['start_date'] = START_DATE
     configs['end_date'] = end_date
     configs['rgi_ids'] = [rgi_id]
-    configs['method_distribute'] = 'grid'
-    configs['n_points'] = n_points
+    if spacing is None:
+        configs['method_distribute'] = 'grid'
+        configs['n_points'] = n_points
+    else:
+        configs['method_distribute'] = 'mesh'
+        configs['point_spacing'] = spacing
     configs['kp'] = baseline['kp']
     configs['wind_factor'] = wind_factor
     configs['store_data'] = True
     configs['store_vars'] = ['mass_balance']
     configs['output_fp'] = run_output_fp
 
-    tmp_config_fn = f'_point_density_{glacier}_{n_points}.yaml'
+    tmp_config_fn = f'_point_density_{glacier}_{tag}.yaml'
     with open(tmp_config_fn, 'w') as f:
         yaml.dump(configs, f, sort_keys=False)
 
@@ -101,43 +120,72 @@ def main():
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('glacier', choices=sorted(translate_rgi.keys()))
     parser.add_argument('--n-points', type=int, nargs='+', default=None)
+    parser.add_argument('--spacing', type=float, nargs='*', default=None,
+                        help='sweep mesh element edge length [m] instead of point count; '
+                             'pass with no values to use DEFAULT_SPACINGS')
     parser.add_argument('--wind-factor', type=float, default=baseline['wind_factor'])
     args = parser.parse_args()
 
     glacier = args.glacier
     rgi_id = translate_rgi[glacier]['6']
     wind_factor = args.wind_factor
-
-    n_points_list = args.n_points if args.n_points is not None else DEFAULT_N_POINTS
+    use_mesh = args.spacing is not None
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out_csv = os.path.join(RESULTS_DIR, f'{glacier}_point_density.csv')
+
+    if use_mesh:
+        sweep = sorted(set(args.spacing if args.spacing else DEFAULT_SPACINGS), reverse=True)
+        out_csv = os.path.join(RESULTS_DIR, f'{glacier}_mesh_convergence.csv')
+        sweep_col = 'point_spacing'
+    else:
+        sweep = sorted(set(args.n_points if args.n_points is not None else DEFAULT_N_POINTS))
+        out_csv = os.path.join(RESULTS_DIR, f'{glacier}_point_density.csv')
+        sweep_col = 'requested_n_points'
 
     rows = []
-    for n in sorted(set(n_points_list)):
-        actual_n, area_km2, mb_unweighted, mb_weighted = run_one(glacier, rgi_id, n, wind_factor)
-        print(f'requested n_points={n:>5}  actual={actual_n:>5}  '
+    for value in sweep:
+        kwargs = {'spacing': value} if use_mesh else {'n_points': value}
+        actual_n, area_km2, mb_unweighted, mb_weighted = run_one(
+            glacier, rgi_id, wind_factor, **kwargs)
+        label = f'h={value:>6.0f} m' if use_mesh else f'n_points={value:>5}'
+        print(f'{label}  actual N={actual_n:>6}  '
               f'unweighted MB={mb_unweighted:+.4f}  weighted MB={mb_weighted:+.4f} m w.e.')
         rows.append({
             'glacier': glacier,
             'area_km2': area_km2,
             'wind_factor': wind_factor,
-            'requested_n_points': n,
+            sweep_col: value,
             'actual_n_points': actual_n,
             'mass_balance': mb_weighted,
             'mass_balance_unweighted': mb_unweighted,
         })
 
-    df = pd.DataFrame(rows).sort_values('requested_n_points').reset_index(drop=True)
+    df = pd.DataFrame(rows)
 
-    reference_mb = df.iloc[-1]['mass_balance']
-    df['mb_diff_from_densest'] = df['mass_balance'] - reference_mb
+    # fold in any earlier sweep of the same glacier, so extending a sweep
+    # with a few more resolutions does not discard the ones already run.
+    # A resolution present in both is taken from this run.
+    if os.path.exists(out_csv):
+        previous = pd.read_csv(out_csv)
+        if sweep_col in previous.columns:
+            df = pd.concat([previous, df], ignore_index=True)
+            df = df.drop_duplicates(subset=sweep_col, keep='last')
+
+    # sort so the densest mesh is last either way: point count rises with
+    # n_points but falls as the element edge length grows
+    df = df.sort_values('actual_n_points').reset_index(drop=True)
+
+    # the densest run is not a truth to measure against -- it is just
+    # one more sample, and can sit at the edge of the spread itself.
+    # The median is the robust centre of the sweep.
+    df = df.drop(columns=['mb_diff_from_median'], errors='ignore')
+    df['mb_diff_from_median'] = df['mass_balance'] - df['mass_balance'].median()
 
     df.to_csv(out_csv, index=False)
 
     print()
-    print(df[['requested_n_points', 'actual_n_points', 'mass_balance',
-              'mass_balance_unweighted', 'mb_diff_from_densest']].to_string(index=False))
+    print(df[[sweep_col, 'actual_n_points', 'mass_balance',
+              'mass_balance_unweighted', 'mb_diff_from_median']].to_string(index=False))
     print(f'\nGlacier area: {df["area_km2"].iloc[0]:.1f} km2')
     print(f'Saved results to {out_csv}')
 
