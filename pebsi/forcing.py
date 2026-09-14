@@ -14,10 +14,14 @@ def expand_forcings(forcings, point_attrs):
     """
     Expands all per-cell (N_UNIQUE,) forcing fields to (N_POINTS,)
     using point_attrs.cell_idx, then replaces the original fields.
-    Fields that are already (N_POINTS,) (terrain-derived: shadow_mask,
-    solar_azimuth, solar_zenith) are left untouched.
+    Also gathers shadow_mask, solar_azimuth and solar_zenith for this
+    timestep from point_attrs's (N_POINTS, N_SHADE_TIME) tables at
+    forcings.shading_idx -- shading is annually periodic, so pack_forcings
+    only carries that index rather than pre-gathering these fields to
+    full run length.
     """
     idx = point_attrs.cell_idx
+    shade_idx = forcings.shading_idx
     return forcings._replace(
         temp=forcings.temp[idx],
         tp=forcings.tp[idx],
@@ -35,6 +39,9 @@ def expand_forcings(forcings, point_attrs):
         dustwet=forcings.dustwet[idx],
         dustdry=forcings.dustdry[idx],
         local_hour=forcings.local_hour[idx],
+        shadow_mask=point_attrs.shadow_mask_table[:, shade_idx],
+        solar_azimuth=point_attrs.solar_azimuth_table[:, shade_idx],
+        solar_zenith=point_attrs.solar_zenith_table[:, shade_idx],
     )
 
 def adjust_temperature(forcings, point_attrs, params):

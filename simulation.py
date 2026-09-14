@@ -275,6 +275,12 @@ class PEBSI():
             temp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
             sp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
             LWin_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
+
+            # shading tables: one year of (dayofyear, hour) entries, indexed
+            # by shading_idx in pack_forcings rather than pre-gathered per chunk
+            shadow_mask_table=jnp.array(self.terrain.shadow_mask, dtype=bool),
+            solar_azimuth_table=jnp.array(self.terrain.solar_azimuth, dtype=jnp.float64),
+            solar_zenith_table=jnp.array(self.terrain.solar_zenith, dtype=jnp.float64),
         )
 
         # store point_attrs to self since they are invariant
@@ -310,12 +316,11 @@ class PEBSI():
             )
             self._cell_elevs_set = True
 
-        # slice solar inputs from terrain by (day of year, hour)
-        shading_idx = [self.terrain.shading_lookup[(d, h)]
-                       for d, h in zip(dates.dayofyear, dates.hour)]
-        shadow_mask = self.terrain.shadow_mask[:, shading_idx]
-        solar_azimuth = self.terrain.solar_azimuth[:, shading_idx]
-        solar_zenith = self.terrain.solar_zenith[:, shading_idx]
+        # shading is annually periodic: store index for every hour of simulation
+        shading_idx = jnp.array(
+            [self.terrain.shading_lookup[(d, h)]
+             for d, h in zip(dates.dayofyear, dates.hour)],
+            dtype=jnp.int32)
 
         # ================== CLIMATE ==================
         # per-cell local solar hour: (N_TIME, N_UNIQUE)
@@ -353,9 +358,11 @@ class PEBSI():
             # radiation terms
             shortwave_in=jnp.array(climate.SWin, dtype=jnp.float64).T,
             longwave_in=jnp.array(climate.LWin, dtype=jnp.float64).T,
-            shadow_mask=jnp.array(shadow_mask, dtype=bool).T,
-            solar_azimuth=jnp.array(solar_azimuth, dtype=jnp.float64).T,
-            solar_zenith=jnp.array(solar_zenith, dtype=jnp.float64).T,
+            # placeholders, overwritten every step by expand_forcings
+            shadow_mask=jnp.zeros(len(dates), dtype=bool),
+            solar_azimuth=jnp.zeros(len(dates), dtype=jnp.float64),
+            solar_zenith=jnp.zeros(len(dates), dtype=jnp.float64),
+            shading_idx=shading_idx,
         )
 
         return forcings

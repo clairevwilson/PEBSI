@@ -217,6 +217,9 @@ class ClimateState(NamedTuple):
     dustdry: jnp.ndarray        # Dry dust deposition [kg m-2 s-1]
     dustwet: jnp.ndarray        # Wet dust deposition [kg m-2 s-1]
 
+    # index to draw from annually period shading table
+    shading_idx: jnp.ndarray = jnp.array(0, dtype=jnp.int32)
+
 class PointAttributes(NamedTuple):
     """
     Time-invariant spatial attributes for each point.
@@ -243,6 +246,12 @@ class PointAttributes(NamedTuple):
     temp_elev: jnp.ndarray          # Reference elevation for temp lapse rate [m]
     sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
     LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
+
+    # ==================== Shading (N_POINTS, N_SHADE_TIME) ===================
+    # one year of (dayofyear, hour) shading, indexed by ClimateState.shading_idx
+    shadow_mask_table: jnp.ndarray = jnp.ones((1, 1), dtype=bool)
+    solar_azimuth_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
+    solar_zenith_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
 
 class MBOutputs(NamedTuple):
     """Minimal per-timestep outputs for optimization — omits layer arrays."""
