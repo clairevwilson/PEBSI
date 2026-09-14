@@ -16,35 +16,36 @@ import rasterio
 from pyproj import Transformer
 from data_handling import translate_rgi
 
-glaciers = ['kahiltna','gulkana','kennicott','wolverine','lemon_creek','taku']
+glaciers = ['gulkana'] # ['kahiltna','gulkana','kennicott','wolverine','lemon_creek','taku']
 
 # define filepaths
-base_fp = '/ocean/projects/ees260009p/cwilson4/data/sar/'
-output_fp = '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/'
+base_fp = '/ocean/projects/ees260009p/cwilson4/data/'
+sar_fp = base_fp + 'sar/sar_by_elevation/'
+output_fp = base_fp + 'ice_albedo/'
 
 # use Ascending, Descending or both (minimum) scenes to get snowline?
 sar_direction_use = 'both' 
 # use buffer around minimum snowline elevation? [m]
 buffer = 0
 # albedo above threshold is filtered out (assumed to be snow)
-albedo_threshold = 0.65
+albedo_threshold = 0.55
 # difference in snowline between SAR and albedo thresholds above this threshold is thrown out
 snowline_threshold = 300
 # store average ice albedo in site_constants?
 store_aice = True
 
-rgi = gpd.read_file(base_fp + '../../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp')
+rgi = gpd.read_file(base_fp + '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp')
 
 for glacier in glaciers:
     # fill out file names
-    pathframe_fn = base_fp + 'Vertex_Path_Frame_info.csv'
-    albedo_fp = base_fp + '../albedo/'
-    dem_fp = base_fp + '../dems/RGI1_DEM/RGI60-GLAC_NO_dem.tif'
+    pathframe_fn = sar_fp + 'Vertex_Path_Frame_info.csv'
+    albedo_fp = base_fp + 'albedo/'
+    dem_fp = base_fp + 'dems/RGI1_DEM/RGI60-GLAC_NO_dem.tif'
 
     # find rgi7 glacier number
     rgi6id = translate_rgi[glacier]['6']
     rgi7id = translate_rgi[glacier]['7']
-    folder = base_fp + rgi7id + '/'
+    folder = sar_fp + rgi7id + '/'
 
     # grab shapefile for this glacier 
     glacier_outline = rgi.loc[rgi['RGIId'] == 'RGI60-' + rgi6id]
@@ -133,6 +134,9 @@ for glacier in glaciers:
     # filter out bad values 
     ds_all = ds_all.where((ds_all['albedo'] > 0.1) & (ds_all['albedo'] < 0.9))
 
+    # filter out anything which is clearly snow
+    ds_all = ds_all.where(ds_all['albedo'] < albedo_threshold)
+
     # change time to dates
     ds_all['time'] = pd.to_datetime(ds_all.time.dt.date)
 
@@ -186,7 +190,7 @@ for glacier in glaciers:
                              .mean(dim=['time']))
 
     # take overall average albedo 
-    average_spatial_albedo = ds_masked['albedo'].mean(dim=['time'])
+    average_spatial_albedo = ds_masked['albedo'].median(dim=['time'])
 
     average_spatial_albedo.rio.to_raster(
         output_fp + f'{rgi6id}_albedo.tif',
