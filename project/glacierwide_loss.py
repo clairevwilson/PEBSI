@@ -499,11 +499,6 @@ class MassBalance():
         start_argmin = np.argmin(np.abs(df['time'] - self.start))
         end_argmin = np.argmin(np.abs(df['time'] - self.end))
 
-        # the nearest-date match clamps to whatever the dataset actually
-        # covers -- for this product that's ~2000-2020, so a requested end
-        # date past that (e.g. 2025) snaps to the last real row.
-        # matched_start/matched_end are the period self.meas describes, and
-        # get_model_mb truncates the model to them.
         self.matched_start = df.iloc[start_argmin]['time']
         self.matched_end = df.iloc[end_argmin]['time']
 
@@ -669,9 +664,10 @@ class MassBalance():
         assert model_start_in_range and model_end_in_range, \
             f'Model run does not cover observation period (spans {model_start} to {model_end})'
 
-        mb_20 = ds.sel(time=slice(self.matched_start,
-                                  self.matched_end)).mass_balance.sum(dim='time')
-        self.mod = mb_20.mean(dim='point').values
+        ds_20 = ds.sel(time=slice(self.matched_start,
+                                  self.matched_end))
+        mb_weighted = ds_20.mass_balance.sum(dim='time') * ds_20.weight
+        self.mod = mb_weighted.sum().values
         return
 
     def get_meas_uncertainty(self):
