@@ -40,6 +40,7 @@ def expand_forcings(forcings, point_attrs):
         dustdry=forcings.dustdry[idx],
         local_hour=forcings.local_hour[idx],
         shadow_mask=point_attrs.shadow_mask_table[:, shade_idx],
+        cos_theta_precomp=point_attrs.cos_theta_table[:, shade_idx],
         solar_azimuth=point_attrs.solar_azimuth_table[:, shade_idx],
         solar_zenith=point_attrs.solar_zenith_table[:, shade_idx],
     )

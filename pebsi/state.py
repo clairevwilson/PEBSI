@@ -205,7 +205,7 @@ class ClimateState(NamedTuple):
     # ---------------------------- Radiation terms ----------------------------
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]
     longwave_in: jnp.ndarray    # Incoming longwave radiation [J m-2]
-    shadow_mask: jnp.ndarray    # Boolean shadow mask [-]
+    shadow_mask: jnp.ndarray    # Sunlit fraction of the point's cell [-]
     solar_azimuth: jnp.ndarray  # Solar azimuth angle [rad]
     solar_zenith: jnp.ndarray   # Solar zenith angle [rad]
 
@@ -217,8 +217,9 @@ class ClimateState(NamedTuple):
     dustdry: jnp.ndarray        # Dry dust deposition [kg m-2 s-1]
     dustwet: jnp.ndarray        # Wet dust deposition [kg m-2 s-1]
 
-    # index to draw from annually period shading table
+    # index to draw from annually periodic shading / solar incidence tables
     shading_idx: jnp.ndarray = jnp.array(0, dtype=jnp.int32)
+    cos_theta_precomp: jnp.ndarray = jnp.zeros((1,), dtype=jnp.float64)
 
 class PointAttributes(NamedTuple):
     """
@@ -249,9 +250,10 @@ class PointAttributes(NamedTuple):
 
     # ==================== Shading (N_POINTS, N_SHADE_TIME) ===================
     # one year of (dayofyear, hour) shading, indexed by ClimateState.shading_idx
-    shadow_mask_table: jnp.ndarray = jnp.ones((1, 1), dtype=bool)
+    shadow_mask_table: jnp.ndarray = jnp.ones((1, 1), dtype=jnp.float64)
     solar_azimuth_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
     solar_zenith_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
+    cos_theta_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
 
 class MBOutputs(NamedTuple):
     """Minimal per-timestep outputs for optimization — omits layer arrays."""

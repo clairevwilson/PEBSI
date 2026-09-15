@@ -154,6 +154,7 @@ option_accel_grains = False             # Accelerate wet grain metamorphosis?
 option_dynamics = False                 # Run glacier dynamics with GLIDE?
 option_ice_albedo_tif = False           # Take ice albedo from preprocessed .tif?
 option_windmaps = False                 # Load per-point wind speed-up from preprocessed .zarr?
+option_precomputed_costheta = True      # Cell-average cos(solar incidence) per pixel?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
