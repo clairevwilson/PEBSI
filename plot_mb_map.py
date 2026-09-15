@@ -12,7 +12,7 @@ from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/AD_forward_0/' # 
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/AD_forward_1/' # 
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
 plot_var = 'mass_balance'
 cm = 'RdBu'
@@ -27,7 +27,7 @@ ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
 n_years = len(np.unique(ds.time.dt.year.values))
 
-rgi_ids = ['01.01104'] # [np.unique(ds['rgiid'].values)[0]]
+rgi_ids = ['01.22193'] # [np.unique(ds['rgiid'].values)[0]]
 points = ds.point.values[ds['rgiid'].values == rgi_ids[0]]
 ds = ds.sel(point=points)
 
@@ -39,6 +39,10 @@ ds = ds.sel(point=points)
 if plot_var == 'mass_balance':
     if plot_var not in ds.variables:
         ds['mass_balance'] = ds['accumulation'] + ds['refreeze'] - ds['melt']
+
+    if 'total_mass' in ds.variables:
+        condition = (ds['total_mass'] > 10).all(dim='time').compute()
+        ds = ds.where(condition, drop=True)
     vals = ds[plot_var].sum('time').values / max(n_years, 1)
 elif plot_var == 'albedo':
     vals = ds[plot_var].sel(time='2019-08-01', method='nearest').values

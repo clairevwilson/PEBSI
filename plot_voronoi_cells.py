@@ -24,7 +24,7 @@ import pandas as pd
 import shapely.geometry as geom
 from matplotlib.colors import TwoSlopeNorm
 
-from AD_optimize import HOST_PATHS, host
+from host_paths import HOST_PATHS, host
 from pebsi.io import mesh
 from project.glacierwide_loss import translate_rgi
 

@@ -20,6 +20,7 @@ Usage:
 import argparse
 import glob
 import os
+import re
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -28,7 +29,7 @@ import shapely.geometry as geom
 import xarray as xr
 from matplotlib.colors import TwoSlopeNorm
 
-from AD_optimize import HOST_PATHS, host
+from host_paths import HOST_PATHS, host
 from pebsi.io import mesh
 from plot_voronoi_cells import draw_cells, load_outline
 from project.glacierwide_loss import translate_rgi
@@ -39,15 +40,23 @@ HOURS_PER_YEAR = 365.25 * 24
 
 
 def run_dirs(glacier):
-    """Maps each simulated element size to its output directory."""
+    """
+    Maps each simulated element size to its output directory.
+
+    Directories are named {glacier}_h{spacing}_wf{wind}_{i}. Anything
+    carrying extra settings in the tag belongs to a different
+    experiment, so it is skipped rather than guessed at.
+    """
     runs = {}
     for d in sorted(glob.glob(os.path.join(OUTDIR, f'{glacier}_h*'))):
         zarrs = sorted(glob.glob(os.path.join(d, 'output.zarr')))
         if not zarrs:
             continue
-        spacing = float(os.path.basename(d).split('_h')[1].split('_')[0])
+        tag = os.path.basename(d).split('_h')[1].split('_')[0]
+        if not re.fullmatch(r'[0-9.]+', tag):
+            continue
         # later directories for the same spacing are later reruns
-        runs[spacing] = zarrs[-1]
+        runs[float(tag)] = zarrs[-1]
     return runs
 
 

@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import rasterio
 
-fn = '/ocean/projects/ees260009p/cwilson4/data/ice_albedo/01.00570_albedo.tif'
+gn = '09162'
+fn = f'/ocean/projects/ees260009p/cwilson4/data/ice_albedo/01.{gn}_albedo.tif'
 
 with rasterio.open(fn) as src:
     data = src.read(1)
@@ -37,5 +38,5 @@ fig.colorbar(im, ax=ax, label='Ice albedo', shrink=0.5)
 ax.set_xlabel('Easting')
 ax.set_ylabel('Northing')
 fig.tight_layout()
-fig.savefig('ice_albedo_01.00570.png', dpi=150)
-print('Saved ice_albedo_01.00570.png')
+fig.savefig(f'ice_albedo_01.{gn}.png', dpi=150)
+print(f'Saved ice_albedo_01.{gn}.png')
