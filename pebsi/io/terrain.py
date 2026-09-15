@@ -24,7 +24,6 @@ import shapely
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 from scipy import sparse
-from scipy.ndimage import gaussian_filter
 from rasterio.enums import Resampling
 # Local libraries
 from pebsi.io import mesh
@@ -253,19 +252,8 @@ class Terrain:
         # get the resolution of the dataset in m
         x_res, y_res = dem.rio.resolution()
 
-        # slope and aspect follow the cell size unless the DEM is
-        # smoothed first, which pins them to one length instead
-        elev_grad = dem.values
-        if self.params.dem_smooth_m > 0:
-            sigma = self.params.dem_smooth_m / (2.355 * abs(x_res))
-            valid = np.isfinite(elev_grad)
-            total = gaussian_filter(np.where(valid, elev_grad, 0.0), sigma,
-                                    mode='nearest')
-            weight = gaussian_filter(valid.astype(float), sigma, mode='nearest')
-            elev_grad = np.where(weight > 1e-6, total / weight, np.nan)
-
         # calculate gradient and get the slope
-        dx, dy = np.gradient(elev_grad, y_res, x_res)
+        dx, dy = np.gradient(dem.values, y_res, x_res)
         slope_vals = np.arctan(np.sqrt(dx**2 + dy**2))
         slope_vals = np.rad2deg(slope_vals)
 
@@ -650,7 +638,103 @@ class Terrain:
                 setattr(self, var, existing)
 
         return
-    
+
+    def load_cos_theta(self, time_chunk=500):
+        """
+        Builds a per-point, per-shading-timestep table of cos(solar
+        incidence angle), computed per pixel from the pixel_slope/
+        pixel_aspect fields in the shading .zarr and cell-averaged
+        across Voronoi cells.
+
+        Only called when params.option_precomputed_costheta is set.
+        Time is chunked so the pixel x timestep array is never 
+        fully materialized. 
+
+        Parameters
+        ==========
+        time_chunk : int
+            Timesteps processed per pass
+        """
+        N_POINTS = self.N_POINTS
+        N_TIME = self.shadow_mask.shape[1]
+        table = np.full((N_POINTS, N_TIME), 1.0, dtype=np.float64)
+
+        for gid in np.unique(self.rgiid_n):
+            gid_idx = np.where(self.rgiid_n == gid)[0]
+
+            fn = self.shade_fn.format(gid=gid)
+            ds = xr.open_zarr(fn)
+            ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
+            ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
+
+            transformer = Transformer.from_crs('EPSG:4326', ds.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
+            points = np.column_stack([x_pts, y_pts])
+
+            zen = self.solar_zenith[gid_idx[0], :]
+            az = self.solar_azimuth[gid_idx[0], :]
+
+            ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                   .to_crs(ds.rio.crs).union_all())
+            grid_x, grid_y = np.meshgrid(ds.x.values, ds.y.values)
+            on_ice = shapely.contains_xy(ice, grid_x, grid_y)
+
+            if 'pixel_slope' not in ds:
+                slope_r = np.deg2rad(self.slope_n[gid_idx])
+                aspect_r = np.deg2rad(self.aspect_n[gid_idx])
+                table[gid_idx, :] = (
+                    np.cos(zen)[None, :] * np.cos(slope_r)[:, None]
+                    + np.sin(zen)[None, :] * np.sin(slope_r)[:, None]
+                    * np.cos(az[None, :] - aspect_r[:, None]))
+                ds.close()
+                continue
+
+            if not on_ice.any():
+                target_x = xr.DataArray(x_pts, dims='points')
+                target_y = xr.DataArray(y_pts, dims='points')
+                nn = (ds[['pixel_slope', 'pixel_aspect']]
+                      .sel(y=target_y, x=target_x, method='nearest'))
+                s_nn = nn['pixel_slope'].values
+                a_nn = nn['pixel_aspect'].values
+                table[gid_idx, :] = (
+                    np.cos(zen)[None, :] * np.cos(s_nn)[:, None]
+                    + np.sin(zen)[None, :] * np.sin(s_nn)[:, None]
+                    * np.cos(az[None, :] - a_nn[:, None]))
+                ds.close()
+                continue
+
+            pixels = np.column_stack([grid_x[on_ice], grid_y[on_ice]])
+            pslope = ds['pixel_slope'].values[on_ice]
+            paspect = ds['pixel_aspect'].values[on_ice]
+
+            owner = cKDTree(points).query(pixels, workers=-1)[1]
+            count = np.bincount(owner, minlength=len(points))
+            ownership = sparse.csr_matrix(
+                (np.ones(len(owner)), (owner, np.arange(len(owner)))),
+                shape=(len(points), len(owner)))
+
+            for t0 in range(0, N_TIME, time_chunk):
+                t1 = min(t0 + time_chunk, N_TIME)
+                zen_b, az_b = zen[t0:t1], az[t0:t1]
+                ct_pix = (np.cos(zen_b)[None, :] * np.cos(pslope)[:, None]
+                         + np.sin(zen_b)[None, :] * np.sin(pslope)[:, None]
+                         * np.cos(az_b[None, :] - paspect[:, None]))
+                cell_sum = np.asarray(ownership @ ct_pix)
+                table[gid_idx, t0:t1] = cell_sum / np.maximum(count, 1)[:, None]
+
+            empty = count == 0
+            if empty.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                ct_nn = (np.cos(zen)[None, :] * np.cos(pslope[nn])[:, None]
+                        + np.sin(zen)[None, :] * np.sin(pslope[nn])[:, None]
+                        * np.cos(az[None, :] - paspect[nn][:, None]))
+                table[gid_idx[empty], :] = ct_nn
+
+            ds.close()
+
+        self.cos_theta_table = table
+        return
+
     def load_shading(self):
         """
         Loads the full shading mask for the points in the
