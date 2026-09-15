@@ -52,13 +52,19 @@ START_DATE = '2015-04-01 00:00'
 END_DATE_RAW = '2018-03-29 23:00'
 
 
-def run_one(glacier, rgi_id, wind_factor, n_points=None, spacing=None):
+def run_one(glacier, rgi_id, wind_factor, n_points=None, spacing=None,
+           precomputed_costheta=False):
     """
     Runs one sim, returns (actual_n_points, area_km2, mb_unweighted, mb_weighted).
 
     Pass n_points to place points on the clipped lattice ('grid'), or
     spacing to mesh the glacier into triangular elements of that edge
     length ('mesh') and use one point per element.
+
+    precomputed_costheta sets option_precomputed_costheta: cos(solar
+    incidence) is cell-averaged from per-pixel slope/aspect (cached in
+    the shading .zarr) rather than computed once from the point's own
+    cell-mean slope/aspect.
     """
     assert (n_points is None) != (spacing is None), \
         'run_one takes exactly one of n_points and spacing'
@@ -66,6 +72,8 @@ def run_one(glacier, rgi_id, wind_factor, n_points=None, spacing=None):
     end_date = align_end_date_for_daily_output(START_DATE, END_DATE_RAW)
 
     tag = f'n{n_points}' if spacing is None else f'h{spacing}'
+    if precomputed_costheta:
+        tag += 'ct'
     run_output_fp = os.path.join(OUTDIR, f'{glacier}_{tag}_wf{wind_factor}')
     for old in glob.glob(run_output_fp + '_*'):
         shutil.rmtree(old)
@@ -82,6 +90,7 @@ def run_one(glacier, rgi_id, wind_factor, n_points=None, spacing=None):
     else:
         configs['method_distribute'] = 'mesh'
         configs['point_spacing'] = spacing
+    configs['option_precomputed_costheta'] = precomputed_costheta
     configs['kp'] = baseline['kp']
     configs['wind_factor'] = wind_factor
     configs['store_data'] = True
@@ -124,6 +133,12 @@ def main():
                         help='sweep mesh element edge length [m] instead of point count; '
                              'pass with no values to use DEFAULT_SPACINGS')
     parser.add_argument('--wind-factor', type=float, default=baseline['wind_factor'])
+    parser.add_argument('--precomputed-costheta', action='store_true',
+                        help='enable option_precomputed_costheta for this sweep')
+    parser.add_argument('--tag', default='',
+                        help='suffix for the results CSV, so two jobs sweeping '
+                             'different resolutions of the same glacier do not '
+                             'overwrite each other')
     args = parser.parse_args()
 
     glacier = args.glacier
@@ -135,7 +150,7 @@ def main():
 
     if use_mesh:
         sweep = sorted(set(args.spacing if args.spacing else DEFAULT_SPACINGS), reverse=True)
-        out_csv = os.path.join(RESULTS_DIR, f'{glacier}_mesh_convergence.csv')
+        out_csv = os.path.join(RESULTS_DIR, f'{glacier}_mesh_convergence{args.tag}.csv')
         sweep_col = 'point_spacing'
     else:
         sweep = sorted(set(args.n_points if args.n_points is not None else DEFAULT_N_POINTS))
@@ -146,7 +161,8 @@ def main():
     for value in sweep:
         kwargs = {'spacing': value} if use_mesh else {'n_points': value}
         actual_n, area_km2, mb_unweighted, mb_weighted = run_one(
-            glacier, rgi_id, wind_factor, **kwargs)
+            glacier, rgi_id, wind_factor, precomputed_costheta=args.precomputed_costheta,
+            **kwargs)
         label = f'h={value:>6.0f} m' if use_mesh else f'n_points={value:>5}'
         print(f'{label}  actual N={actual_n:>6}  '
               f'unweighted MB={mb_unweighted:+.4f}  weighted MB={mb_weighted:+.4f} m w.e.')

@@ -1,0 +1,13 @@
+   glacier     h   N pts               raster   pixels     time  empty cells  px/cell
+   gulkana   600     157   ice albedo (100 m)      804   146.4ms           89      5.1
+   gulkana   600     157           DEM (30 m)    11547    44.7ms            0     73.5
+   gulkana   300     495   ice albedo (100 m)      804    53.8ms          287      1.6
+   gulkana   300     495           DEM (30 m)    11547    71.5ms            0     23.3
+   gulkana   150    1764   ice albedo (100 m)      804    44.8ms         1099      0.5
+   gulkana   150    1764           DEM (30 m)    11547    44.0ms            2      6.5
+ kennicott   600    2256   ice albedo (100 m)    14236    44.8ms         1321      6.3
+ kennicott   600    2256           DEM (30 m)    29233    73.9ms           12     13.0
+ kennicott   300    7784   ice albedo (100 m)    14236    54.0ms         4141      1.8
+ kennicott   300    7784           DEM (30 m)    29233    44.6ms          123      3.8
+ kennicott   150   29648   ice albedo (100 m)    15780    53.4ms        16429      0.5
+ kennicott   150   29648           DEM (30 m)    29233    62.9ms         5229      1.0

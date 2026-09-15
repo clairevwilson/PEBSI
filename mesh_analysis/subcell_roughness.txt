@@ -1,0 +1,15 @@
+finest mesh h=100, N=3880
+MB total sd                         : 2.266 m w.e. a-1
+after removing MB(elevation) curve  : 0.535   (elevation explains 94%)
+
+Within a neighbourhood of radius r, how much does MB vary,
+and how much of that survives removing the elevation trend?
+  r [m]    pts    MB sd   elev sd  resid sd
+    100      6    0.144      12.6     0.130
+    200     24    0.216      22.5     0.193
+    300     53    0.278      32.4     0.238
+    500    136    0.387      50.8     0.306
+    800    314    0.550      76.6     0.378
+
+resid sd is the MB variation NOT explained by elevation --
+that is what a single point per cell cannot represent.

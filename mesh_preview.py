@@ -19,7 +19,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from AD_optimize import HOST_PATHS, host
+from host_paths import HOST_PATHS, host
 from pebsi.io import mesh
 from point_density_convergence import DEFAULT_SPACINGS
 from project.glacierwide_loss import translate_rgi

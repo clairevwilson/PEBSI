@@ -1,0 +1,10 @@
+glacier minimum elevation in DEM: 1180 m
+SAR snowline floor              : 1182 m
+
+                             group     n  median alb  frac>0.35
+BELOW the snowline floor (<1182 m)     1       0.690     100.0%
+ just above it (1182-1250 m)          57       0.375      52.6%
+ 1250-1450 m                         185       0.170       0.0%
+ above 1450 m                        576       0.202       6.2%
+
+pixels below the floor are 0.1% of the glacier but 1% of all bright pixels
