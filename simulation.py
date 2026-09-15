@@ -19,6 +19,8 @@ import warnings
 import yaml
 # External libraries
 import jax
+os.environ["JAX_TRACEBACK_FILTERING"] = "off"   # show full error statements
+jax.config.update("jax_enable_x64", True)       # enable floaf64 storage
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
@@ -34,8 +36,6 @@ from pebsi.state import *
 from pebsi.main import main
 
 os.umask(0o000) # make sure files are created with universal permissions
-os.environ["JAX_TRACEBACK_FILTERING"] = "off"   # show full error statements
-jax.config.update("jax_enable_x64", True)       # enable floaf64 storage
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
 
@@ -148,6 +148,12 @@ class PEBSI():
 
         # ================== SHADING ==================
         terrain.load_shading()
+
+        # solar incidence angle handling
+        if params.option_precomputed_costheta:
+            terrain.load_cos_theta()
+        else:
+            terrain.cos_theta_table = np.zeros_like(terrain.shadow_mask)
 
         # ============ GLACIER DYNAMICS (optional) ============
         if params.option_dynamics:
@@ -278,7 +284,8 @@ class PEBSI():
 
             # shading tables: one year of (dayofyear, hour) entries, indexed
             # by shading_idx in pack_forcings rather than pre-gathered per chunk
-            shadow_mask_table=jnp.array(self.terrain.shadow_mask, dtype=bool),
+            shadow_mask_table=jnp.array(self.terrain.shadow_mask, dtype=jnp.float64),
+            cos_theta_table=jnp.array(self.terrain.cos_theta_table, dtype=jnp.float64),
             solar_azimuth_table=jnp.array(self.terrain.solar_azimuth, dtype=jnp.float64),
             solar_zenith_table=jnp.array(self.terrain.solar_zenith, dtype=jnp.float64),
         )
@@ -359,7 +366,8 @@ class PEBSI():
             shortwave_in=jnp.array(climate.SWin, dtype=jnp.float64).T,
             longwave_in=jnp.array(climate.LWin, dtype=jnp.float64).T,
             # placeholders, overwritten every step by expand_forcings
-            shadow_mask=jnp.zeros(len(dates), dtype=bool),
+            shadow_mask=jnp.zeros(len(dates), dtype=jnp.float64),
+            cos_theta_precomp=jnp.zeros(len(dates), dtype=jnp.float64),
             solar_azimuth=jnp.zeros(len(dates), dtype=jnp.float64),
             solar_zenith=jnp.zeros(len(dates), dtype=jnp.float64),
             shading_idx=shading_idx,
