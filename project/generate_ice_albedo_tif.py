@@ -16,7 +16,7 @@ import rasterio
 from pyproj import Transformer
 from data_handling import translate_rgi
 
-glaciers = ['gulkana'] # ['kahiltna','gulkana','kennicott','wolverine','lemon_creek','taku']
+glaciers = ['kahiltna','gulkana','kennicott','wolverine','lemon_creek','taku']
 
 # define filepaths
 base_fp = '/ocean/projects/ees260009p/cwilson4/data/'
@@ -29,6 +29,11 @@ sar_direction_use = 'both'
 buffer = 0
 # albedo above threshold is filtered out (assumed to be snow)
 albedo_threshold = 0.55
+# AVERAGED albedo at the end is thrown out above this value
+final_albedo_threshold = 0.45
+# pixels within this many pixel-widths of the RGI outline are thrown out,
+# since that outline is ~2000-era and glaciers have since retreated
+edge_buffer_px = 1
 # difference in snowline between SAR and albedo thresholds above this threshold is thrown out
 snowline_threshold = 300
 # store average ice albedo in site_constants?
@@ -190,7 +195,16 @@ for glacier in glaciers:
                              .mean(dim=['time']))
 
     # take overall average albedo 
-    average_spatial_albedo = ds_masked['albedo'].median(dim=['time'])
+    ds_median = ds_masked['albedo'].median(dim=['time'])
+
+    average_spatial_albedo = ds_median.where(ds_median <= final_albedo_threshold)
+
+    # drop pixels near the outline: likely newly-exposed ground, not ice
+    pixel_size = abs(average_spatial_albedo.rio.resolution()[0])
+    eroded_outline = glacier_outline.copy()
+    eroded_outline['geometry'] = eroded_outline.buffer(-edge_buffer_px * pixel_size)
+    average_spatial_albedo = average_spatial_albedo.rio.clip(
+        eroded_outline.geometry.values, eroded_outline.crs)
 
     average_spatial_albedo.rio.to_raster(
         output_fp + f'{rgi6id}_albedo.tif',
@@ -198,3 +212,5 @@ for glacier in glaciers:
         compress='deflate',
         tiled=True
     )
+
+    print(f'Saved {rgi6id}_albedo.tif')
