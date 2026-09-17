@@ -13,7 +13,7 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_losses.npz'
-FIG_FN = '/jet/home/cwilson4/PEBSI/loss_surface.png'
+FIG_FN = '/ocean/projects/ees260009p/cwilson4/Figs/loss_surface.png'
 
 PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'),
           ('snow', 'Snow extent'), ('melt', 'Melt extent')]

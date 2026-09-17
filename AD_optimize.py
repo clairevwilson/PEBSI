@@ -106,7 +106,7 @@ ALBEDO_BASELINE_MONTH = 3
 # starting point
 baseline = {'kp': 2.5, 'wind_factor': 2.5}
 
-from host_paths import host, HOST_PATHS
+from project.host_paths import host, HOST_PATHS
 
 # physics settings shared with the distributed reference run (config.yaml)
 BASE_CONFIG = dict(
@@ -626,10 +626,10 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     #
     # The weights are each point's Voronoi cell area clipped to the glacier
     # outline, normalized to sum to 1 within the glacier
-    # (Terrain.voronoi_weights, reached via adaptive_points -> _grid_polygon).
-    # The adaptive mesh is an even lattice clipped to the outline, so interior
-    # cells are all the same size and the weights only depart from uniform at
-    # the margin, where cells are cut by the boundary. Those margin points are
+    # (mesh.voronoi_weights, reached via distribute_rule -> mesh_polygon).
+    # The mesh puts one point per triangular element and reads its weight off
+    # the true outline, so weights only depart from uniform where an element
+    # is cut by the boundary. Those margin points are
     # a large fraction of a small glacier's mesh and carry its most extreme
     # mass balance, and the Hugonnet target they are compared against is a
     # genuine area-weighted mean over uniform-area pixels (see

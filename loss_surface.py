@@ -42,7 +42,7 @@ WIND_FACTOR_VALUES = np.arange(0.5, 5.01, 0.5)
 # extent (total_water) and snow extent (surftype)
 STORE_VARS = ['mass_balance', 'albedo', 'total_water', 'surftype']
 
-out_config_fn = 'config_loss_surface.yaml'
+out_config_fn = os.path.join(ad.HOST_PATHS[ad.host]['output_fp'], 'config_loss_surface.yaml')
 grid_fn = os.path.join(ad.HOST_PATHS[ad.host]['output_fp'], 'loss_surface_grid.npz')
 
 

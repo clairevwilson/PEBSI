@@ -1,10 +1,10 @@
 """
-Find the day near USER_GUESS with ≥90% satellite albedo coverage, then plot
+Find the day near DATE with ≥90% satellite albedo coverage, then plot
 a two-panel map: satellite albedo (left) and kriged simulation albedo (right).
 
-Edit USER_GUESS and output_dir before running.
+Edit DATE and output_dir before running.
 """
-import sys
+import sys, os
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -18,7 +18,7 @@ import rasterio.transform
 
 # ===================== USER CONFIG =====================
 DATE = '2024-09-20'          # date to search near
-output_dir = '../Output/gulkana_windfactor_precgrad_0/'   # simulation zarrs
+output_dir = 'Output/gulkana_windfactor_precgrad_0/'   # simulation zarrs
 albedo_dir = '../data/albedo/'
 rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 COVERAGE_THRESH = 0.90              # fraction of glacier pixels required

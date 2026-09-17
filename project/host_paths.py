@@ -1,8 +1,9 @@
 """
 Machine-dependent filepaths for PEBSI.
 
-Kept apart from AD_optimize so analysis and plotting scripts can find
-the data without importing the model, and with it JAX and CUDA.
+Any simulation called from a simulation-building script like
+gridsearch or AD_optimize can refer to these dictionaries to
+find common filepaths for the systems used in development.
 """
 import socket
 
