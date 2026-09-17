@@ -52,22 +52,46 @@ glacier, in cm w.e./yr. It's on the order of 100 cm as a result of negative
 net mass balance in the ablation area and positive net mass balance in the
 accumulation area.
 
-The error of the glacier-wide (area-weighted) mean behaves as a random
-variable with size
+s(N) is the typical size of the error between an N-point mesh's answer and
+the glacier's true mass balance — how much the answer would bounce around if
+you regenerated the mesh at that N many times. It behaves as:
 
     s(N) = C · σ / √N
 
-Fit to 51 (glacier, resolution) error measurements across the five-glacier
-sweep, using each sweep's three finest runs as ground truth (excluded from
-the fit). The fit gives:
+### How this was fit
+
+We don't have access to the true mass balance, so we built a stand-in for it
+per glacier: the average of that glacier's three finest sweep runs (three
+different meshes near the fine end). Every other resolution's error was
+measured against that stand-in, giving 51 (glacier, resolution)
+measurements across the five-glacier sweep. Those three finest runs
+themselves were excluded from the fit — they define the reference, so they
+can't also be a measurement of it. Fitting `s = C · σ / √N` to the 51 points
+gives:
 
     C = 0.0603
+
+### Is the reference good enough?
+
+Averaging three finest runs only cancels *random* mesh-to-mesh error, and
+only as well as the model's own math says it should: using the fitted
+equation to estimate the reference's own leftover noise gives 0.11 to 0.17
+cm w.e./yr on all five glaciers — under 6% of the 3 cm/yr tolerance we use
+below. That's a self-consistency check, not independent proof, since it uses
+the same equation being validated.
+
+What it can't rule out is a *systematic* bias shared by all three finest
+runs alike — averaging doesn't cancel that. One such bias is known and still
+open: the residual slope/aspect resolution effect noted above, where terrain
+roughness still changes somewhat with mesh spacing. If any of that leaked
+into the finest runs, it would sit in the reference too, undetected by this
+check.
 
 ### Why this form is trustworthy
 
 - Fitting `s = C · σ · N⁻ᵖ` with both C and p free returns p ≈ 0.46 — the
   square root, the textbook rate for averaging down a random error. That's
-  measured, not assumed.
+  measured and agrees with theory.
 - Drawing points at random instead of using the mesh gives error ≈ σ/√N with
   no prefactor, matching the sweep to within 10% on all five glaciers. So the
   √N law is confirmed independent of the mesh, and C is cleanly attributable
