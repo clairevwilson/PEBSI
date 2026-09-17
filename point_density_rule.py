@@ -47,16 +47,16 @@ import xarray as xr
 import yaml
 
 import simulation as sim
-from AD_optimize import BASE_CONFIG, HOST_PATHS, host
+from project.parameters import BASE_CONFIG, HOST_PATHS, host, translate_rgi
 from pebsi import defaults
 from pebsi.io import mesh
-from project.bayes_calibrate import align_end_date_for_daily_output
-from project.glacierwide_loss import translate_rgi
 
 OUTDIR = os.path.normpath(os.path.join(HOST_PATHS[host]['output_fp'], '..', 'sigma_survey')) + '/'
 
+# daily output requires the inclusive hourly count to be a multiple of
+# 24, which a 00:00 start and 23:00 end always satisfies
 START_DATE = '2015-04-01 00:00'
-END_DATE_RAW = '2018-03-29 23:00'
+END_DATE = '2018-03-29 23:00'
 YEARS = 3.0
 
 # sigma is within about 5% of its converged value by this spacing on every
@@ -101,14 +101,13 @@ def read_sigma(run_fp):
 
 def run_survey(glacier, rgi_id, spacing):
     """Runs the one simulation this glacier's point count is chosen from."""
-    end_date = align_end_date_for_daily_output(START_DATE, END_DATE_RAW)
     run_fp = survey_output(glacier, spacing)
 
     configs = dict(BASE_CONFIG)
     configs.update(HOST_PATHS[host])
     configs['temporal_chunk_years'] = 1
     configs['start_date'] = START_DATE
-    configs['end_date'] = end_date
+    configs['end_date'] = END_DATE
     configs['rgi_ids'] = [rgi_id]
     configs['method_distribute'] = 'mesh'
     configs['point_spacing'] = spacing

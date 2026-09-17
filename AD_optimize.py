@@ -67,12 +67,11 @@ import yaml
 from pyproj import Transformer
 
 from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, translate_rgi
+from project.parameters import host, HOST_PATHS, GLACIERS, baseline, BASE_CONFIG
 
 # ---------------------------------------------------------------------------
 # Run settings
 # ---------------------------------------------------------------------------
-
-GLACIERS = ['gulkana', 'kahiltna', 'kennicott', 'wolverine', 'lemon_creek'] 
 
 START_DATE = '2000-01-01 00:00'
 END_DATE = '2025-01-01 23:00'
@@ -102,25 +101,6 @@ ALBEDO_MONTHS = list(range(3, 10))
 
 ALBEDO_USE_DELTAS = True
 ALBEDO_BASELINE_MONTH = 3
-
-# starting point
-baseline = {'kp': 2.5, 'wind_factor': 2.5}
-
-from project.host_paths import host, HOST_PATHS
-
-# physics settings shared with the distributed reference run (config.yaml)
-BASE_CONFIG = dict(
-    option_ice_albedo_tif=True,
-    option_windmaps=True,
-    option_accel_grains=True,
-    option_flat_plates=True,
-    option_dynamics=False,
-    constant_freshgrainsize=54.5,
-    constant_irrwater=True,
-    precgrad=0.000100,
-    bias_vars=['temp'],
-    max_nlayers=25,
-)
 
 
 def build_config():

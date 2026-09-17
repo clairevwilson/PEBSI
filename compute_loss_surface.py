@@ -1,18 +1,24 @@
 """
 Scores every (kp, wind_factor) combination in the loss_surface run and
-saves the four glacier-wide log-losses to an .npz.
+saves the four glacier-wide log-losses to an .npz, summed across every
+calibration glacier -- the same convention AD_optimize's own total uses.
 
-The run tiled the adaptive mesh once per combination, so combination c
-occupies points [c*n_base:(c+1)*n_base]; each block is pulled out and
-scored the way AD_optimize scores it -- March-referenced albedo deltas,
-and mass balance compared only over the period the Hugonnet data
-actually covers rather than the full model window.
+The run tiled the combined mesh (every glacier at once) once per
+combination, so combination c occupies points [c*n_base:(c+1)*n_base];
+each block still holds every glacier's points together, told apart by
+the 'rgiid' field the output carries. Each glacier's slice is scored
+against its own observations the way AD_optimize scores it --
+March-referenced albedo deltas, and mass balance compared only over the
+period the Hugonnet data actually covers, area-weighted by ds.weight
+rather than a flat mean across points -- and the per-glacier losses are
+summed into that combination's total.
 
-Slow (it reads ~2 GB of daily output), so it is kept apart from
-plot_loss_surface.py -- run this once, then iterate on the figure.
+Slow (it reads ~2 GB of daily output per glacier), so it is kept apart
+from plot_loss_surface.py -- run this once, then iterate on the figure.
 
 @author: clairevwilson
 """
+import glob
 import os
 import sys
 
@@ -22,14 +28,22 @@ import xarray as xr
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance
+from project.parameters import host, HOST_PATHS, translate_rgi
 
-OUT_ZARR = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_0/output.zarr'
-GRID_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_grid.npz'
-LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_losses.npz'
+OUTPUT_ROOT = HOST_PATHS[host]['output_fp']
+GRID_FN = os.path.join(OUTPUT_ROOT, 'loss_surface_grid.npz')
+LOSS_FN = os.path.join(OUTPUT_ROOT, 'loss_surface_losses.npz')
 
 ALBEDO_SIGMA = 0.0777
 
 METRICS = ('albedo', 'mb', 'snow', 'melt')
+
+
+def find_output_zarr():
+    """The loss_surface run's output dir, whatever index it landed on."""
+    candidates = sorted(glob.glob(OUTPUT_ROOT.rstrip('/') + '_*'))
+    assert candidates, f'no run output found under {OUTPUT_ROOT.rstrip("/")}_*'
+    return os.path.join(candidates[-1], 'output.zarr')
 
 
 def main():
@@ -38,42 +52,62 @@ def main():
     wf_values = grid['wind_factor']
     n_base = int(grid['n_base'])
     n_combos = int(grid['n_combos'])
-    glacier = str(grid['glacier'])
+    glaciers = [str(g) for g in grid['glaciers']]
     start, end = str(grid['start']), str(grid['end'])
+    rgi_ids = {g: translate_rgi[g]['6'] for g in glaciers}
 
-    print(f'{glacier}: {n_base} points x {n_combos} combos, {start} to {end}',
-          flush=True)
+    print(f'{len(glaciers)} glaciers x {n_combos} combos, {n_base} points '
+          f'per combo, {start} to {end}', flush=True)
 
-    ds = xr.open_zarr(OUT_ZARR)
+    ds = xr.open_zarr(find_output_zarr())
 
-    # measured sides are identical for every combination (all replicas sit at
-    # the same coordinates), so the observation loaders are built once
-    albedo = Albedo(glacier, use='s2')
-    snowmelt = SnowlineMelt(glacier)
-    mb = MassBalance(glacier, dates=(start, end))
-    print(f'MB measured {mb.meas:+.3f} +/- {mb.sigma:.3f} m w.e. over '
-          f'{mb.matched_start.date()} to {mb.matched_end.date()}', flush=True)
+    # measured sides are identical for every combination (all replicas sit
+    # at the same coordinates), so the observation loaders are built once
+    # per glacier
+    obs = {}
+    for g in glaciers:
+        albedo = Albedo(g, use='s2')
+        snowmelt = SnowlineMelt(g)
+        mb = MassBalance(g, dates=(start, end))
+        print(f'  {g:<12} MB measured {mb.meas:+.3f} +/- {mb.sigma:.3f} '
+              f'm w.e. over {mb.matched_start.date()} to '
+              f'{mb.matched_end.date()}', flush=True)
+        obs[g] = dict(albedo=albedo, snowmelt=snowmelt, mb=mb)
 
     losses = {k: np.full(n_combos, np.nan) for k in METRICS}
     losses['total'] = np.full(n_combos, np.nan)
+    per_glacier = {g: {k: np.full(n_combos, np.nan) for k in METRICS}
+                   for g in glaciers}
 
     for c in range(n_combos):
-        sub = ds.isel(point=slice(c * n_base, (c + 1) * n_base)).load()
+        block = ds.isel(point=slice(c * n_base, (c + 1) * n_base)).load()
+        rgiid = block.rgiid.values
 
-        albedo.get_model_albedo(sub)
-        albedo.get_deltas(method='march_mean')
-        losses['albedo'][c] = albedo.log_loss(sigma=ALBEDO_SIGMA)
+        totals = {k: 0.0 for k in METRICS}
+        for g in glaciers:
+            sub = block.isel(point=(rgiid == rgi_ids[g]))
+            o = obs[g]
 
-        snowmelt.get_model_snow(sub)
-        losses['snow'][c], losses['melt'][c] = snowmelt.bernoulli_loss()
+            o['albedo'].get_model_albedo(sub)
+            o['albedo'].get_deltas(method='march_mean')
+            a_loss = o['albedo'].log_loss(sigma=ALBEDO_SIGMA)
 
-        # the model side is truncated to the period the observation actually
-        # covers, not the full model window
-        mod = (sub.sel(time=slice(mb.matched_start, mb.matched_end))
-               .mass_balance.sum(dim='time').mean(dim='point').values)
-        losses['mb'][c] = mb.log_loss(mod=float(mod))
+            o['snowmelt'].get_model_snow(sub)
+            s_loss, m_loss = o['snowmelt'].bernoulli_loss()
 
-        losses['total'][c] = sum(losses[k][c] for k in METRICS)
+            # area-weighted by ds.weight rather than a flat mean across
+            # points, and truncated to the period the observation covers
+            o['mb'].get_model_mb(sub)
+            mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
+
+            vals = dict(albedo=a_loss, snow=s_loss, melt=m_loss, mb=mb_loss)
+            for k, v in vals.items():
+                per_glacier[g][k][c] = float(v)
+                totals[k] += float(v)
+
+        for k in METRICS:
+            losses[k][c] = totals[k]
+        losses['total'][c] = sum(totals.values())
 
         if c % 10 == 0 or c == n_combos - 1:
             print(f'  [{c + 1}/{n_combos}] kp={grid["kp_of_point"][c * n_base]:.1f} '
@@ -83,10 +117,12 @@ def main():
     # combos were built kp-major, so index c = i_kp * n_wf + j_wf
     shape = (len(kp_values), len(wf_values))
     grids = {k: v.reshape(shape) for k, v in losses.items()}
+    per_glacier_grids = {f'{g}_{k}': v.reshape(shape)
+                         for g, kv in per_glacier.items() for k, v in kv.items()}
 
     np.savez(LOSS_FN, kp=kp_values, wind_factor=wf_values,
-             glacier=np.array(glacier), start=np.array(start),
-             end=np.array(end), n_base=n_base, **grids)
+             glaciers=np.array(glaciers), start=np.array(start),
+             end=np.array(end), n_base=n_base, **grids, **per_glacier_grids)
     print(f'\nWrote {LOSS_FN}', flush=True)
 
     best = np.unravel_index(np.nanargmin(grids['total']), shape)

@@ -28,17 +28,10 @@ else:
     base_fp = 'C:/Users/cvw30/Research/Output/ddf/'
     home_fp = 'C:/Users/cvw30/Research/'
 
-translate_rgi = {
-                 'gulkana':{'6': '01.00570', '7':'01.05299'}, # GULKANA
-                 'kahiltna':{'6':'01.22193','7':'01.04282'}, # KAHILTNA
-                 'kennicott':{'6':'01.15645','7':'01.05740'}, # KENNICOTT
-                 'wolverine':{'6':'01.09162','7':'01.11350'}, # WOLVERINE
-                 'lemon_creek':{'6':'01.01104','7':'01.19406'}, # LEMON CREEK
-                 'taku':{'6':'01.01390','7':'01.19709'}, # TAKU
-                 }
-translate_names = {}
-for glacier, items in translate_rgi.items():
-    translate_names[items['6']] = glacier
+# moved to project.parameters (shared with every script that builds a
+# config, not just loss scoring); re-exported here so existing imports of
+# translate_rgi/translate_names from this module keep working
+from project.parameters import translate_rgi, translate_names
 
 class Albedo():
     def __init__(self, name, use='s2'):
