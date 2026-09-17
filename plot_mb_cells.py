@@ -43,9 +43,10 @@ def run_dirs(glacier):
     """
     Maps each simulated element size to its output directory.
 
-    Directories are named {glacier}_h{spacing}_wf{wind}_{i}. Anything
-    carrying extra settings in the tag belongs to a different
-    experiment, so it is skipped rather than guessed at.
+    Directories are named {glacier}_h{spacing}_wf{wind}_{i}, optionally
+    with a trailing 'ct' for a precomputed-cos_theta run. Anything else
+    in the tag belongs to a different experiment, so it is skipped
+    rather than guessed at.
     """
     runs = {}
     for d in sorted(glob.glob(os.path.join(OUTDIR, f'{glacier}_h*'))):
@@ -53,10 +54,11 @@ def run_dirs(glacier):
         if not zarrs:
             continue
         tag = os.path.basename(d).split('_h')[1].split('_')[0]
-        if not re.fullmatch(r'[0-9.]+', tag):
+        match = re.fullmatch(r'([0-9.]+)(ct)?', tag)
+        if not match:
             continue
         # later directories for the same spacing are later reruns
-        runs[float(tag)] = zarrs[-1]
+        runs[float(match.group(1))] = zarrs[-1]
     return runs
 
 

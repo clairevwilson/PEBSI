@@ -1,0 +1,3 @@
+glacier,area_km2,wind_factor,point_spacing,actual_n_points,mass_balance,mass_balance_unweighted,mb_diff_from_median
+kennicott,292.531,2.5,275.0,9124,2.3172947845161853,2.773945303704263,0.0014800750005687924
+kennicott,292.531,2.5,200.0,16875,2.314334634515048,2.5016719463396973,-0.0014800750005683483

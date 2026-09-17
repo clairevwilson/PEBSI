@@ -4,8 +4,9 @@ exponential to the mesh sweep, takes its asymptote as the converged
 mass balance, and reports the coarsest (smallest N) resolution whose
 fitted curve is within a tolerance of that asymptote.
 
-Merges any _A/_B split CSVs from point_density_convergence.py --tag
-first if both halves exist and a combined file doesn't.
+Merges any split CSVs from point_density_convergence.py --tag first
+(e.g. _A/_B, or _c/_f for a cheap/expensive split) if parts exist and
+a combined file doesn't.
 
 Usage:
     python recommend_n.py gulkana kennicott
@@ -29,12 +30,13 @@ YEARS = 3.0
 def merge_if_needed(glacier, suffix):
     out = os.path.join(RESULTS, f'{glacier}_mesh_convergence{suffix}.csv')
     parts = sorted(glob.glob(os.path.join(
-        RESULTS, f'{glacier}_mesh_convergence{suffix}_[A-Z].csv')))
+        RESULTS, f'{glacier}_mesh_convergence{suffix}_*.csv')))
     if parts and not os.path.exists(out):
         df = pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)
         df = df.drop_duplicates(subset='point_spacing', keep='last')
+        df = df.sort_values('actual_n_points').reset_index(drop=True)
         df.to_csv(out, index=False)
-        print(f'merged {len(parts)} parts -> {out}')
+        print(f'merged {len(parts)} parts ({", ".join(parts)}) -> {out}')
     return out
 
 
