@@ -257,6 +257,17 @@ class Config():
             assert point_spacing > 0, \
                 f'point_spacing must be a positive length in meters, got {point_spacing!r}'
 
+        if method_distribute == 'adaptive':
+            tolerance = getattr(self.args, 'point_error_tolerance')
+            confidence = getattr(self.args, 'point_error_confidence')
+            coefficient = getattr(self.args, 'point_error_coefficient')
+            assert tolerance > 0, \
+                f'point_error_tolerance must be positive [cm w.e. a-1], got {tolerance!r}'
+            assert confidence > 0, \
+                f'point_error_confidence must be positive, got {confidence!r}'
+            assert coefficient > 0, \
+                f'point_error_coefficient must be positive, got {coefficient!r}'
+
         # OUTPUT RESOLUTION
         output_freq = getattr(self.args, 'output_freq')
         assert output_freq in ('hourly', 'daily', 'monthly'), \

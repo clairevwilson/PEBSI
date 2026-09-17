@@ -9,20 +9,30 @@ Three distributions are available:
 
 'grid'      an axis-aligned lattice clipped to the outline,
             weighted by clipped Voronoi cell area
-'adaptive'  the same lattice, with the point count set by a
-            power law in glacier area
 'mesh'      a patch-conforming triangular mesh: the outline
             is discretized first, the interior is filled with
             an equilateral lattice, the two are triangulated
             together and smoothed, and each point is a triangle
             centroid weighted by its Voronoi cell area
+'adaptive'  the patch-conforming mesh, at whatever spacing
+            each glacier's own sampling error asks for
 
 The 'mesh' distribution is controlled by a target element
 edge length in meters rather than a point count, so the same
 setting transfers between glaciers of different size.
+
+'adaptive' starts from a tolerance on glacier-wide mass balance
+instead, and works back to the point count that holds the error
+inside it. A fixed edge length does not do this: the error comes
+from sampling a spatially varying field at finitely many points,
+so it is set by how much mass balance varies across the glacier,
+not by resolution alone. 
 """
+# Internal libraries
+import os
 # External libraries
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import shapely
 import shapely.geometry as geom
@@ -293,53 +303,6 @@ def distribute_grid(rgi_df, rgi_gdf, rgi_ids, n_points, tolerance=0.05):
         xs, ys, ws = grid_polygon(polygon, target_n, metric_crs, tolerance)
 
         # append lats and lons to the global list
-        for lon, lat, w in zip(xs, ys, ws):
-            lons.append(lon)
-            lats.append(lat)
-            glaciers.append(gid)
-            weights.append(w)
-
-    return lats, lons, glaciers, weights
-
-
-def distribute_adaptive(rgi_df, rgi_gdf, rgi_ids, coeff, exponent, tolerance=0.05):
-    """
-    Sets each glacier's point count from its own area
-    using a power law equation relating number of
-    points to area. (Bigger glaciers have lower
-    spatial resolution.)
-
-    Parameters
-    ==========
-    rgi_df : pd.DataFrame
-        RGI attributes for the region
-    rgi_gdf : gpd.GeoDataFrame
-        RGI outlines for the region
-    rgi_ids : list
-        Glacier IDs without the 'RGI60-' prefix
-    coeff, exponent : float
-        Power law relating point count to area in km2
-    tolerance : float
-        Acceptable deviation between actual points
-        generated and the target point count
-
-    Returns
-    =======
-    lats, lons, glaciers, weights : lists
-        Per-point latitude, longitude, glacier ID, and area
-        weight (normalized to sum to 1 within each glacier)
-    """
-    unique_ids = np.unique(rgi_ids)
-    ids_fmtd = ['RGI60-' + id for id in unique_ids]
-    rgi_df = rgi_df.loc[rgi_df['RGIId'].isin(ids_fmtd)]
-
-    lats, lons, glaciers, weights = [], [], [], []
-    for gid in unique_ids:
-        area = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-' + gid, 'Area'].item()
-        target_n = max(round(coeff * area ** exponent), 1)
-        polygon, metric_crs = glacier_polygon(rgi_gdf, gid)
-        xs, ys, ws = grid_polygon(polygon, target_n, metric_crs, tolerance)
-
         for lon, lat, w in zip(xs, ys, ws):
             lons.append(lon)
             lats.append(lat)
@@ -875,6 +838,221 @@ def distribute_mesh(rgi_df, rgi_gdf, rgi_ids, spacing, **kwargs):
         polygon, metric_crs = glacier_polygon(rgi_gdf, gid)
         xs, ys, ws, _ = mesh_polygon(polygon, spacing, **kwargs)
 
+        point_lons, point_lats = to_latlon(xs, ys, metric_crs)
+        for lon, lat, w in zip(point_lons, point_lats, ws):
+            lons.append(lon)
+            lats.append(lat)
+            glaciers.append(gid)
+            weights.append(float(w))
+
+    return lats, lons, glaciers, weights
+
+
+# <<<<<< Point count from a mass balance error tolerance >>>>>>
+
+def point_count_for_sigma(sigma, tolerance, coefficient, confidence=1.96):
+    """
+    Points needed to hold the error on a glacier's area-weighted mass
+    balance inside a tolerance:
+
+        N = (confidence * coefficient * sigma / tolerance) ** 2
+
+    The error of the glacier-wide mean is a random variable of size
+    coefficient * sigma / sqrt(N), so the point count scales with the
+    square of both sigma and the reciprocal of the tolerance. Halving
+    the tolerance costs four times the points.
+
+    Parameters
+    ==========
+    sigma : float
+        Standard deviation of annual mass balance across the glacier's
+        points [cm w.e. a-1]
+    tolerance : float
+        Allowed error on the glacier-wide mean [cm w.e. a-1]
+    coefficient : float
+        Fitted constant relating sigma to the error of the mean
+    confidence : float
+        Standard normal multiplier for the confidence wanted. Defaults
+        to 1.96, the project's standing choice of 95% (see
+        convergence_summary.md) -- there to be read, not swept per run.
+
+    Returns
+    =======
+    n_points : int
+    """
+    assert sigma > 0, f'sigma must be positive, got {sigma!r}'
+    assert tolerance > 0, f'tolerance must be positive, got {tolerance!r}'
+    n_points = (confidence * coefficient * sigma / tolerance) ** 2
+    return max(int(round(n_points)), 1)
+
+
+def spacing_for_target_n(polygon, target_n, tolerance=0.05, max_iter=25, **kwargs):
+    """
+    Finds the element edge length that meshes this outline into about
+    target_n points.
+
+    Point count falls as edge length grows, but not as a fixed multiple
+    of area over edge length squared: a coarse mesh spends a larger
+    share of its points resolving the outline, so that ratio drifts by
+    several times across a sweep. The spacing is therefore bracketed
+    and bisected on the real mesher instead of taken from a closed form.
+
+    Parameters
+    ==========
+    polygon : shapely geometry
+        Glacier outline in a metric CRS
+    target_n : int
+        Point count to aim for
+    tolerance : float
+        Acceptable fractional deviation from target_n
+    max_iter : int
+        Cap on mesh evaluations, per stage
+    **kwargs
+        Passed through to mesh_polygon
+
+    Returns
+    =======
+    spacing : float
+        Element edge length [m]
+    n_points : int
+        Points that spacing actually produced
+    """
+    assert target_n >= 1, f'target_n must be at least 1, got {target_n!r}'
+
+    def count(h):
+        return len(mesh_polygon(polygon, h, **kwargs)[0])
+
+    def close_enough(n):
+        return abs(n - target_n) <= tolerance * target_n
+
+    # an equilateral mesh puts roughly 2.3 elements in each h^2 of area
+    spacing = np.sqrt(2.3 * polygon.area / target_n)
+    n_points = count(spacing)
+
+    # straddle the target: 'fine' overshoots it, 'coarse' undershoots
+    fine = (spacing, n_points) if n_points > target_n else None
+    coarse = None if n_points > target_n else (spacing, n_points)
+
+    for _ in range(max_iter):
+        if close_enough(n_points) or (fine and coarse):
+            break
+        spacing = spacing / 1.6 if coarse else spacing * 1.6
+        n_points = count(spacing)
+        if n_points > target_n:
+            fine = (spacing, n_points)
+        else:
+            coarse = (spacing, n_points)
+
+    if close_enough(n_points):
+        return spacing, n_points
+    assert fine and coarse, \
+        f'could not bracket {target_n} points on this outline'
+
+    for _ in range(max_iter):
+        spacing = np.sqrt(fine[0] * coarse[0])
+        n_points = count(spacing)
+        if close_enough(n_points):
+            break
+        if n_points > target_n:
+            fine = (spacing, n_points)
+        else:
+            coarse = (spacing, n_points)
+
+    return spacing, n_points
+
+
+def load_sigma_table(fn):
+    """
+    Reads the per-glacier sigma table that 'adaptive' distributes from.
+
+    Columns: rgiid, sigma_max, and optionally tolerance_cm and
+    point_spacing recording a spacing already solved at that tolerance,
+    so a run does not have to search for it again.
+
+    Parameters
+    ==========
+    fn : str
+        Path to the table
+
+    Returns
+    =======
+    table : pd.DataFrame
+        Indexed by RGI ID without the 'RGI60-' prefix
+    """
+    assert os.path.exists(fn), (
+        f'No sigma table at {fn}. method_distribute=\'adaptive\' sets each '
+        'glacier\'s point count from how much its mass balance varies, which '
+        'has to be measured first -- run point_density_rule.py.')
+
+    table = pd.read_csv(fn, dtype={'rgiid': str})
+    missing = {'rgiid', 'sigma_max'} - set(table.columns)
+    assert not missing, f'{fn} is missing columns {sorted(missing)}'
+    return table.set_index('rgiid')
+
+
+def distribute_rule(rgi_df, rgi_gdf, rgi_ids, table_fn, tolerance,
+                    coefficient, confidence=1.96, **kwargs):
+    """
+    Meshes each glacier at the resolution its own mass balance variance
+    asks for, rather than at a shared edge length or a point count fit
+    to area.
+
+    A glacier needs more points when its mass balance varies more
+    across its own surface, which is not what area predicts: the
+    largest glacier in a set is not reliably the one that needs the
+    most points. sigma_max in the table is the largest sigma measured
+    anywhere in the parameter range being calibrated over, so one mesh
+    holds the tolerance everywhere in that range.
+
+    Parameters
+    ==========
+    rgi_df : pd.DataFrame
+        RGI attributes for the region
+    rgi_gdf : gpd.GeoDataFrame
+        RGI outlines for the region
+    rgi_ids : list
+        Glacier IDs without the 'RGI60-' prefix
+    table_fn : str
+        Path to the sigma table
+    tolerance : float
+        Allowed error on each glacier-wide mean [cm w.e. a-1]
+    coefficient : float
+        Fitted constant relating sigma to the error of the mean
+    confidence : float
+        Standard normal multiplier for the confidence wanted
+    **kwargs
+        Passed through to mesh_polygon
+
+    Returns
+    =======
+    lats, lons, glaciers, weights : lists
+        Per-point latitude, longitude, glacier ID, and area
+        weight (normalized to sum to 1 within each glacier)
+    """
+    table = load_sigma_table(table_fn)
+
+    lats, lons, glaciers, weights = [], [], [], []
+    for gid in np.unique(rgi_ids):
+        assert gid in table.index, (
+            f'{gid} is not in {table_fn}. Its point count depends on how '
+            'much its mass balance varies across the glacier, which has to '
+            'be measured -- run point_density_rule.py for it first.')
+
+        row = table.loc[gid]
+        target_n = point_count_for_sigma(
+            float(row['sigma_max']), tolerance, coefficient, confidence)
+        polygon, metric_crs = glacier_polygon(rgi_gdf, gid)
+
+        # reuse a spacing already solved at this tolerance; searching for
+        # one costs a dozen meshes of a glacier that may be large
+        solved = np.nan
+        if {'tolerance_cm', 'point_spacing'} <= set(table.columns):
+            if np.isclose(float(row['tolerance_cm']), tolerance):
+                solved = float(row['point_spacing'])
+        spacing = solved if np.isfinite(solved) else \
+            spacing_for_target_n(polygon, target_n, **kwargs)[0]
+
+        xs, ys, ws, _ = mesh_polygon(polygon, spacing, **kwargs)
         point_lons, point_lats = to_latlon(xs, ys, metric_crs)
         for lon, lat, w in zip(point_lons, point_lats, ws):
             lons.append(lon)

@@ -80,6 +80,7 @@ initial_LAP_fn = 'data/init/initial_laps_profile.csv'       # Initial LAP conten
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
 emulator_fn = 'data/snicar_emulator.npz'                    # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
+sigma_table_fn = 'data/point_density.csv'                   # Per-glacier mass balance sigma [cm w.e. a-1]
 
 # CLIMATE
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
@@ -101,6 +102,10 @@ dynamics_period_years = 1                   # Interval (whole years) between GLI
 # SPATIAL 
 n_points = 6                                # Number of points to divide domain into
 point_spacing = 300                         # Target mesh element edge length if method_distribute='mesh' [m]
+# method_distribute='adaptive' sizes mesh based on mass balance variance
+point_error_tolerance = 3.0                 # Allowed error on glacier-wide mass balance [cm w.e. a-1]
+point_error_confidence = 1.96               # Standard normal multiplier for 95% confidence; not meant to be changed casually
+point_error_coefficient = 0.0603            # Fitted constant relating sigma to the error of the mean mass balance
 
 # WEATHER STATION
 aws_elev = None                             # Elevation of the weather station [m a.s.l.]

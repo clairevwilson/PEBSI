@@ -81,9 +81,11 @@ class Terrain:
                     *args, self.params.n_points)
 
             elif self.params.method_distribute == 'adaptive':
-                lats, lons, glaciers, weights = mesh.distribute_adaptive(
-                    *args, self.params.adaptive_points_coeff,
-                    self.params.adaptive_points_exponent)
+                lats, lons, glaciers, weights = mesh.distribute_rule(
+                    *args, self.params.sigma_table_fn,
+                    self.params.point_error_tolerance,
+                    self.params.point_error_coefficient,
+                    confidence=self.params.point_error_confidence)
 
             else:
                 lats, lons, glaciers, weights = mesh.distribute_mesh(
