@@ -853,9 +853,13 @@ class Terrain:
                 for d in range(n_dirs):
                     sampled[:, d], _ = self.cell_mean(points, pixels, spdup[:, :, d][usable])
 
-            # cells too fine to catch a grid cell keep the value they sit on
+            # cells too fine to catch a grid cell take the nearest ice pixel
             empty = ~np.isfinite(sampled).all(axis=1)
-            if empty.any():
+            if empty.any() and usable.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                for d in range(n_dirs):
+                    sampled[empty, d] = spdup[:, :, d][usable][nn]
+            elif empty.any():
                 target_y = xr.DataArray(self.lat_n[gid_idx][empty], dims='points')
                 target_x = xr.DataArray(self.lon_n[gid_idx][empty], dims='points')
                 selected = ds.sel(lon=target_x, lat=target_y, method='nearest')
@@ -908,12 +912,11 @@ class Terrain:
                 pixels = np.column_stack([grid_x[valid], grid_y[valid]])
                 sampled, _ = self.cell_mean(points, pixels, values[valid])
 
-            # cells too fine to catch a grid cell keep the value they sit on
+            # cells that catch no valid pixel take the nearest ice pixel
             empty = ~np.isfinite(sampled)
-            if empty.any():
-                target_x = xr.DataArray(x_pts[empty], dims='points')
-                target_y = xr.DataArray(y_pts[empty], dims='points')
-                sampled[empty] = da.sel(x=target_x, y=target_y, method='nearest').values
+            if empty.any() and valid.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                sampled[empty] = values[valid][nn]
 
             ice_albedo_n[gid_idx] = np.nan_to_num(sampled, nan=self.params.albedo_ice)
 
