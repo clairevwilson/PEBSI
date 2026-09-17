@@ -1,8 +1,9 @@
 """
-Layers class for PEBSI
+Layers class and functionality for PEBSI
 
-Tracks layer properties and contains utility
-functions to maintain layer arrays.
+Layers class initializes the layer properties.
+Routines to maintain layer arrays are separately
+defined and must be passed the state object.
 """
 # Built-in libraries
 import warnings, sys
@@ -395,12 +396,13 @@ def add_bottom_layer(state, mask, params):
     mass redistributed evenly across the existing ice layers.
 
     For points with ice mass that is too small to safely
-    redistribute across many layers (numerical stability),
+    redistribute across many layers (numerical instability),
     all of the ice mass at that point is instead collapsed
-    into a single ice layer (the topmost ice layer).
-    Snow and firn layers are left untouched in this case --
-    only the ice layers are affected, regardless of how small
-    the total ice mass is.
+    into a single ice layer (the topmost ice layer), and 
+    anything beneath that can be left empty. Snow and firn 
+    layers are left untouched in this case -- only the ice 
+    layers are affected, regardless of how small the total 
+    ice mass is.
 
     For points with no ice layers, a new ice bottom
     layer is pulled up from the basal reservoir.
@@ -965,8 +967,8 @@ def check_layer_sizes(state, params):
 def apply_dynamics_mass_change(state, mask, dmass, params):
     """
     Reconciles a per-point ice-dynamics-only mass change into state. 
-    dmass is the DYNAMICS-ONLY change in mass (excluding SMB which 
-    is already accounted for in PEBSI).)
+    dmass is the DYNAMICS-ONLY change in mass (excluding surface mass
+    balance, which is already accounted for in PEBSI's core.)
 
     Mass GAINED from dynamics (dmass > 0) goes entirely into
     basal_reservoir, uncapped.

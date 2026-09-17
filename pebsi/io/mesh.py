@@ -27,6 +27,8 @@ inside it. A fixed edge length does not do this: the error comes
 from sampling a spatially varying field at finitely many points,
 so it is set by how much mass balance varies across the glacier,
 not by resolution alone. 
+
+Vibe-coded with Claude, but well used and tested.
 """
 # Internal libraries
 import os

@@ -1435,8 +1435,12 @@ class MassBalanceDriver:
         def run_merger_loop(state):
             def _merge_snow_step(i, state):
                 # evaluate on the fly if layer i and the next layer down are old snow
-                is_layer_old_snow = (state.ltype[:, i] == 0) & (state.lage[:, i] >= params.firn_age)
-                is_next_old_snow = (state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= params.firn_age)
+                is_layer_old_snow = (
+                    state.ltype[:, i] == 0) & (state.lage[:, i] >= params.firn_age
+                )
+                is_next_old_snow = (
+                    state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= params.firn_age
+                )
                 
                 # only merge down if the column trigger is True and both layers are old snow
                 active_merge_mask = convert_firn_pt & is_layer_old_snow & is_next_old_snow
