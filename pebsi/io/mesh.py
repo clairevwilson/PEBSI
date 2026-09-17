@@ -41,7 +41,6 @@ from shapely import STRtree
 from scipy.spatial import Delaunay
 from pyproj import CRS
 
-
 def get_metric_crs(gdf):
     """
     Derives a region-appropriate equal-area projection
@@ -57,7 +56,6 @@ def get_metric_crs(gdf):
         f"+proj=laea +lat_0={centroid.y:.2f} +lon_0={centroid.x:.2f} "
         f"+datum=WGS84 +units=m +no_defs"
     )
-
 
 def glacier_polygon(rgi_gdf, gid):
     """
@@ -83,7 +81,6 @@ def glacier_polygon(rgi_gdf, gid):
     polygon = current_glacier.to_crs(metric_crs).unary_union
     return polygon, metric_crs
 
-
 def to_latlon(xs, ys, crs):
     """
     Converts metric coordinates back to latitude and longitude.
@@ -104,7 +101,6 @@ def to_latlon(xs, ys, crs):
     points_gdf = gpd.GeoDataFrame(geometry=points, crs=crs)
     points_latlon = points_gdf.to_crs(epsg=4326)
     return points_latlon.geometry.x.tolist(), points_latlon.geometry.y.tolist()
-
 
 def point_budget(rgi_df, rgi_ids, n_points):
     """
@@ -158,10 +154,10 @@ def point_budget(rgi_df, rgi_ids, n_points):
         budget[gid] = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-' + gid, 'points'].item()
     return budget
 
-
 def voronoi_cells(points, polygon):
     """
-    Builds each point's Voronoi cell, clipped to the polygon.
+    Builds each point's Voronoi cell (the area which is closer 
+    to each point than any other point), clipped to the polygon.
 
     Parameters
     ==========
@@ -196,7 +192,6 @@ def voronoi_cells(points, polygon):
     cells[point_idx] = shapely.intersection(shapely.buffer(raw[cell_idx], 0), polygon)
     return cells
 
-
 def voronoi_weights(points, polygon):
     """
     Weights each point by its Voronoi cell area within
@@ -212,13 +207,12 @@ def voronoi_weights(points, polygon):
     weights = shapely.area(voronoi_cells(points, polygon))
     return weights / weights.sum()
 
-
 def grid_polygon(polygon, target_n, crs, tolerance=0.05):
     """
     Fills a polygon with approximately target_n evenly spaced
-    points using an adaptive grid spacing search. Returns lon,
-    lat, and area-weight lists (weight = each point's Voronoi
-    cell, clipped to the polygon and normalized to sum to 1 --
+    points using a  grid spacing search. Returns lon, lat, and 
+    area-weight lists (weight = each point's Voronoi cell, 
+    clipped to the polygon and normalized to sum to 1 --
     see voronoi_weights above).
 
     Parameters
@@ -311,7 +305,6 @@ def distribute_grid(rgi_df, rgi_gdf, rgi_ids, n_points, tolerance=0.05):
 
     return lats, lons, glaciers, weights
 
-
 # <<<<<< Patch-conforming triangular mesh >>>>>>
 
 def _as_polygons(geometry):
@@ -327,7 +320,6 @@ def _as_polygons(geometry):
         return [geometry]
     return [g for g in geometry.geoms
             if g.geom_type == 'Polygon' and not g.is_empty]
-
 
 def _dedupe(points, radius):
     """
@@ -348,7 +340,6 @@ def _dedupe(points, radius):
     cells = np.floor(points / radius).astype(np.int64)
     _, first = np.unique(cells, axis=0, return_index=True)
     return points[np.sort(first)]
-
 
 def _ring_nodes(ring, h, corner_deg):
     """
@@ -407,7 +398,6 @@ def _ring_nodes(ring, h, corner_deg):
 
     return np.vstack([corners, resampled])
 
-
 def _boundary_nodes(polygon, h, corner_deg=60.0):
     """
     Walks every ring of the geometry and returns the boundary
@@ -434,7 +424,6 @@ def _boundary_nodes(polygon, h, corner_deg=60.0):
     # corners come first in each ring, so they survive in
     # preference to a resampled node landing beside them
     return _dedupe(np.vstack(rings), h / 4)
-
 
 def _hex_lattice(polygon, bounds, h):
     """
@@ -477,7 +466,6 @@ def _hex_lattice(polygon, bounds, h):
         return np.empty(0), np.empty(0)
     return np.concatenate(xs), np.concatenate(ys)
 
-
 def _triangulate(nodes, polygon):
     """
     Delaunay triangulates the nodes and keeps only the elements
@@ -511,7 +499,6 @@ def _triangulate(nodes, polygon):
     inside = shapely.contains_xy(polygon, cx, cy)
     return tri.simplices[inside]
 
-
 def _element_areas(nodes, simplices):
     """
     Triangle areas by the shoelace formula.
@@ -521,14 +508,12 @@ def _element_areas(nodes, simplices):
              - (v[:, 2, 0] - v[:, 0, 0]) * (v[:, 1, 1] - v[:, 0, 1]))
     return 0.5 * np.abs(cross)
 
-
 def _element_centroids(nodes, simplices):
     """
     Triangle centroids.
     """
     v = nodes[simplices]
     return v[:, :, 0].mean(axis=1), v[:, :, 1].mean(axis=1)
-
 
 def _min_angles(nodes, simplices):
     """
@@ -547,7 +532,6 @@ def _min_angles(nodes, simplices):
     angle_c = np.pi - angle_a - angle_b
     smallest = np.minimum(np.minimum(angle_a, angle_b), angle_c)
     return np.degrees(smallest)
-
 
 def _smooth(nodes, simplices, fixed, polygon):
     """
@@ -586,7 +570,6 @@ def _smooth(nodes, simplices, fixed, polygon):
     moved[~stayed_in] = nodes[~stayed_in]
     return moved
 
-
 def _single_point(polygon):
     """
     Fallback for a glacier too small to mesh at the requested
@@ -598,7 +581,6 @@ def _single_point(polygon):
                        min_angle=np.nan, mean_min_angle=np.nan)
     return (np.array([point.x]), np.array([point.y]),
             np.array([1.0]), diagnostics)
-
 
 def defeature(polygon, h, min_feature_frac=1 / 9):
     """
@@ -707,12 +689,9 @@ def mesh_nodes(polygon, h, n_smooth=5, seed_frac=0.65, sliver_frac=1e-3,
     if len(simplices) == 0:
         return empty
 
-    # discard slivers only on area: culling on angle too would
-    # throw away the long thin elements that fill a narrow
-    # tongue, and with them real glacier area
+    # discard slivers with small area
     areas = _element_areas(nodes, simplices)
     return nodes, simplices[areas > sliver_frac * h * h]
-
 
 def mesh_polygon(polygon, h, n_smooth=5, seed_frac=0.65, sliver_frac=1e-3,
                  min_feature_frac=1 / 9):
@@ -772,20 +751,13 @@ def mesh_polygon(polygon, h, n_smooth=5, seed_frac=0.65, sliver_frac=1e-3,
     areas = _element_areas(nodes, simplices)
     xs, ys = _element_centroids(nodes, simplices)
 
-    # a filled-in nunatak is ice to the mesh, so an element centroid can
-    # land on rock. Drop those: they would be simulated on bedrock slope
-    # and elevation and then credited with the ice area around them.
+    # drop points whose centroids land on nunataks
     on_ice = shapely.contains_xy(polygon, xs, ys)
     if not on_ice.any():
         return _single_point(polygon)
     xs, ys, areas = xs[on_ice], ys[on_ice], areas[on_ice]
 
-    # the mesh decides where the points go; the weights are read back
-    # off the true outline rather than off the elements. Element areas
-    # would bake in every bit of geometry the mesh had to approximate --
-    # the resampled margin and the nunataks too small to resolve -- and
-    # on a glacier that error dwarfs the quadrature error they would
-    # otherwise save.
+    # preserve true glacier area with voronoi cells (not triangle areas)
     weights = voronoi_weights([geom.Point(x, y) for x, y in zip(xs, ys)], polygon)
 
     angles = _min_angles(nodes, simplices)
@@ -801,7 +773,6 @@ def mesh_polygon(polygon, h, n_smooth=5, seed_frac=0.65, sliver_frac=1e-3,
         mean_min_angle=float(angles.mean()),
     )
     return xs, ys, weights, diagnostics
-
 
 def distribute_mesh(rgi_df, rgi_gdf, rgi_ids, spacing, **kwargs):
     """
@@ -847,7 +818,6 @@ def distribute_mesh(rgi_df, rgi_gdf, rgi_ids, spacing, **kwargs):
 
     return lats, lons, glaciers, weights
 
-
 # <<<<<< Point count from a mass balance error tolerance >>>>>>
 
 def point_count_for_sigma(sigma, tolerance, coefficient, confidence=1.96):
@@ -884,7 +854,6 @@ def point_count_for_sigma(sigma, tolerance, coefficient, confidence=1.96):
     assert tolerance > 0, f'tolerance must be positive, got {tolerance!r}'
     n_points = (confidence * coefficient * sigma / tolerance) ** 2
     return max(int(round(n_points)), 1)
-
 
 def spacing_for_target_n(polygon, target_n, tolerance=0.05, max_iter=25, **kwargs):
     """
@@ -960,7 +929,6 @@ def spacing_for_target_n(polygon, target_n, tolerance=0.05, max_iter=25, **kwarg
 
     return spacing, n_points
 
-
 def load_sigma_table(fn):
     """
     Reads the per-glacier sigma table that 'adaptive' distributes from.
@@ -988,7 +956,6 @@ def load_sigma_table(fn):
     missing = {'rgiid', 'sigma_max'} - set(table.columns)
     assert not missing, f'{fn} is missing columns {sorted(missing)}'
     return table.set_index('rgiid')
-
 
 def distribute_rule(rgi_df, rgi_gdf, rgi_ids, table_fn, tolerance,
                     coefficient, confidence=1.96, **kwargs):

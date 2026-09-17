@@ -69,7 +69,7 @@ class Output():
             self.output_fp = self.resume_fp
             return
 
-        # crop the trailing `/``
+        # crop the trailing `/`
         if str(params.output_fp).endswith('/'):
             output_fp_compare = params.output_fp[:-1]
         else:
@@ -122,6 +122,7 @@ class Output():
             # make sure time is chunked in a reasonable chunk; keep point/layer whole
             time_chunk = {'hourly': 24 * 7, 'daily': 30, 'monthly': 12}.get(
                 getattr(self.params, 'output_freq', 'hourly'), 24 * 7)
+
             encoding = {}
             for var in ds_chunk.data_vars:
                 if ds_chunk[var].ndim == 2:
@@ -130,7 +131,7 @@ class Output():
                     encoding[var] = {'chunks': (time_chunk, self.N_POINTS, self.N_LAYERS)}
             ds_chunk.to_zarr(self.out_fn, mode='w', consolidated=False, encoding=encoding)
             
-            # write site info right away
+            # write site info right away, in case the simulation crashes
             self.add_site_info()
         else:
             ds_chunk.to_zarr(self.out_fn, append_dim='time', consolidated=False)

@@ -76,6 +76,8 @@ class Terrain:
             self.aspect_n = None
 
             args = (self.rgi_df, self.rgi_gdf, self.params.rgi_ids)
+
+            # build the mesh 
             if self.params.method_distribute == 'grid':
                 lats, lons, glaciers, weights = mesh.distribute_grid(
                     *args, self.params.n_points)
@@ -295,6 +297,7 @@ class Terrain:
             lat_xr = xr.DataArray(np.asarray(lats_in)[empty], dims='points')
             lon_xr = xr.DataArray(np.asarray(lons_in)[empty], dims='points')
 
+            # bilinear resample to avoid striping artifacts
             dem_ll = dem.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
             slope_ll = slope.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
             aspect_ll = aspect.rio.reproject('EPSG:4326')

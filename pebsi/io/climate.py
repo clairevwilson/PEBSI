@@ -375,7 +375,7 @@ class Climate():
             self.LWin_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
 
         # NOTE: apply_parameters (kp, wind_factor, dust_factor) and
-        # adjust_to_elevation are now applied per-point inside the JAX
+        # adjust_to_elevation are applied per-point inside the JAX
         # step function, after expanding (N_UNIQUE) → (N_POINTS).
 
         # check all required variables are full
