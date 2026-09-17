@@ -14,13 +14,15 @@ def expand_forcings(forcings, point_attrs):
     """
     Expands all per-cell (N_UNIQUE,) forcing fields to (N_POINTS,)
     using point_attrs.cell_idx, then replaces the original fields.
+    
     Also gathers shadow_mask, solar_azimuth and solar_zenith for this
-    timestep from point_attrs's (N_POINTS, N_SHADE_TIME) tables at
-    forcings.shading_idx -- shading is annually periodic, so pack_forcings
-    only carries that index rather than pre-gathering these fields to
-    full run length.
+    timestep from point_attrs's (N_UNIQUE_SHADE, N_SHADE_TIME) tables:
+    forcings.shading_idx selects this timestep's column and
+    point_attrs.loc_idx then expands that column from unique locations
+    to (N_POINTS,).
     """
     idx = point_attrs.cell_idx
+    loc = point_attrs.loc_idx
     shade_idx = forcings.shading_idx
     return forcings._replace(
         temp=forcings.temp[idx],
@@ -39,10 +41,10 @@ def expand_forcings(forcings, point_attrs):
         dustwet=forcings.dustwet[idx],
         dustdry=forcings.dustdry[idx],
         local_hour=forcings.local_hour[idx],
-        shadow_mask=point_attrs.shadow_mask_table[:, shade_idx],
-        cos_theta_precomp=point_attrs.cos_theta_table[:, shade_idx],
-        solar_azimuth=point_attrs.solar_azimuth_table[:, shade_idx],
-        solar_zenith=point_attrs.solar_zenith_table[:, shade_idx],
+        shadow_mask=point_attrs.shadow_mask_table[:, shade_idx][loc],
+        cos_theta=point_attrs.cos_theta_table[:, shade_idx][loc],
+        solar_azimuth=point_attrs.solar_azimuth_table[:, shade_idx][loc],
+        solar_zenith=point_attrs.solar_zenith_table[:, shade_idx][loc],
     )
 
 def adjust_temperature(forcings, point_attrs, params):

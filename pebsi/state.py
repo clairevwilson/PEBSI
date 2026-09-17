@@ -219,14 +219,16 @@ class ClimateState(NamedTuple):
 
     # index to draw from annually periodic shading / solar incidence tables
     shading_idx: jnp.ndarray = jnp.array(0, dtype=jnp.int32)
-    cos_theta_precomp: jnp.ndarray = jnp.zeros((1,), dtype=jnp.float64)
+    cos_theta: jnp.ndarray = jnp.zeros((1,), dtype=jnp.float64)
 
 class PointAttributes(NamedTuple):
     """
     Time-invariant spatial attributes for each point.
 
     Per-point arrays: (N_POINTS,)
-    Per-cell arrays:  (N_UNIQUE,)  — one entry per unique MERRA-2 grid cell
+    Per-cell arrays:  (N_UNIQUE,)        — one entry per unique MERRA-2 grid cell
+    Shading arrays:   (N_UNIQUE_SHADE,)  — one entry per unique (lat, lon), read
+                      via loc_idx; see Terrain.unique_point_locations
     """
     # ========================= Per-point (N_POINTS,) =========================
     latitude: jnp.ndarray           # Point latitude [deg]
@@ -237,6 +239,7 @@ class PointAttributes(NamedTuple):
     sky_view_factor: jnp.ndarray    # Sky-view factor [-]
     median_elev: jnp.ndarray        # Glacier median elevation for precip gradient [m]
     cell_idx: jnp.ndarray           # Index into (N_UNIQUE,) cell arrays for this point
+    loc_idx: jnp.ndarray            # Index into (N_UNIQUE_SHADE,) shading arrays for this point
 
     # ====================== Wind (N_POINTS, N_DIRECTIONS) ====================
     wind_spdup: jnp.ndarray          # Wind speed-up factor per direction [-]
@@ -248,8 +251,8 @@ class PointAttributes(NamedTuple):
     sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
     LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
 
-    # ==================== Shading (N_POINTS, N_SHADE_TIME) ===================
-    # one year of (dayofyear, hour) shading, indexed by ClimateState.shading_idx
+    # ============= Shading (N_UNIQUE_SHADE, N_SHADE_TIME) ====================
+    # one year of (dayofyear, hour) shading at each unique point location
     shadow_mask_table: jnp.ndarray = jnp.ones((1, 1), dtype=jnp.float64)
     solar_azimuth_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
     solar_zenith_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)

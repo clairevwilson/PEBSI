@@ -238,7 +238,6 @@ class Shading:
     def skyviewfactor(self, num_azimuths = 64):
         """
         Calculates sky-view factor for each pixel.
-        svf = cos^2(horizon angle / 
 
         Parameters
         ==========

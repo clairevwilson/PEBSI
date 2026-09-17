@@ -151,7 +151,7 @@ class EnergyBalanceDriver():
         # cos theta can be precomputed or calculated on-the-fly
         safe_cos_zen = jnp.where(jnp.cos(sun_zen) > 1e-6, jnp.cos(sun_zen), 1.0)
         if self.params.option_precomputed_costheta:
-            cos_theta = forcings.cos_theta_precomp
+            cos_theta = forcings.cos_theta
         else:
             cos_theta = (jnp.cos(sun_zen)*jnp.cos(slope) +
                         jnp.sin(sun_zen)*jnp.sin(slope)*jnp.cos(sun_az - aspect))

@@ -273,6 +273,7 @@ class PEBSI():
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
             median_elev=jnp.array(self.terrain.median_elev_n, dtype=jnp.float64),
             cell_idx=jnp.array(self._cl.point_to_cell_idx, dtype=jnp.int32),
+            loc_idx=jnp.array(self.terrain.point_to_unique_idx, dtype=jnp.int32),
             wind_spdup=wind_spdup,
             wind_directions=wind_directions,
 
@@ -282,8 +283,8 @@ class PEBSI():
             sp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
             LWin_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
 
-            # shading tables: one year of (dayofyear, hour) entries, indexed
-            # by shading_idx in pack_forcings rather than pre-gathered per chunk
+            # shading tables: one year of (dayofyear, hour) entries at each
+            # unique point location (Terrain.unique_point_locations)
             shadow_mask_table=jnp.array(self.terrain.shadow_mask, dtype=jnp.float64),
             cos_theta_table=jnp.array(self.terrain.cos_theta_table, dtype=jnp.float64),
             solar_azimuth_table=jnp.array(self.terrain.solar_azimuth, dtype=jnp.float64),
@@ -367,7 +368,7 @@ class PEBSI():
             longwave_in=jnp.array(climate.LWin, dtype=jnp.float64).T,
             # placeholders, overwritten every step by expand_forcings
             shadow_mask=jnp.zeros(len(dates), dtype=jnp.float64),
-            cos_theta_precomp=jnp.zeros(len(dates), dtype=jnp.float64),
+            cos_theta=jnp.zeros(len(dates), dtype=jnp.float64),
             solar_azimuth=jnp.zeros(len(dates), dtype=jnp.float64),
             solar_zenith=jnp.zeros(len(dates), dtype=jnp.float64),
             shading_idx=shading_idx,
