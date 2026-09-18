@@ -20,7 +20,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_losses.npz'
+LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/loss_surface_losses.npz'
 FIG_DIR = '/ocean/projects/ees260009p/cwilson4/Figs/'
 FIG_FN_TEMPLATE = os.path.join(FIG_DIR, 'loss_surface_{glacier}.png')
 

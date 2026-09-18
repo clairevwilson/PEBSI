@@ -40,7 +40,7 @@ from project.parameters import host, HOST_PATHS, GLACIERS, BASE_CONFIG, translat
 # (pebsi/config.py requires the inclusive hourly count to land on a
 # multiple of 24, which any 00:00-to-23:00 pair always satisfies).
 START_DATE = '2015-01-01 00:00'
-END_DATE = '2025-01-01 23:00'
+END_DATE = '2020-04-01 23:00'
 
 KP_VALUES = np.arange(0.5, 5.01, 0.5)
 WIND_FACTOR_VALUES = np.arange(0.5, 5.01, 0.5)
@@ -122,7 +122,9 @@ def main():
     # same coordinates as its original, so the DEM, shading, ice albedo and
     # wind lookups that run after this all land on the tiled points on
     # their own, and rgiid_n tiles along with them so each combo's block
-    # still tells every point which glacier it belongs to.
+    # still tells every point which glacier it belongs to. weight_n has to
+    # be tiled explicitly here (not left to those later steps) since it is
+    # set once inside get_points() and nothing downstream recomputes it.
     original_init = Terrain.__init__
 
     def tiled_init(self, params):
@@ -130,6 +132,7 @@ def main():
         self.lat_n = np.tile(self.lat_n, n_combos)
         self.lon_n = np.tile(self.lon_n, n_combos)
         self.rgiid_n = np.tile(self.rgiid_n, n_combos)
+        self.weight_n = np.tile(self.weight_n, n_combos)
         self.N_POINTS = len(self.lat_n)
 
     Terrain.__init__ = tiled_init

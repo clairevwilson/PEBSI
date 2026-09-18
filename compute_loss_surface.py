@@ -18,7 +18,6 @@ from plot_loss_surface.py -- run this once, then iterate on the figure.
 
 @author: clairevwilson
 """
-import glob
 import os
 import sys
 
@@ -28,22 +27,15 @@ import xarray as xr
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance
-from project.parameters import host, HOST_PATHS, translate_rgi
+from project.parameters import translate_rgi
 
-OUTPUT_ROOT = HOST_PATHS[host]['output_fp']
-GRID_FN = os.path.join(OUTPUT_ROOT, 'loss_surface_grid.npz')
-LOSS_FN = os.path.join(OUTPUT_ROOT, 'loss_surface_losses.npz')
+OUT_ZARR = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/output.zarr'
+GRID_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_grid.npz'
+LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/loss_surface_losses.npz'
 
 ALBEDO_SIGMA = 0.0777
 
 METRICS = ('albedo', 'mb', 'snow', 'melt')
-
-
-def find_output_zarr():
-    """The loss_surface run's output dir, whatever index it landed on."""
-    candidates = sorted(glob.glob(OUTPUT_ROOT.rstrip('/') + '_*'))
-    assert candidates, f'no run output found under {OUTPUT_ROOT.rstrip("/")}_*'
-    return os.path.join(candidates[-1], 'output.zarr')
 
 
 def main():
@@ -53,13 +45,13 @@ def main():
     n_base = int(grid['n_base'])
     n_combos = int(grid['n_combos'])
     glaciers = [str(g) for g in grid['glaciers']]
-    start, end = str(grid['start']), str(grid['end'])
+    start, end = str(grid['start']), '2025-03-20' # str(grid['end'])
     rgi_ids = {g: translate_rgi[g]['6'] for g in glaciers}
 
     print(f'{len(glaciers)} glaciers x {n_combos} combos, {n_base} points '
           f'per combo, {start} to {end}', flush=True)
 
-    ds = xr.open_zarr(find_output_zarr())
+    ds = xr.open_zarr(OUT_ZARR)
 
     # measured sides are identical for every combination (all replicas sit
     # at the same coordinates), so the observation loaders are built once
@@ -97,8 +89,9 @@ def main():
 
             # area-weighted by ds.weight rather than a flat mean across
             # points, and truncated to the period the observation covers
-            o['mb'].get_model_mb(sub)
-            mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
+            # o['mb'].get_model_mb(sub)
+            # mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
+            mb_loss = 0
 
             vals = dict(albedo=a_loss, snow=s_loss, melt=m_loss, mb=mb_loss)
             for k, v in vals.items():

@@ -11,6 +11,7 @@ import rioxarray
 from rioxarray.merge import merge_arrays
 from scipy.stats import gaussian_kde
 import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 if 'trace' in socket.gethostname():
     base_fp = '/trace/group/rounce/cvwilson/'
