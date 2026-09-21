@@ -20,6 +20,7 @@ from plot_loss_surface.py -- run this once, then iterate on the figure.
 """
 import os
 import sys
+from collections import defaultdict
 
 import numpy as np
 import xarray as xr
@@ -29,13 +30,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance
 from project.parameters import translate_rgi
 
-OUT_ZARR = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/output.zarr'
+OUT_ZARR = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/output.zarr'
 GRID_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_grid.npz'
-LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/loss_surface_losses.npz'
+LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/loss_surface_losses.npz'
 
 ALBEDO_SIGMA = 0.0777
 
 METRICS = ('albedo', 'mb', 'snow', 'melt')
+
+# only these are touched anywhere in the loop below; mass_balance/weight
+# are handled separately (see mb_weighted below) since their observation
+# period runs 2000-2020, far wider than albedo/snow's post-2017 window
+NEEDED_VARS = ['lon', 'lat', 'time', 'rgiid', 'albedo', 'surftype', 'total_water']
 
 
 def main():
@@ -51,7 +57,7 @@ def main():
     print(f'{len(glaciers)} glaciers x {n_combos} combos, {n_base} points '
           f'per combo, {start} to {end}', flush=True)
 
-    ds = xr.open_zarr(OUT_ZARR)
+    ds = xr.open_zarr(OUT_ZARR, consolidated=False)
 
     # measured sides are identical for every combination (all replicas sit
     # at the same coordinates), so the observation loaders are built once
@@ -66,18 +72,68 @@ def main():
               f'{mb.matched_end.date()}', flush=True)
         obs[g] = dict(albedo=albedo, snowmelt=snowmelt, mb=mb)
 
+    # every combo covers the same calendar span, so the whole time x point
+    # block only needs to be pulled from the zarr once, trimmed to the
+    # variables used and the window the observations actually fall in --
+    # loading it fresh per combo re-decompresses the same full-width chunks
+    # (point isn't chunked below the full 191600 width) n_combos times over
+    tmins, tmaxs = [], []
+    for g in glaciers:
+        o = obs[g]
+        tmins += [o['albedo'].ds_meas.time.values.min(),
+                  o['snowmelt'].ds_meas_snow.time.values.min(),
+                  o['snowmelt'].ds_meas_melt.time.values.min()]
+        tmaxs += [o['albedo'].ds_meas.time.values.max(),
+                  o['snowmelt'].ds_meas_snow.time.values.max(),
+                  o['snowmelt'].ds_meas_melt.time.values.max()]
+    pad = np.timedelta64(5, 'D')
+    tmin, tmax = min(tmins) - pad, max(tmaxs) + pad
+
+    print(f'Loading {NEEDED_VARS} for {tmin} to {tmax}...', flush=True)
+    ds_all = ds[NEEDED_VARS].sel(time=slice(tmin, tmax)).load()
+    print('Loaded.', flush=True)
+
+    # mass_balance spans 2000-2020 at full point width -- loading it raw
+    # would be the dominant memory cost, but get_model_mb only ever needs
+    # it summed over each glacier's matched_start:matched_end, so reduce it
+    # lazily via dask (streaming over the on-disk time chunks) and only
+    # materialize the resulting (point,) vector, grouped by glaciers that
+    # share the same matched period so the underlying chunks aren't reread
+    # once per glacier
+    periods = defaultdict(list)
+    for g in glaciers:
+        mb = obs[g]['mb']
+        periods[(mb.matched_start, mb.matched_end)].append(g)
+
+    rgiid_all = ds['rgiid'].values
+    weight_all = ds['weight'].values
+    mb_weighted = np.full(ds.sizes['point'], np.nan)
+    for (mstart, mend), gs in periods.items():
+        print(f'Reducing mass_balance for {gs} over {mstart} to {mend}...', flush=True)
+        mask = np.isin(rgiid_all, [rgi_ids[g] for g in gs])
+        mb_sum = (ds['mass_balance']
+                  .sel(time=slice(mstart, mend))
+                  .isel(point=mask)
+                  .sum(dim='time')
+                  .compute().values)
+        mb_weighted[mask] = mb_sum * weight_all[mask]
+    print('MB reduced.', flush=True)
+
     losses = {k: np.full(n_combos, np.nan) for k in METRICS}
     losses['total'] = np.full(n_combos, np.nan)
     per_glacier = {g: {k: np.full(n_combos, np.nan) for k in METRICS}
                    for g in glaciers}
 
     for c in range(n_combos):
-        block = ds.isel(point=slice(c * n_base, (c + 1) * n_base)).load()
+        combo_slice = slice(c * n_base, (c + 1) * n_base)
+        block = ds_all.isel(point=combo_slice)
         rgiid = block.rgiid.values
+        combo_mb_weighted = mb_weighted[combo_slice]
 
         totals = {k: 0.0 for k in METRICS}
         for g in glaciers:
-            sub = block.isel(point=(rgiid == rgi_ids[g]))
+            gmask = rgiid == rgi_ids[g]
+            sub = block.isel(point=gmask)
             o = obs[g]
 
             o['albedo'].get_model_albedo(sub)
@@ -89,9 +145,10 @@ def main():
 
             # area-weighted by ds.weight rather than a flat mean across
             # points, and truncated to the period the observation covers
-            # o['mb'].get_model_mb(sub)
-            # mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
-            mb_loss = 0
+            # (pre-reduced above, since mass_balance's own 2000-2020 span
+            # is far wider than what albedo/snow need)
+            o['mb'].mod = float(combo_mb_weighted[gmask].sum())
+            mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
 
             vals = dict(albedo=a_loss, snow=s_loss, melt=m_loss, mb=mb_loss)
             for k, v in vals.items():

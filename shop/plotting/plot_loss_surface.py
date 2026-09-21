@@ -20,9 +20,9 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_1/loss_surface_losses.npz'
-FIG_DIR = '/ocean/projects/ees260009p/cwilson4/Figs/'
-FIG_FN_TEMPLATE = os.path.join(FIG_DIR, 'loss_surface_{glacier}.png')
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/'
+LOSS_FN = ROOT + 'loss_surface_losses.npz'
+FIG_FN_TEMPLATE = os.path.join(ROOT, 'loss_surface_{glacier}.png')
 
 PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'),
           ('snow', 'Snow extent'), ('melt', 'Melt extent')]
@@ -33,6 +33,7 @@ def plot_glacier(glacier, grids, kp_values, wf_values):
     extent = [kp_values[0] - 0.25, kp_values[-1] + 0.25,
               wf_values[0] - 0.25, wf_values[-1] + 0.25]
 
+    total_err = np.zeros((10, 10))
     for ax, (key, label) in zip(axes.flat, PANELS):
         # transposed so kp runs along x and wind_factor along y
         field = grids[f'{glacier}_{key}'].T
@@ -43,10 +44,10 @@ def plot_glacier(glacier, grids, kp_values, wf_values):
         cb.ax.tick_params(labelsize=10)
 
         j, i = np.unravel_index(np.nanargmin(field), field.shape)
-        # ax.plot(kp_values[i], wf_values[j], marker='o', ms=9, mfc='none',
-        #         mec='white', mew=2.0, zorder=3)
-        # ax.plot(kp_values[i], wf_values[j], marker='o', ms=9, mfc='none',
-        #         mec='#c1121f', mew=1.2, zorder=4)
+        total_err += field 
+
+        ax.plot(kp_values[i], wf_values[j], marker='o', ms=9, mfc='none',
+                mec='r', mew=1.2, zorder=4)
 
         ax.set_title(f'{label}', fontsize=12)
 
@@ -59,7 +60,17 @@ def plot_glacier(glacier, grids, kp_values, wf_values):
         ax.xaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
         ax.yaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
 
-    fig.suptitle(f'{glacier}: log loss by parameter combination', fontsize=12)
+    j, i = np.unravel_index(np.nanargmin(total_err), total_err.shape)
+    best_kp = str(kp_values[i])
+    best_kw = str(wf_values[j])
+    best_err = total_err[j, i]
+    for ax in axes.flat:
+        ax.plot(kp_values[i], wf_values[j], marker='x', ms=9, mfc='none',
+                mec='r', mew=2.0, zorder=5)
+
+    title = (f'{glacier}: log loss by parameter combination'
+              f'\nBest $k_p=${best_kp} $k_w=${best_kw} log loss: {best_err:.1f}')
+    fig.suptitle(title, fontsize=12)
     fig_fn = FIG_FN_TEMPLATE.format(glacier=glacier)
     fig.savefig(fig_fn, dpi=160, bbox_inches='tight')
     plt.close(fig)
@@ -70,7 +81,6 @@ def main():
     grids = np.load(LOSS_FN, allow_pickle=True)
     kp_values = grids['kp']
     wf_values = grids['wind_factor']
-    os.makedirs(FIG_DIR, exist_ok=True)
 
     for glacier in grids['glaciers']:
         plot_glacier(str(glacier), grids, kp_values, wf_values)

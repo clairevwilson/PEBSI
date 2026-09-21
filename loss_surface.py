@@ -39,8 +39,8 @@ from project.parameters import host, HOST_PATHS, GLACIERS, BASE_CONFIG, translat
 # --wind-factor-values. A daily-output start must be 00:00 and end 23:00
 # (pebsi/config.py requires the inclusive hourly count to land on a
 # multiple of 24, which any 00:00-to-23:00 pair always satisfies).
-START_DATE = '2015-01-01 00:00'
-END_DATE = '2020-04-01 23:00'
+START_DATE = '2000-01-01 00:00'
+END_DATE = '2025-04-01 23:00'
 
 KP_VALUES = np.arange(0.5, 5.01, 0.5)
 WIND_FACTOR_VALUES = np.arange(0.5, 5.01, 0.5)
