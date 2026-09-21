@@ -12,6 +12,7 @@ import numpy as np
 from types import SimpleNamespace
 
 import pebsi.defaults as D
+from pebsi.config import dynamic_fields
 from pebsi.state import GlacierState, ClimateState, PointAttributes
 from pebsi.physics.massbalance import MassBalanceDriver
 from pebsi.physics.energybalance import EnergyBalanceDriver
@@ -26,10 +27,21 @@ N_SNOW = 3   # snow layers on top
 @pytest.fixture(scope='session')
 def params():
     p = SimpleNamespace(**{k: v for k, v in vars(D).items() if not k.startswith('_')})
-    # broadcast scalar dynamic params to (N,) so they work per-point
-    p.kp           = np.ones(N) * D.kp
-    p.wind_factor  = np.ones(N) * D.wind_factor
-    p.dust_factor  = np.ones(N) * D.dust_factor
+
+    # every dynamic field reaches the model as an array, since Config wraps
+    # scalars with np.atleast_1d before building the dynamic args -- the
+    # physics indexes them per-point (e.g. Boone_c1[:, None])
+    for k in dynamic_fields:
+        v = getattr(p, k, None)
+        if isinstance(v, (int, float)):
+            setattr(p, k, np.atleast_1d(np.array(v)))
+        elif isinstance(v, list) and all(isinstance(x, (int, float)) for x in v):
+            setattr(p, k, np.atleast_1d(np.array(v)))
+
+    # the handful the tests vary per-point
+    p.kp = np.ones(N) * D.kp
+    p.wind_factor = np.ones(N) * D.wind_factor
+    p.dust_factor = np.ones(N) * D.dust_factor
     p.surftemp_guess = -5.0
     return p
 
@@ -127,6 +139,10 @@ def _make_point_attrs(n_points=N):
         aspect         = jnp.zeros((n_points,), dtype=jnp.float64),
         sky_view_factor= jnp.ones((n_points,),  dtype=jnp.float64),
         median_elev    = jnp.full((n_points,), 1500.0, dtype=jnp.float64),
+        glacier_idx = jnp.zeros((n_points,), dtype=jnp.int32),
+        precip_upper25 = jnp.zeros((n_points,), dtype=bool),
+        precip_anchor_idx = jnp.arange(n_points, dtype=jnp.int32),
+        precip_taper = jnp.ones((n_points,), dtype=jnp.float64),
         cell_idx       = jnp.zeros((n_points,), dtype=jnp.int32),
         loc_idx        = jnp.zeros((n_points,), dtype=jnp.int32),
         wind_spdup     = jnp.ones((n_points, 1), dtype=jnp.float64),
@@ -135,6 +151,7 @@ def _make_point_attrs(n_points=N):
         temp_elev      = jnp.array([1500.0],    dtype=jnp.float64),
         sp_elev        = jnp.array([1500.0],    dtype=jnp.float64),
         LWin_elev      = jnp.array([1500.0],    dtype=jnp.float64),
+        glacier_point_counts = jnp.array([n_points], dtype=jnp.int32),
     )
 
 

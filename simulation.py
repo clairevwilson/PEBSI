@@ -272,6 +272,10 @@ class PEBSI():
             aspect=jnp.array(self.terrain.aspect_n, dtype=jnp.float64),
             sky_view_factor=jnp.array(self.terrain.sky_view_factor, dtype=jnp.float64),
             median_elev=jnp.array(self.terrain.median_elev_n, dtype=jnp.float64),
+            glacier_idx=jnp.array(self.terrain.glacier_idx_n, dtype=jnp.int32),
+            precip_upper25=jnp.array(self.terrain.precip_upper25_n, dtype=bool),
+            precip_anchor_idx=jnp.array(self.terrain.precip_anchor_idx_n, dtype=jnp.int32),
+            precip_taper=jnp.array(self.terrain.precip_taper_n, dtype=jnp.float64),
             cell_idx=jnp.array(self._cl.point_to_cell_idx, dtype=jnp.int32),
             loc_idx=jnp.array(self.terrain.point_to_unique_idx, dtype=jnp.int32),
             wind_spdup=wind_spdup,
@@ -282,6 +286,9 @@ class PEBSI():
             temp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
             sp_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
             LWin_elev=jnp.zeros(N_UNIQUE, dtype=jnp.float64),
+
+            # per-glacier (N_GLACIERS,)
+            glacier_point_counts=jnp.array(self.terrain.glacier_point_counts, dtype=jnp.int32),
 
             # shading tables: one year of (dayofyear, hour) entries at each
             # unique point location (Terrain.unique_point_locations)

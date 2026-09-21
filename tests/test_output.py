@@ -23,7 +23,7 @@ def test_agg_method_covers_every_output_group_field():
 
 
 def test_agg_method_values_are_valid():
-    valid = {'sum', 'mean', 'last'}
+    valid = {'sum', 'mean', 'min', 'last'}
     invalid = {f: m for f, m in AGG_METHOD.items() if m not in valid}
     assert not invalid, f'Invalid aggregation methods: {invalid}'
 
@@ -39,6 +39,8 @@ def _aggregate_period(hourly_records, agg_method=AGG_METHOD):
             agg[field] = jnp.sum(vals, axis=0)
         elif method == 'mean':
             agg[field] = jnp.mean(vals, axis=0)
+        elif method == 'min':
+            agg[field] = jnp.min(vals, axis=0)
         else:
             agg[field] = vals[-1]
     return type(hourly_records)(**agg)

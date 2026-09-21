@@ -359,6 +359,61 @@ class Terrain:
         self.median_elev_n = np.array(stretched_elevations)
         return
     
+    def get_precip_taper(self):
+        """
+        Precomputes the static pieces of the high-elevation precipitation
+        limit (GloGEM; Huss and Hock, 2015), which reduces precipitation
+        over the uppermost 25% of a tall glacier's elevation range to
+        account for drier air and wind scour at altitude.
+
+        Stores, per point: the integer glacier index (for glacier-wide
+        reductions in the time loop), whether the point sits above the
+        threshold elevation, the index of the point sitting at that
+        threshold, and the exponential decay factor applied above it.
+
+        Glaciers spanning less than params.preclimit_elev_range are left
+        alone -- their points anchor to themselves with a factor of one,
+        so the correction is a no-op there even when option_preclimit is
+        on.
+        """
+        n_points = self.N_POINTS
+        glacier_idx = np.zeros(n_points, dtype=np.int32)
+        anchor_idx = np.arange(n_points, dtype=np.int32)
+        taper = np.ones(n_points, dtype=float)
+        upper25 = np.zeros(n_points, dtype=bool)
+        counts = np.zeros(len(self.rgiid_unique), dtype=np.int32)
+
+        for gi, gid in enumerate(self.rgiid_unique):
+            points = np.where(self.rgiid_n == gid)[0]
+            glacier_idx[points] = gi
+            counts[gi] = len(points)
+
+            elev = self.elev_n[points]
+            elev_range = elev.max() - elev.min()
+            if elev_range <= self.params.preclimit_elev_range:
+                continue
+
+            # the lowest point at or above the threshold anchors the taper,
+            # matching PyGEM's height_75 rather than the threshold itself
+            threshold = elev.min() + self.params.preclimit_frac * elev_range
+            upper = points[elev >= threshold]
+            elev_upper = self.elev_n[upper]
+            height_75 = elev_upper.min()
+            span = elev_upper.max() - height_75
+            if span <= 0:
+                continue
+
+            anchor_idx[upper] = upper[np.argmin(elev_upper)]
+            taper[upper] = np.exp(-(elev_upper - height_75) / span)
+            upper25[upper] = True
+
+        self.glacier_idx_n = glacier_idx
+        self.glacier_point_counts = counts
+        self.precip_anchor_idx_n = anchor_idx
+        self.precip_taper_n = taper
+        self.precip_upper25_n = upper25
+        return
+
     def yield_dem_chunks(self, block_size_deg=0.5, buffer_meters=10_000):
         """
         Generator that yields sliced, buffered sub-DEM 
@@ -1048,6 +1103,7 @@ class Terrain:
             assert len(input_array) == self.N_POINTS, wrong_len
 
         self.get_median_elevation()
+        self.get_precip_taper()
 
         # make sure passed parameter arrays are the correct length
         for k, v in vars(self.params).items():

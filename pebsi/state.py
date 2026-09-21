@@ -238,6 +238,10 @@ class PointAttributes(NamedTuple):
     aspect: jnp.ndarray             # Point aspect [deg, 0=N]
     sky_view_factor: jnp.ndarray    # Sky-view factor [-]
     median_elev: jnp.ndarray        # Glacier median elevation for precip gradient [m]
+    glacier_idx: jnp.ndarray        # Index into (N_GLACIERS,) glacier arrays for this point
+    precip_upper25: jnp.ndarray     # Point sits above the option_preclimit threshold elevation [bool]
+    precip_anchor_idx: jnp.ndarray  # Point supplying the precipitation the taper decays from
+    precip_taper: jnp.ndarray       # Exponential decay factor above the threshold elevation [-]
     cell_idx: jnp.ndarray           # Index into (N_UNIQUE,) cell arrays for this point
     loc_idx: jnp.ndarray            # Index into (N_UNIQUE_SHADE,) shading arrays for this point
 
@@ -250,6 +254,9 @@ class PointAttributes(NamedTuple):
     temp_elev: jnp.ndarray          # Reference elevation for temp lapse rate [m]
     sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
     LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
+
+    # ======================= Per-glacier (N_GLACIERS,) ========================
+    glacier_point_counts: jnp.ndarray  # Number of points on each glacier [-]
 
     # ============= Shading (N_UNIQUE_SHADE, N_SHADE_TIME) ====================
     # one year of (dayofyear, hour) shading at each unique point location

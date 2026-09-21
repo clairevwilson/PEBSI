@@ -54,10 +54,42 @@ def adjust_temperature(forcings, point_attrs, params):
     temp = forcings.temp + lapse_rate * (point_attrs.elevation - temp_elev)
     return forcings._replace(temp=temp)
 
+def limit_high_elevation_precip(tp, point_attrs, params):
+    """
+    Tapers precipitation over the uppermost 25% of a tall glacier's
+    elevation range (GloGEM; Huss and Hock, 2015), representing the
+    drier air and wind scour that keep the highest accumulation areas
+    from receiving the precipitation an elevation gradient alone would
+    give them.
+
+    Every point above the threshold elevation is reset to the
+    precipitation at that threshold, decayed exponentially with height
+    above it,
+
+        tp = tp(z_75) * exp(-(z - z_75) / (z_max - z_75))
+
+    and then floored at params.preclimit_floor of the glacier's maximum
+    precipitation for this step, so the taper cannot drive the
+    accumulation area drier than the rest of the glacier. Which points
+    are tapered, what they anchor to and the decay factor itself are all
+    fixed by the geometry and precomputed in Terrain.get_precip_taper.
+    """
+    tapered = tp[point_attrs.precip_anchor_idx] * point_attrs.precip_taper
+    tp = jnp.where(point_attrs.precip_upper25, tapered, tp)
+
+    n_glaciers = point_attrs.glacier_point_counts.shape[0]
+    glacier_max = jax.ops.segment_max(tp, point_attrs.glacier_idx,
+                                      num_segments=n_glaciers)
+    floor = params.preclimit_floor * glacier_max[point_attrs.glacier_idx]
+
+    return jnp.where(point_attrs.precip_upper25, jnp.maximum(tp, floor), tp)
+
 def adjust_precipitation(forcings, point_attrs, params):
     """Applies elevation gradient to precipitation."""
     elev_change = point_attrs.elevation - point_attrs.median_elev
     tp = forcings.tp * (1 + params.precgrad * (elev_change))
+    if params.option_preclimit:
+        tp = limit_high_elevation_precip(tp, point_attrs, params)
     return forcings._replace(tp=tp)
 
 def adjust_pressure(forcings, point_attrs, params):

@@ -160,6 +160,7 @@ option_dynamics = False                 # Run glacier dynamics with GLIDE?
 option_ice_albedo_tif = False           # Take ice albedo from preprocessed .tif?
 option_windmaps = False                 # Load per-point wind speed-up from preprocessed .zarr?
 option_precomputed_costheta = True      # Cell-average cos(solar incidence) per pixel?
+option_preclimit = False                # Taper precipitation over the uppermost 25% of big glaciers?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
@@ -199,6 +200,9 @@ wind_factor = 1             #* Wind factor [-]
 kp = 2.25                   #* Precipitation factor [-]
 dust_factor = 1             #* Dust factor [-]
 precgrad = 0                #* Precipitation gradient with elevation [% m-1] 
+preclimit_elev_range = 1000 # Glacier elevation range above which option_preclimit applies [m]
+preclimit_frac = 0.75       # Elevation-range fraction above which precipitation is tapered [-]
+preclimit_floor = 0.875     # Tapered precipitation floor, as a fraction of the glacier maximum [-]
 lapse_rate = -6.5           #* Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_fresh_snow = 0.85    #* Albedo of fresh snow [-]
 albedo_ice = 0.47           #* Albedo of ice [-] 
