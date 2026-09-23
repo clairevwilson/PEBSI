@@ -158,6 +158,7 @@ option_flat_plates = False              # Use flat grain shapes in SNICAR emulat
 option_accel_grains = False             # Accelerate wet grain metamorphosis?
 option_dynamics = False                 # Run glacier dynamics with GLIDE?
 option_ice_albedo_tif = False           # Take ice albedo from preprocessed .tif?
+option_ice_thickness_tif = False        # Take initial ice thickness from Farinotti .tif?
 option_windmaps = False                 # Load per-point wind speed-up from preprocessed .zarr?
 option_precomputed_costheta = True      # Cell-average cos(solar incidence) per pixel?
 option_preclimit = False                # Taper precipitation over the uppermost 25% of big glaciers?

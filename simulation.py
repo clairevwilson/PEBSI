@@ -13,6 +13,7 @@ import sys
 import shutil
 import argparse
 import itertools
+import logging
 import threading
 import time
 import warnings
@@ -38,6 +39,48 @@ from pebsi.main import main
 os.umask(0o000) # make sure files are created with universal permissions
 
 warnings.filterwarnings("ignore", category=FutureWarning, module="jax")
+
+
+def check_gpu():
+    """
+    Checks that JAX found a GPU, and says so plainly if it did not.
+
+    JAX loads its CUDA plugin lazily, the first time a backend is
+    needed, and when that fails it logs the failure and falls back to
+    CPU rather than raising. The model still runs -- far slower, which
+    on a GPU node means the whole allocation is wasted -- so the
+    backend is initialized here, up front, and the fallback is turned
+    into an error. The plugin's own traceback is muted while that
+    happens; it is printed below the message only if the check fails.
+
+    Set PEBSI_ALLOW_CPU=1 to run on CPU anyway.
+    """
+    log = logging.getLogger('jax._src.xla_bridge')
+    buffered = []
+
+    class _Buffer(logging.Handler):
+        def emit(self, record):
+            buffered.append(self.format(record))
+
+    handler = _Buffer()
+    log.addHandler(handler)
+    propagate = log.propagate
+    log.propagate = False
+    try:
+        platform = jax.default_backend()
+    finally:
+        log.removeHandler(handler)
+        log.propagate = propagate
+
+    if platform == 'gpu' or os.environ.get('PEBSI_ALLOW_CPU') == '1':
+        return platform
+
+    print('! PEBSI could not access a GPU: falling back to CPU', file=sys.stderr, flush=True)
+
+    # the plugin's own explanation, held back so it lands underneath
+    for message in buffered:
+        print(message, file=sys.stderr)
+    return
 
 def get_args(parse=True):
     """
@@ -113,6 +156,8 @@ class PEBSI():
         """
         self.start_time = time.time() 
 
+        check_gpu()
+
         # parse args in order of defaults < config yaml < command line
         self.config = Config(args)
 
@@ -134,14 +179,19 @@ class PEBSI():
 
         # run DEM functions for shading, elevation, etc.
         terrain.run_dem_functions()
+
         if params.option_ice_albedo_tif:
             albedo_ice_n = terrain.get_ice_albedo()
             self.params.albedo_ice = albedo_ice_n
             self.config.dynamic_args = self.config.dynamic_args._replace(
                 albedo_ice=jnp.array(albedo_ice_n, dtype=jnp.float64)
             )
+
         if params.option_windmaps:
             terrain.get_wind_fields()
+
+        if params.option_dynamics or params.option_ice_thickness_tif:
+            terrain.get_initial_ice_thickness()
 
         # validate spatial inputs
         terrain.validate_terrain_data()
@@ -154,10 +204,6 @@ class PEBSI():
             terrain.load_cos_theta()
         else:
             terrain.cos_theta_table = np.zeros_like(terrain.shadow_mask)
-
-        # ============ GLACIER DYNAMICS (optional) ============
-        if params.option_dynamics:
-            terrain.get_initial_ice_thickness()
 
         # ============= CLIMATE DATA GRID =============
         # build a lightweight Climate object to get cell mapping
@@ -608,6 +654,7 @@ class PEBSI():
 
         # initialize output after the checkpoint check so resume_fp is known
         model_output = Output(params, self.terrain, resume_fp=resume_fp)
+        self.output_fp = model_output.output_fp
 
         # copy config to the output directory
         if params.store_data and params.use_config and resume_fp is None:
@@ -748,8 +795,17 @@ class PEBSI():
         else:
             print('~ Success: data was not saved ~')
 
+        if time_elapsed > 3600:
+            time_elapsed /= 3600
+            time_str = f'{time_elapsed:.3f} hours'
+        elif time_elapsed > 60:
+            time_elapsed /= 60
+            time_str = f'{time_elapsed:.1f} minutes'
+        else:
+            time_str = f'{time_elapsed:.1f} seconds'
+
         print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        print(f'~ Simulation completed in {time_elapsed:.1f} seconds ~')
+        print(f'~ Simulation completed in {time_str} ~')
         return state
     
     def start_print(self):

@@ -47,8 +47,8 @@ class Layers():
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
 
-        # reconcile ice thickness differences from dynamics
-        if params.option_dynamics:
+        # reconcile the column against the real initial ice thickness
+        if params.option_dynamics or params.option_ice_thickness_tif:
             self.apply_initial_ice_thickness(terrain)
 
         if params.debug:
@@ -140,8 +140,8 @@ class Layers():
         """
         Reconciles the ice-typed portion of the column to each point's
         real initial ice thickness (terrain.thickness_n). Only needed
-        when option_dynamics=True, otherwise ice thickness is an 
-        arbitrary variable. 
+        when option_dynamics or option_ice_thickness_tif is True,
+        otherwise ice thickness is an arbitrary variable.
 
         Assumes the ice thickness in the dataset is representative
         of firn and ice. Since firn layers are initialized separately,

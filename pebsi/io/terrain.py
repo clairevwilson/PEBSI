@@ -1060,7 +1060,8 @@ class Terrain:
         ice-thickness GeoTIFF (params.thickness_fn) and derives a fixed 
         bed elevation (elev_n - thickness_n).
 
-        Only called when params.option_dynamics is True.
+        Called when params.option_dynamics or params.option_ice_thickness_tif
+        is True.
         """
         N_POINTS = self.N_POINTS
         thickness_n = np.zeros(N_POINTS)
