@@ -31,7 +31,7 @@ class Layers():
         # INPUTS
         self.params = params
         self.N_POINTS = N_POINTS = terrain.N_POINTS
-        self.N_LAYERS = N_LAYERS = params.max_nlayers
+        self.N_LAYERS = N_LAYERS = params.n_layers
         self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
@@ -47,9 +47,17 @@ class Layers():
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
 
-        # reconcile the column against the real initial ice thickness
+        # set the ice depth the column has to add up to
         if params.option_dynamics or params.option_ice_thickness_tif:
-            self.apply_initial_ice_thickness(terrain)
+            # firn layers are already placed so remove that from our target
+            self.dz_ice = np.maximum(terrain.thickness_n - self.dz_firn, 0.0)
+        elif params.initial_ice_depth.shape == (1, ):
+            self.dz_ice = np.full(N_POINTS, params.initial_ice_depth[0])
+        else:
+            self.dz_ice = params.initial_ice_depth
+
+        # resize the ice layers to the prescribed depth
+        self.apply_initial_ice_thickness()
 
         if params.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
@@ -136,12 +144,10 @@ class Layers():
         self.ice_mask = ltype==2        # type 2 = ice
         return
 
-    def apply_initial_ice_thickness(self, terrain):
+    def apply_initial_ice_thickness(self):
         """
-        Reconciles the ice-typed portion of the column to each point's
-        real initial ice thickness (terrain.thickness_n). Only needed
-        when option_dynamics or option_ice_thickness_tif is True,
-        otherwise ice thickness is an arbitrary variable.
+        Reconciles the ice-typed portion of the column to the target ice
+        depth in self.dz_ice, with every ice layer at dz_icelayer.
 
         Assumes the ice thickness in the dataset is representative
         of firn and ice. Since firn layers are initialized separately,
@@ -149,19 +155,23 @@ class Layers():
         are resized such that every layer is the same height and all
         ice + firn layers add up to the actual initial ice thickness.
         """
+        DENSITY_ICE = self.params.density_ice
+        DZ_ICE = self.params.dz_icelayer
         min_height = self.params.min_dz
 
-        n_ice_layers = np.sum(self.ice_mask, axis=1)  # (N_POINTS,)
-        ice_only_thickness = np.maximum(terrain.thickness_n - self.dz_firn, 0.0)
+        heights = np.where(self.ice_mask, DZ_ICE, 0.0)
+        ice_above = np.cumsum(heights, axis=1) - heights
+        target = self.dz_ice[:, np.newaxis]
 
-        per_layer_height = np.where(
-            n_ice_layers > 0, ice_only_thickness / np.maximum(n_ice_layers, 1), 0.0
-        )
-        per_layer_height = np.maximum(per_layer_height, min_height)
+        # whatever the column cannot hold is banked rather than stretched
+        column = heights.sum(axis=1)
+        self.basal_reservoir = np.maximum(self.dz_ice - column, 0.0) * DENSITY_ICE
 
-        self.lheight = np.where(self.ice_mask, per_layer_height[:, np.newaxis], self.lheight)
+        self.lheight = np.where(self.ice_mask,
+                                np.clip(target - ice_above, min_height, heights),
+                                self.lheight)
 
-        # depths need recomputing everywhere since every ice layer's height changed
+        # depths need recomputing since ice layer heights have changed
         cum_height = np.cumsum(self.lheight, axis=1)
         self.ldepth = cum_height - (self.lheight / 2.0)
         return

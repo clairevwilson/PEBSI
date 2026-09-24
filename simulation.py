@@ -273,7 +273,7 @@ class PEBSI():
             annual_max_snow=jnp.array(self.layers.max_snow, dtype=jnp.float64),
             days_since_snowfall=jnp.zeros((N_POINTS,), dtype=jnp.int32),
             cum_mass_error=jnp.zeros((N_POINTS), dtype=jnp.float64),
-            basal_reservoir=jnp.zeros((N_POINTS), dtype=jnp.float64),
+            basal_reservoir=jnp.array(self.layers.basal_reservoir, dtype=jnp.float64),
 
             # layer properties
             lheight=jnp.array(self.layers.lheight, dtype=jnp.float64),

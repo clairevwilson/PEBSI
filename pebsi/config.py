@@ -30,7 +30,7 @@ import pebsi.defaults as defaults
 # Statics args are needed to initialize the model and
 # make choices in the compilation (e.g., options / methods)
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps',
+    'n_layers', 'albedo_TOD', 'bias_vars', 'n_heat_steps',
     'store_vars', 'differentiable', 'steps_per_output', 'month_lengths',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
@@ -66,7 +66,7 @@ dynamic_fields = ['kp','wind_factor','precgrad',
                 'roughness_fresh_snow', 'roughness_aged_snow',
                 'roughness_firn','roughness_ice',
                 'ksp_BC', 'ksp_OC', 'ksp_dust',
-                'initial_snow_depth', 'initial_firn_depth',
+                'initial_snow_depth', 'initial_firn_depth', 'initial_ice_depth',
                 'Sr','Boone_c1','Boone_c2','Boone_c3','Boone_c4','Boone_c5',
                 'grainsize_rfz','snow_threshold_low','snow_threshold_high']
 
@@ -314,7 +314,7 @@ class Config():
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data < 0), f'{var} must be negative'
         
-        must_be_0_or_positive = ['initial_firn_depth', 'precgrad']
+        must_be_0_or_positive = ['initial_firn_depth', 'initial_ice_depth', 'precgrad']
         for var in must_be_0_or_positive:
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data >= 0), f'{var} must be 0 or positive'

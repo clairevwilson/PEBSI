@@ -32,7 +32,7 @@ class Output():
         self.terrain = terrain
         self.resume_fp = resume_fp
 
-        self.N_LAYERS = params.max_nlayers
+        self.N_LAYERS = params.n_layers
         self.N_POINTS = terrain.N_POINTS
 
         self.all_vars = OUTPUT_GROUPS

@@ -141,6 +141,7 @@ initialize_water = 'dry'                # 'dry' or 'saturated'
 surftemp_guess =  -10                   # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1                  # default amount of initial snow [m]
 initial_firn_depth = 10                 # default amount of initial firn [m] (only for sites identified as accumulation area)
+initial_ice_depth = 50                  # default amount of initial ice [m] (unless option_ice_thickness_tif)
 
 # OUTPUT
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
@@ -218,7 +219,7 @@ dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
 dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
+n_layers = 50               # Number of vertical layers (more layers --> larger file size)
 min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
 min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
