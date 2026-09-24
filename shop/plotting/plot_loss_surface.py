@@ -12,6 +12,7 @@ totally different from the rest.
 
 @author: clairevwilson
 """
+import argparse
 import os
 
 import numpy as np
@@ -20,20 +21,30 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
-FIG_FN_TEMPLATE = os.path.join(ROOT, 'loss_surface_{glacier}.png')
 
 PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'),
           ('snow', 'Snow extent'), ('melt', 'Melt extent')]
 
 
-def plot_glacier(glacier, grids, kp_values, wf_values):
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--loss-fn', default=LOSS_FN,
+                   help='loss .npz from compute_loss_surface.py '
+                        '(default %(default)s)')
+    p.add_argument('--fig-dir', default=None,
+                   help='where the figures go (default: beside --loss-fn)')
+    return p.parse_args()
+
+
+def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
     fig, axes = plt.subplots(2, 2, figsize=(8, 7), gridspec_kw={'hspace': 0.3, 'wspace': 0.3})
     extent = [kp_values[0] - 0.25, kp_values[-1] + 0.25,
               wf_values[0] - 0.25, wf_values[-1] + 0.25]
 
-    total_err = np.zeros((10, 10))
+    total_err = np.zeros((len(wf_values), len(kp_values)))
     for ax, (key, label) in zip(axes.flat, PANELS):
         # transposed so kp runs along x and wind_factor along y
         field = grids[f'{glacier}_{key}'].T
@@ -71,19 +82,24 @@ def plot_glacier(glacier, grids, kp_values, wf_values):
     title = (f'{glacier}: log loss by parameter combination'
               f'\nBest $k_p=${best_kp} $k_w=${best_kw} log loss: {best_err:.1f}')
     fig.suptitle(title, fontsize=12)
-    fig_fn = FIG_FN_TEMPLATE.format(glacier=glacier)
+    fig_fn = fig_fn_template.format(glacier=glacier)
     fig.savefig(fig_fn, dpi=160, bbox_inches='tight')
     plt.close(fig)
     print(f'Wrote {fig_fn}', flush=True)
 
 
 def main():
-    grids = np.load(LOSS_FN, allow_pickle=True)
+    args = parse_args()
+    grids = np.load(args.loss_fn, allow_pickle=True)
     kp_values = grids['kp']
     wf_values = grids['wind_factor']
 
+    fig_dir = args.fig_dir or os.path.dirname(args.loss_fn)
+    os.makedirs(fig_dir, exist_ok=True)
+    fig_fn_template = os.path.join(fig_dir, 'loss_surface_{glacier}.png')
+
     for glacier in grids['glaciers']:
-        plot_glacier(str(glacier), grids, kp_values, wf_values)
+        plot_glacier(str(glacier), grids, kp_values, wf_values, fig_fn_template)
 
 
 if __name__ == '__main__':

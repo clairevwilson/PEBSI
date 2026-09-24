@@ -62,6 +62,7 @@ baseline = {'kp': 2.5, 'wind_factor': 2.5}
 # this rather than repeating the physics options by hand.
 BASE_CONFIG = dict(
     option_ice_albedo_tif=True,
+    option_ice_thickness_tif=True,
     option_windmaps=True,
     option_accel_grains=True,
     option_flat_plates=True,
@@ -70,5 +71,5 @@ BASE_CONFIG = dict(
     constant_irrwater=True,
     precgrad=0.000100,
     bias_vars=['temp'],
-    max_nlayers=25,
+    n_layers=25,
 )

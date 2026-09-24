@@ -22,6 +22,9 @@ import os
 import sys
 from collections import defaultdict
 
+import argparse
+import glob
+
 import numpy as np
 import xarray as xr
 
@@ -30,9 +33,50 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance
 from project.parameters import translate_rgi
 
-OUT_ZARR = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/output.zarr'
-GRID_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/loss_surface_grid.npz'
-LOSS_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/loss_surface_losses.npz'
+# the most recent loss_surface.py run, used when --run-dir is not given
+RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0'
+
+
+def resolve_run_dir(run_dir):
+    """
+    A loss_surface.py run keeps everything it produced in one directory:
+    the output .zarr, the grid .npz naming the combinations and glaciers,
+    and (once this script has run) the losses. Pulls the three paths out
+    of one, rather than making the caller repeat the directory.
+
+    The grid .npz carries the run's --tag in its name, so it is matched by
+    pattern instead of assumed.
+    """
+    grids = sorted(glob.glob(os.path.join(run_dir, 'loss_surface_grid*.npz')))
+    assert grids, (f'no loss_surface_grid*.npz in {run_dir} -- an interrupted '
+                    'run never gets one, since it is written only after the '
+                    'simulation finishes')
+    assert len(grids) == 1, f'several grid .npz files in {run_dir}: {grids}'
+    return dict(grid_fn=grids[0],
+                out_zarr=os.path.join(run_dir, 'output.zarr'),
+                loss_fn=os.path.join(run_dir, 'loss_surface_losses.npz'))
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--run-dir', default=RUN_DIR,
+                   help='loss_surface.py run directory holding output.zarr and '
+                        'the grid .npz (default %(default)s)')
+    p.add_argument('--out-zarr', default=None,
+                   help='override the .zarr taken from --run-dir')
+    p.add_argument('--grid-fn', default=None,
+                   help='override the grid .npz taken from --run-dir; its '
+                        'glacier list drives which glaciers are scored')
+    p.add_argument('--loss-fn', default=None,
+                   help='override where the per-metric loss surfaces are written')
+    args = p.parse_args()
+
+    resolved = resolve_run_dir(args.run_dir)
+    for k, v in resolved.items():
+        if getattr(args, k) is None:
+            setattr(args, k, v)
+    return args
 
 ALBEDO_SIGMA = 0.0777
 
@@ -45,7 +89,8 @@ NEEDED_VARS = ['lon', 'lat', 'time', 'rgiid', 'albedo', 'surftype', 'total_water
 
 
 def main():
-    grid = np.load(GRID_FN, allow_pickle=True)
+    args = parse_args()
+    grid = np.load(args.grid_fn, allow_pickle=True)
     kp_values = grid['kp']
     wf_values = grid['wind_factor']
     n_base = int(grid['n_base'])
@@ -54,10 +99,13 @@ def main():
     start, end = str(grid['start']), '2025-03-20' # str(grid['end'])
     rgi_ids = {g: translate_rgi[g]['6'] for g in glaciers}
 
+    print(f'grid  {args.grid_fn}', flush=True)
+    print(f'zarr  {args.out_zarr}', flush=True)
+    print(f'loss  {args.loss_fn}', flush=True)
     print(f'{len(glaciers)} glaciers x {n_combos} combos, {n_base} points '
           f'per combo, {start} to {end}', flush=True)
 
-    ds = xr.open_zarr(OUT_ZARR, consolidated=False)
+    ds = xr.open_zarr(args.out_zarr, consolidated=False)
 
     # measured sides are identical for every combination (all replicas sit
     # at the same coordinates), so the observation loaders are built once
@@ -170,10 +218,10 @@ def main():
     per_glacier_grids = {f'{g}_{k}': v.reshape(shape)
                          for g, kv in per_glacier.items() for k, v in kv.items()}
 
-    np.savez(LOSS_FN, kp=kp_values, wind_factor=wf_values,
+    np.savez(args.loss_fn, kp=kp_values, wind_factor=wf_values,
              glaciers=np.array(glaciers), start=np.array(start),
              end=np.array(end), n_base=n_base, **grids, **per_glacier_grids)
-    print(f'\nWrote {LOSS_FN}', flush=True)
+    print(f'\nWrote {args.loss_fn}', flush=True)
 
     best = np.unravel_index(np.nanargmin(grids['total']), shape)
     print(f'Best total {grids["total"][best]:.3f} at '
