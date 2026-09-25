@@ -183,7 +183,7 @@ class MassBalanceDriver:
         )
 
         # if it is the start of a year, reset firn converted trackers
-        is_year_start = (forcings.doy == 0) & (forcings.local_hour == 0)
+        is_year_start = (forcings.doy == 1) & (forcings.local_hour == 0)
         new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
         state = state._replace(annual_firn_converted = new_firn_converted)
         return state
