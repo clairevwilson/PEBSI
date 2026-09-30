@@ -69,6 +69,8 @@ def build_config(start_date, end_date, glaciers, preclimit, out_config_fn,
     config.update(
         rgi_ids=[translate_rgi[g]['6'] for g in glaciers],
         option_preclimit=preclimit,
+        option_ice_thickness_tif=False,
+        initial_ice_depth=500,
         method_distribute='adaptive',
         start_date=start_date,
         end_date=end_date,
