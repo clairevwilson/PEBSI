@@ -69,8 +69,8 @@ with warnings.catch_warnings():
     # points with no valid measurement in the record reduce to nan
     warnings.simplefilter('ignore', RuntimeWarning)
     albedo_residual = ab.mod - ab.meas
-    albedo_pts = np.nanmean(0.5 * np.log(2 * np.pi * 0.03**2)
-                            + albedo_residual**2 / (2 * 0.03**2), axis=0)
+    albedo_pts = np.nanmean(0.5 * np.log(2 * np.pi * ALBEDO_SIGMA**2)
+                            + albedo_residual**2 / (2 * ALBEDO_SIGMA**2), axis=0)
     snow_pts = bce(sm.mod_snow, sm.meas_snow)
     melt_pts = bce(sm.mod_melt, sm.meas_melt)
 

@@ -1,12 +1,11 @@
 """
 Plot distributed model-measurement error on the model's point grid, for
-the simulation at the best (kp, wind_factor) combination identified by
-compute_loss_surface.py -- one figure per glacier.
+each glacier's own best (kp, wind_factor) combination -- one figure per
+glacier.
 
-Reads loss_surface_losses.npz for the best combo (argmin of the summed
-'total' grid, the same objective AD_optimize's own total uses) and pulls
-that combo's points out of the loss_surface run's output.zarr, then lays
-out the same per-glacier figure as plot_distributed_error.py.
+Reads best.zarr from compute_best_zarr.py, which already holds only each
+glacier's best combo, then lays out the same per-glacier figure as
+plot_distributed_error.py.
 Usage: python plot_distributed_best_grid.py
 """
 import os
@@ -27,30 +26,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from project.glacierwide_loss import *
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/'
-OUT_ZARR = ROOT + 'output.zarr'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
+OUT_ZARR = ROOT + 'best.zarr'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 FIG_DIR = ROOT
 
-# ===================== BEST COMBO =====================
+# ===================== LOAD DATA =====================
 grids = np.load(LOSS_FN, allow_pickle=True)
-kp_values = grids['kp']
-wf_values = grids['wind_factor']
-n_base = int(grids['n_base'])
 glaciers = [str(g) for g in grids['glaciers']]
 
-# combos were built kp-major, so index c = i_kp * n_wf + j_wf
-shape = (len(kp_values), len(wf_values))
-best = np.unravel_index(np.nanargmin(grids['total']), shape)
-best_c = best[0] * len(wf_values) + best[1]
-print(f'Best total {grids["total"][best]:.3f} at kp={kp_values[best[0]]:.1f}, '
-      f'wind_factor={wf_values[best[1]]:.1f} (combo {best_c})')
-
-# ===================== LOAD DATA =====================
-ds_full = xr.open_zarr(OUT_ZARR, consolidated=False)
-combo_slice = slice(best_c * n_base, (best_c + 1) * n_base)
-ds_all = ds_full.isel(point=combo_slice)
+ds_all = xr.open_zarr(OUT_ZARR, consolidated=False)
 
 gdf = gpd.read_file(rgi_fp)
 
@@ -58,7 +44,17 @@ gdf = gpd.read_file(rgi_fp)
 def bce(mod, meas, eps=1e-3):
     p = np.clip(np.asarray(mod, dtype=float), eps, 1 - eps)
     y = np.asarray(meas, dtype=float)
-    return -np.nanmean(y * np.log(p) + (1 - y) * np.log(1 - p), axis=0)
+    return -(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+
+def weighted_pts(terms):
+    """Per-point loss weighted by each point's number of valid dates,
+    scaled so the mean over points equals the pooled (time x point)
+    nanmean that the glacier-wide log losses use."""
+    n_valid = np.sum(~np.isnan(terms), axis=0)
+    pts = np.nansum(terms, axis=0) / n_valid.mean()
+    pts[n_valid == 0] = np.nan
+    return pts
 
 
 def voronoi_finite_polygons_2d(vor, radius=None):
@@ -157,28 +153,21 @@ def plot_glacier(glacier):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
         albedo_residual = ab.mod - ab.meas
-        albedo_pts = np.nanmean(0.5 * np.log(2 * np.pi * 0.03**2)
-                                + albedo_residual**2 / (2 * 0.03**2), axis=0)
-        snow_pts = bce(sm.mod_snow, sm.meas_snow)
-        melt_pts = bce(sm.mod_melt, sm.meas_melt)
+        albedo_pts = weighted_pts(0.5 * np.log(2 * np.pi * ALBEDO_SIGMA**2)
+                                  + albedo_residual**2 / (2 * ALBEDO_SIGMA**2))
+        snow_pts = weighted_pts(bce(sm.mod_snow, sm.meas_snow))
+        melt_pts = weighted_pts(bce(sm.mod_melt, sm.meas_melt))
 
     point_losses = {'snow': snow_pts, 'melt': melt_pts, 'albedo': albedo_pts}
 
     # ===================== VORONOI CELLS =====================
-    # each model point owns the cell of ground closest to it (a Voronoi
-    # diagram in the metric CRS), so cell area follows the point density
-    # instead of assuming a regular lattice
     pts = np.column_stack([xs, ys])
     spacing_m = np.median(cKDTree(pts).query(pts, k=2)[0][:, 1])
 
     vor = Voronoi(pts)
     regions, vertices = voronoi_finite_polygons_2d(vor)
 
-    # crop the (otherwise unbounded) cells to the glacier outline itself,
-    # so no ice-free ground gets colored in -- most cells sit entirely
-    # inside the outline, so only run the expensive intersection on the
-    # ones that actually straddle the boundary (checked cheaply via a
-    # prepared geometry)
+    # crop cells to glacier outline
     outline_geom = unary_union(glacier_outline.geometry.values)
     prepared_outline = prep(outline_geom)
     cell_polys = []
@@ -239,7 +228,7 @@ def plot_glacier(glacier):
         ax.add_collection(pc)
         ax.set_xlim(bx0, bx1)
         ax.set_ylim(by0, by1)
-        fig.colorbar(pc, ax=ax, label='log loss [nats]', shrink=0.7)
+        fig.colorbar(pc, ax=ax, label='weighted log loss [nats]', shrink=0.7)
         ax.set_title(error_labels[var])
 
     ab_loss = ab.log_loss()
@@ -249,11 +238,19 @@ def plot_glacier(glacier):
 
     axes[-1].bar(range(len(losses)), losses)
     axes[-1].set_xticks(range(len(losses)))
-    axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Snowline', 'Melt extent'], rotation=20)
+    axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Snowline', 'Melt extent'], rotation=20, ha='right')
     axes[-1].set_ylabel('log loss [nats]')
 
     fig.suptitle(f'{glacier}: distributed error at best combo '
-                 f'(kp={kp_values[best[0]]:.1f}, wind_factor={wf_values[best[1]]:.1f})')
+                 f'(kp={float(ds.kp[0]):.1f}, wind_factor={float(ds.wind_factor[0]):.1f})')
+
+    # freeze the constrained layout, then give the bar panel the same box
+    # as the map panels (which are shrunk by their colorbars and equal aspect)
+    fig.canvas.draw()
+    fig.set_layout_engine('none')
+    ref = map_axes[-1].get_position()
+    pos = axes[-1].get_position()
+    axes[-1].set_position([pos.x0, ref.y0, ref.width, ref.height])
 
     output_fn = f'{FIG_DIR}{rgi_id}_best_grid_loss_map.png'
     plt.savefig(output_fn, dpi=150)
