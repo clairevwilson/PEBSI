@@ -2,7 +2,7 @@
 Builds best.zarr: the loss_surface run's points, subset down to each
 glacier's own best (kp, wind_factor) combination.
 
-This is deliberately independent per glacier -- compute_loss_surface.py's
+This is independent per glacier -- compute_loss_surface.py's
 own 'best' is the combo that minimizes the *summed* total across every
 calibration glacier (the calibration objective), which need not be any
 single glacier's individual best. Reads loss_surface_losses.npz for each
@@ -18,7 +18,7 @@ import xarray as xr
 
 from project.parameters import translate_rgi
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
 OUT_ZARR = ROOT + 'output.zarr'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
 BEST_FN = ROOT + 'best.zarr'

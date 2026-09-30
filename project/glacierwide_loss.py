@@ -34,6 +34,9 @@ else:
 # translate_rgi/translate_names from this module keep working
 from project.parameters import translate_rgi, translate_names
 
+# albedo observation uncertainty, derived from the data
+ALBEDO_SIGMA = 0.0777
+
 class Albedo():
     def __init__(self, name, use='s2'):
         """
@@ -217,7 +220,7 @@ class Albedo():
         meas = self.meas if meas is None else meas
         return np.nanmean(np.abs(mod - meas))
 
-    def log_loss(self, mod=None, meas=None, sigma=0.03):
+    def log_loss(self, mod=None, meas=None, sigma=ALBEDO_SIGMA):
         """
         Gaussian negative log-likelihood of the albedo residuals
         [nats], assuming observations are mod ~ N(meas, sigma^2).
@@ -305,9 +308,10 @@ class SnowlineMelt():
         self.dem = ds['dem']
         self.glacier_mask = ds['glacier_mask']
 
-        # per-pixel snow/melt masks are already gridded, use them directly
-        self.ds_meas_snow = ds['is_snow'].astype(bool)
-        self.ds_meas_melt = ds['is_melting'].astype(bool)
+        # per-pixel snow/melt masks are already gridded, use them directly;
+        # kept as float (1/0) so missing retrievals stay NaN
+        self.ds_meas_snow = ds['is_snow'].astype(float)
+        self.ds_meas_melt = ds['is_melting'].astype(float)
         return
 
     def get_model_snow(self, model_ds):
@@ -400,62 +404,41 @@ def _load_rgi_outline(glac_no):
 
 
 class MassBalance():
-    def __init__(self, name, density=850, density_err=60,
-                 meas_period=20, dates=None, source='csv'):
+    def __init__(self, name, dates=None, source='csv', density=850):
         """
-        Grabs the glacier-wide mass balance for
-        the given glacier over the 2000 - 2019
-        time period using the Hugonnet dataset
-        with the recommended density conversion
-        (850 +/- 60 kg m-3).
+        Glacier-wide mass balance from Hugonnet et al. (2021), expressed
+        as an average annual rate [m w.e. yr-1] so the model is compared
+        as a rate rather than a net balance over the period.
 
         Parameters
         name : str
             Glacier name
-        density : float
-            Ice density used to convert dh/dt to mass balance [kg m-3]
-        density_err : float
-            Uncertainty on the ice density conversion [kg m-3]
-        meas_period : float
-            Number of years in the observation period [yr]
         dates : tuple of strings
-            Start and end date (must be month start) to replace
-            2000-01-01 - 2020-01-01 default range.
+            Start and end of the model run. For source='csv' the run must
+            cover the observation period (2000-01-01 to 2020-01-01); for
+            source='tif' they select the {start}_{end} raster directory.
         source : str
-            'csv' (default): the region-wide elevation-change time series
-            (dh_01_rgi60_pergla_cumul.csv), matched to the nearest
-            available rows for `dates`. Works for any requested window,
-            but its err_dh is the marginal uncertainty of the CUMULATIVE
-            curve at one date relative to a ~2000 reference -- not the
-            uncertainty of a DIFFERENCED sub-period, which would need the
-            covariance between the two endpoints (not present in this
-            file) to get right. See _load_from_csv.
+            'csv' (default): per-glacier 20-year rates supplied by Hugonnet
+            (df_pergla_global_20yr-filled.csv). mb_mwea_err already combines
+            the dh/dt, density (850 +/- 60 kg m-3) and outline uncertainties.
 
-            'tif': a period-specific dhdt/dhdt_err raster pair (e.g.
-            Hugonnet's 2015-2020 epoch product) -- already the correct
-            rate and its uncertainty for exactly that period, no
-            differencing or covariance approximation involved. Only
-            available for a period a raster pair actually exists for.
-            See _load_from_tif.
+            'tif': a period-specific dhdt raster pair (e.g. the 2015-2020
+            epoch product), converted to m w.e. yr-1 with `density`. No
+            valid glacier-wide uncertainty yet, so sigma is NaN.
+        density : float
+            Ice density for the tif dh/dt conversion [kg m-3]
         """
-        # store input attributes
         self.name = name
         self.density = density
-        self.density_err = density_err
         self.density_water = 1000
         self.source = source
 
-        if dates != None:
+        if dates is not None:
             self.start = pd.to_datetime(dates[0])
             self.end = pd.to_datetime(dates[1])
         else:
             self.start = pd.to_datetime('2000-01-01')
             self.end = pd.to_datetime('2020-01-01')
-
-        # placeholder so matched_start/matched_end exist even if a loader
-        # ever skips setting them
-        self.matched_start = self.start
-        self.matched_end = self.end
 
         if source == 'csv':
             self._load_from_csv()
@@ -464,108 +447,46 @@ class MassBalance():
         else:
             raise ValueError(f"source must be 'csv' or 'tif', got {source!r}")
 
-        self.get_meas_uncertainty()
+        self.n_years = (self.matched_end - self.matched_start).days / 365.25
         return
 
     def _load_from_csv(self):
-        """
-        The original loader: differences two points on the region-wide
-        cumulative dh time series. See the `source` docstring on __init__
-        for what this does and does not correctly capture about the
-        resulting uncertainty.
-        """
-        rgiid = translate_rgi[self.name]['6']
+        rgiid = f'RGI60-{translate_rgi[self.name]["6"]}'
+        data_fp = base_fp + 'data/mass_balance/df_pergla_global_20yr-filled.csv'
+        df = pd.read_csv(data_fp, usecols=['rgiid', 't1', 't2', 'mb_mwea', 'mb_mwea_err'])
+        row = df[df['rgiid'] == rgiid]
+        assert len(row) == 1, f'expected one row for {rgiid} in {data_fp}, found {len(row)}'
+        row = row.iloc[0]
 
-        # File is huge so need to handle it in chunks to find the RGIId requested
-        chunk_size = 10_000  # Number of rows per chunk
-        filtered_chunks = []
+        self.matched_start = pd.to_datetime(row['t1'])
+        self.matched_end = pd.to_datetime(row['t2'])
+        assert self.start <= self.matched_start and self.end >= self.matched_end, (
+            f'run {self.start.date()} to {self.end.date()} does not cover the '
+            f'observation period {self.matched_start.date()} to {self.matched_end.date()}')
 
-        data_fp = base_fp + 'data/mass_balance/dh_01_rgi60_pergla_cumul.csv'
-        for chunk in pd.read_csv(data_fp, chunksize=chunk_size, usecols=['rgiid', 'time','dh','err_dh']):
-            # Filter rows directly as the chunk is read
-            matching_rows = chunk[chunk['rgiid'] == f'RGI60-{rgiid}']
-            filtered_chunks.append(matching_rows)
-
-        # Combine only the filtered rows into a single DataFrame
-        df = pd.concat(filtered_chunks, ignore_index=True)
-        df['time'] = pd.to_datetime(df['time'])
-
-        start_argmin = np.argmin(np.abs(df['time'] - self.start))
-        end_argmin = np.argmin(np.abs(df['time'] - self.end))
-
-        self.matched_start = df.iloc[start_argmin]['time']
-        self.matched_end = df.iloc[end_argmin]['time']
-
-        if self.matched_start != pd.to_datetime('2000-01-01'):
-            warnings.warn('\n   Uncertainty is not properly constrained for periods starting after 2000-01-01.'
-                          f'\n   This observation starts at {self.matched_start.date()}.'
-                          '\n   For a real error estimate, start the simulation earlier.',
-                          UserWarning)
-
-        start_bal = df.iloc[start_argmin]['dh']
-        end_bal = df.iloc[end_argmin]['dh']
-        balance = end_bal - start_bal
-
-        err = df.iloc[end_argmin]['err_dh']
-
-        self.meas_dh = balance
-        self.meas = balance * self.density / self.density_water
-        self.meas_err = err * self.density / self.density_water
+        self.meas = row['mb_mwea']
+        self.sigma = row['mb_mwea_err']
         return
 
     def _load_from_tif(self):
         """
-        Period-specific dh/dt [m/yr] from a raster, rather than
-        differencing the CSV time series -- see the `source` docstring on
-        __init__. Each regional tile carries its own projected (local UTM)
-        CRS, so pixel area is already uniform within a tile and a plain
-        mean over the pixels inside the glacier outline is already
-        area-weighted; no geodesic weighting needed at glacier scale.
-        Validated against the csv path for 2000-2020 (gulkana 6.5%,
-        kahiltna 12.1% relative difference in self.meas, same sign and
-        order of magnitude).
-
-        self.sigma is NOT implemented here and is set to NaN -- the
-        dhdt_err raster is a PER-PIXEL local uncertainty (dominated by
-        high-frequency DEM-differencing noise: mean ~2.4 m/yr, up to
-        11 m/yr at individual pixels for gulkana), not the uncertainty of
-        the glacier-wide MEAN. Naively averaging it the way `dhdt` is
-        averaged overstated sigma by 17-31x in testing, because it
-        applies zero variance reduction from averaging thousands of
-        pixels together. The correct reduction depends on the error
-        field's spatial correlation length (e.g. Rolstad et al. 2009:
-        SE = sigma_pixel * sqrt(5*L^2/A) for glacier area A >> L^2), which
-        this dataset's L is not currently known here. A NaN sigma fails
-        loudly (poisons any downstream arithmetic immediately) rather than
-        silently handing a calibration a wrong-but-plausible weight -- do
-        not replace it with a guessed formula; get L from the Hugonnet
-        et al. methodology first.
-
-        Looks under data/mass_balance/{start.year}_{end.year}/dhdt/
-        for the tile(s) intersecting this glacier, falling back to
-        data/mass_balance/dhdt/ directly for a period whose tiles were
-        never split into their own subfolder. self.matched_start/
-        self.matched_end are set from what the tile filename(s) actually
-        encode, not from the requested dates, exactly like the csv path,
-        and get_model_mb truncates the model to that period.
+        Period-specific dh/dt [m/yr] from a raster. The dhdt_err raster is
+        a per-pixel local uncertainty, not the uncertainty of the
+        glacier-wide mean (averaging it naively overstated sigma by 17-31x
+        in testing), so sigma is left as NaN until that is derived properly.
         """
         glac_no = translate_rgi[self.name]['6']
         outline = _load_rgi_outline(glac_no)
 
         rate, matched = self._clip_period_raster('dhdt', outline)
-
         self.matched_start, self.matched_end = matched
 
-        n_years = (self.matched_end - self.matched_start).days / 365.25
-        self.meas_dh = rate * n_years
-        self.meas_err = np.nan  # see docstring: not a valid glacier-wide error yet
-        self.meas = self.meas_dh * self.density / self.density_water
+        self.meas = rate * self.density / self.density_water
+        self.sigma = np.nan
 
         warnings.warn(
-            '\n   source=\'tif\' gives self.meas but NOT self.sigma (will be NaN) -- '
-            'the dhdt_err raster is a per-pixel local uncertainty, not the glacier-wide '
-            'mean\'s uncertainty, and averaging it naively overstated sigma by 17-31x in '
-            'testing. See _load_from_tif docstring before implementing this.',
+            "\n   source='tif' gives self.meas but NOT self.sigma (NaN). "
+            'See _load_from_tif docstring.',
             UserWarning)
         return
 
@@ -639,16 +560,11 @@ class MassBalance():
 
     def get_model_mb(self, ds):
         """
-        Grabs the glacier-wide mass balance from a model 
-        output dataset, assuming the output contains unique 
-        points on one glacier with sufficient density to 
-        represent the whole glacier.
-
-        The model is summed over matched_start to matched_end -- the
-        period the observation actually covers -- so a run spanning more
-        than the dataset does (e.g. 2000-2025 against a ~2000-2020
-        product) is truncated here rather than compared against a shorter
-        observation.
+        Average annual glacier-wide mass balance [m w.e. yr-1] from a
+        model output dataset, assuming the output contains unique points
+        on one glacier weighted by ds.weight. The model is summed over
+        matched_start to matched_end (the observation period) and divided
+        by its length, so a longer run is truncated to the observation.
         """
         model_start = pd.to_datetime(ds.time.values[0]).date()
         model_end = pd.to_datetime(ds.time.values[-1]).date()
@@ -658,34 +574,16 @@ class MassBalance():
         assert model_start_in_range and model_end_in_range, \
             f'Model run does not cover observation period (spans {model_start} to {model_end})'
 
-        ds_20 = ds.sel(time=slice(self.matched_start,
-                                  self.matched_end))
-        mb_weighted = ds_20.mass_balance.sum(dim='time') * ds_20.weight
-        self.mod = mb_weighted.sum().values
-        return
-
-    def get_meas_uncertainty(self):
-        """
-        Combines the dh/dt retrieval uncertainty (the Hugonnet dhdt_err
-        raster) and the +/-60 kg m-3 ice density conversion uncertainty
-        into a single sigma on the glacier-wide mass balance, propagated
-        in quadrature since the two error sources are independent:
-        mb = mean(dh) * density / density_water, so
-        sigma_mb^2 = (density / density_water * sigma_dh)^2
-                   + (mean(dh) / density_water * density_err)^2
-
-        """
-        sigma_meas = self.meas_err
-        sigma_density = float(self.meas_dh) * self.density_err / self.density_water
-        self.sigma = np.sqrt(sigma_meas**2 + sigma_density**2)
+        ds_obs = ds.sel(time=slice(self.matched_start, self.matched_end))
+        mb_weighted = ds_obs.mass_balance.sum(dim='time') * ds_obs.weight
+        self.mod = mb_weighted.sum().values / self.n_years
         return
 
     def log_loss(self, mod=None, meas=None, sigma=None):
         """
         Gaussian negative log-likelihood of the mass balance residual
-        [nats], assuming mod ~ N(meas, sigma^2). sigma reflects the
-        actual measurement uncertainty (dh/dt retrieval error combined
-        with the ice density conversion error), not a tuned weight.
+        [nats], assuming mod ~ N(meas, sigma^2), all in m w.e. yr-1.
+        sigma is the reported measurement uncertainty, not a tuned weight.
         """
         mod = self.mod if mod is None else mod
         meas = self.meas if meas is None else meas

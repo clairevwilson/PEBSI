@@ -30,11 +30,11 @@ import xarray as xr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance
+from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, ALBEDO_SIGMA
 from project.parameters import translate_rgi
 
 # the most recent loss_surface.py run, used when --run-dir is not given
-RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0'
+RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
 
 
 def resolve_run_dir(run_dir):
@@ -78,8 +78,6 @@ def parse_args():
             setattr(args, k, v)
     return args
 
-ALBEDO_SIGMA = 0.0777
-
 METRICS = ('albedo', 'mb', 'snow', 'melt')
 
 # only these are touched anywhere in the loop below; mass_balance/weight
@@ -116,7 +114,7 @@ def main():
         snowmelt = SnowlineMelt(g)
         mb = MassBalance(g, dates=(start, end))
         print(f'  {g:<12} MB measured {mb.meas:+.3f} +/- {mb.sigma:.3f} '
-              f'm w.e. over {mb.matched_start.date()} to '
+              f'm w.e. yr-1 over {mb.matched_start.date()} to '
               f'{mb.matched_end.date()}', flush=True)
         obs[g] = dict(albedo=albedo, snowmelt=snowmelt, mb=mb)
 
@@ -195,7 +193,7 @@ def main():
             # points, and truncated to the period the observation covers
             # (pre-reduced above, since mass_balance's own 2000-2020 span
             # is far wider than what albedo/snow need)
-            o['mb'].mod = float(combo_mb_weighted[gmask].sum())
+            o['mb'].mod = float(combo_mb_weighted[gmask].sum()) / o['mb'].n_years
             mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
 
             vals = dict(albedo=a_loss, snow=s_loss, melt=m_loss, mb=mb_loss)

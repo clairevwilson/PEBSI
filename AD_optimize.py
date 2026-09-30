@@ -66,7 +66,7 @@ import xarray as xr
 import yaml
 from pyproj import Transformer
 
-from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, translate_rgi
+from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, translate_rgi, ALBEDO_SIGMA
 from project.parameters import host, HOST_PATHS, GLACIERS, baseline, BASE_CONFIG
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,6 @@ CHUNK_DAYS = 365
 STORE_VARS = ('mass_balance', 'albedo', 'total_water', 'snowdepth')
 
 # observation uncertainty
-ALBEDO_SIGMA = 0.07770
 BERNOULLI_EPS = 1e-3
 
 # threshold for model output to consider snow=True and melt=True
@@ -314,7 +313,7 @@ def build_observations(model, model_days):
     n_points = len(lon)
 
     obs = {'albedo': [], 'snow': [], 'melt': [],
-           'mb_meas': [], 'mb_sigma': [], 'mb_end_day': [], 'point_idx': []}
+           'mb_meas': [], 'mb_sigma': [], 'mb_years': [], 'mb_end_day': [], 'point_idx': []}
 
     # year axis the March baselines live on, one entry per calendar year the
     # run touches. Observations are matched onto model days first, so their
@@ -339,6 +338,7 @@ def build_observations(model, model_days):
         mb = MassBalance(name, dates=(START_DATE, END_DATE))
         obs['mb_meas'].append(float(mb.meas))
         obs['mb_sigma'].append(float(mb.sigma))
+        obs['mb_years'].append(mb.n_years)
 
         mb_end_day = int(model_days.get_indexer([mb.matched_end], method='nearest')[0])
         obs['mb_end_day'].append(mb_end_day)
@@ -350,7 +350,7 @@ def build_observations(model, model_days):
         n_sar = 0 if snow is None else len(snow[0])
         print(f'  {name:<12} {len(point_idx):>5} points  '
               f'{n_alb:>5} albedo scenes  {n_sar:>5} SAR scenes  '
-              f'MB {mb.meas:+.2f} +/- {mb.sigma:.2f} m w.e.{mb_note}', flush=True)
+              f'MB {mb.meas:+.2f} +/- {mb.sigma:.2f} m w.e. yr-1{mb_note}', flush=True)
 
     return obs
 
@@ -632,6 +632,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
 
     mb_meas = jnp.asarray(obs['mb_meas'])
     mb_sigma = jnp.asarray(obs['mb_sigma'])
+    mb_years = jnp.asarray(obs['mb_years'])
     count = {k: jnp.asarray(v, dtype=jnp.float64) for k, v in counts.items()}
 
     # fields to be checked directly for non-finite values anywhere
@@ -754,7 +755,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
         snow = per_obs(acc['snow_nll'], count['snow'])
         melt = per_obs(acc['melt_nll'], count['melt'])
 
-        mb_mod = member @ acc['mb']
+        mb_mod = member @ acc['mb'] / mb_years
         mb = (0.5 * jnp.log(2 * jnp.pi * mb_sigma ** 2)
               + (mb_mod - mb_meas) ** 2 / (2 * mb_sigma ** 2))
 
