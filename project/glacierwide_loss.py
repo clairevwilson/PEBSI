@@ -281,23 +281,26 @@ class Albedo():
         # plt.savefig('../figs/new_albedo_agreement.png', dpi=300)
         plt.show()
 
-class SnowlineMelt():
-    def __init__(self, name, direction=None):
+class Wet():
+    def __init__(self, name, direction=None, water_threshold=0.03):
         """
-        Loads the snow / melting preprocessed 2D dataset.
+        Loads the SAR wet extent preprocessed 2D dataset.
 
         Parameters
         ----------
-        name : glacier common name 
+        name : glacier common name
         direction : ascending, descending, or None for both
+        water_threshold : model total water [m w.e.] above which
+                          the surface is considered wet (seen by SAR)
         """
         self.name = name
         self.direction = direction
+        self.water_threshold = water_threshold
 
         # find rgi7 glacier number
         rgi7id = translate_rgi[name]['7']
         folder = base_fp + 'data/sar/sar_cubes/'
-        fn = folder + f'{rgi7id}_snow_melting_cube.nc'
+        fn = folder + f'{rgi7id}_wet_extent.nc'
 
         # load dataset
         ds = xr.open_dataset(fn)
@@ -308,81 +311,48 @@ class SnowlineMelt():
         self.dem = ds['dem']
         self.glacier_mask = ds['glacier_mask']
 
-        # per-pixel snow/melt masks are already gridded, use them directly;
+        # per-pixel wet mask is already gridded, use it directly;
         # kept as float (1/0) so missing retrievals stay NaN
-        self.ds_meas_snow = ds['is_snow'].astype(float)
-        self.ds_meas_melt = ds['is_melting'].astype(float)
+        self.ds_meas_wet = ds['is_wet'].astype(float)
         return
 
-    def get_model_snow(self, model_ds):
-        if 'layerheight' in model_ds.variables:
-            daily_snow_depth = (model_ds['layerheight']
-                                .where(model_ds['layertype'] < 2)
-                                .sum(dim='layer')
-                                .resample(time='1d').min())
-            mod_snow = daily_snow_depth > 0.05
-        elif 'surftype' in model_ds.variables:
-            mod_snow = model_ds['surftype'].resample(time='1d').max() == 0 
-
-        if 'layerwater' in model_ds.variables:
-            daily_layer_water = model_ds['layerwater'].sum(dim='layer').resample(time='1d').min()
-            mod_melt = daily_layer_water > 0.05
-        elif 'total_water' in model_ds.variables:
-            mod_melt = model_ds['total_water'].resample(time='1d').min() > 0.05
-        elif 'lwc' in model_ds.variables:
-            mod_melt = model_ds['lwc'].resample(time='1d').min() > 0.05
-        elif 'surftemp' in model_ds.variables:
-            mod_melt = model_ds['surftemp'].resample(time='1d').min() == 0.0
+    def get_model_wet(self, model_ds):
+        # total_water is in kg m-2, threshold is in m w.e.
+        mod_wet = model_ds['total_water'].resample(time='1d').min() > self.water_threshold * 1000
 
         # select the measured boolean grid at each simulation point
         proj = Transformer.from_crs('EPSG:4326', self.crs, always_xy=True)
         x, y = proj.transform(model_ds.lon.values, model_ds.lat.values)
-
-        meas_snow = self.ds_meas_snow.sel(
-            x=xr.DataArray(x, dims='point'), y=xr.DataArray(y, dims='point'), method='nearest')
-        meas_melt = self.ds_meas_melt.sel(
+        meas_wet = self.ds_meas_wet.sel(
             x=xr.DataArray(x, dims='point'), y=xr.DataArray(y, dims='point'), method='nearest')
 
         # keep only measurement times inside the model's time range
-        start = max(mod_snow.time.values[0], meas_snow.time.values[0])
-        end = min(mod_snow.time.values[-1], meas_snow.time.values[-1])
-        meas_snow = meas_snow.sel(time=slice(start, end))
-        meas_melt = meas_melt.sel(time=slice(start, end))
+        start = max(mod_wet.time.values[0], meas_wet.time.values[0])
+        end = min(mod_wet.time.values[-1], meas_wet.time.values[-1])
+        meas_wet = meas_wet.sel(time=slice(start, end))
 
         # measurement times are sparse and irregular, so match each one to
         # its nearest model timestep instead of slicing on a shared range
         tolerance = pd.Timedelta('12h')
-        mod_snow_matched = mod_snow.reindex(time=meas_snow.time, method='nearest', tolerance=tolerance)
-        mod_melt_matched = mod_melt.reindex(time=meas_melt.time, method='nearest', tolerance=tolerance)
+        mod_wet_matched = mod_wet.reindex(time=meas_wet.time, method='nearest', tolerance=tolerance)
 
         # drop measurement times with no model timestep close enough to match
-        valid_snow = mod_snow_matched.notnull().all(dim='point')
-        valid_melt = mod_melt_matched.notnull().all(dim='point')
+        valid = mod_wet_matched.notnull().all(dim='point')
 
-        self.mod_snow = mod_snow_matched.sel(time=valid_snow).values.astype(bool)
-        self.meas_snow = meas_snow.sel(time=valid_snow).values
-        self.mod_melt = mod_melt_matched.sel(time=valid_melt).values.astype(bool)
-        self.meas_melt = meas_melt.sel(time=valid_melt).values
-        self.time = meas_snow.sel(time=valid_snow).time.values
+        self.mod_wet = mod_wet_matched.sel(time=valid).values.astype(bool)
+        self.meas_wet = meas_wet.sel(time=valid).values
+        self.time = meas_wet.sel(time=valid).time.values
 
-        assert self.mod_snow.shape == self.meas_snow.shape
-        assert self.mod_melt.shape == self.meas_melt.shape
+        assert self.mod_wet.shape == self.meas_wet.shape
         return
 
-    def bernoulli_loss(self, mod_snow=None, meas_snow=None, mod_melt=None, meas_melt=None, eps=1e-3):
-        def bce(mod, meas):
-            p = np.clip(np.asarray(mod, dtype=float), eps, 1 - eps)
-            y = np.asarray(meas, dtype=float)
-            return -np.nanmean(y * np.log(p) + (1 - y) * np.log(1 - p))
+    def bernoulli_loss(self, mod_wet=None, meas_wet=None, eps=1e-3):
+        mod_wet = self.mod_wet if mod_wet is None else mod_wet
+        meas_wet = self.meas_wet if meas_wet is None else meas_wet
 
-        mod_snow = self.mod_snow if mod_snow is None else mod_snow
-        meas_snow = self.meas_snow if meas_snow is None else meas_snow
-        mod_melt = self.mod_melt if mod_melt is None else mod_melt
-        meas_melt = self.meas_melt if meas_melt is None else meas_melt
-
-        snow_loss = bce(mod_snow, meas_snow)
-        melt_loss = bce(mod_melt, meas_melt)
-        return snow_loss, melt_loss
+        p = np.clip(np.asarray(mod_wet, dtype=float), eps, 1 - eps)
+        y = np.asarray(meas_wet, dtype=float)
+        return -np.nanmean(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 def _load_rgi_outline(glac_no):
     """
