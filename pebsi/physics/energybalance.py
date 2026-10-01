@@ -255,14 +255,19 @@ class EnergyBalanceDriver():
         slope = jnp.deg2rad(point_attrs.slope)
         surftemp = state.surftemp
         z0 = state.roughness  # Roughness length for momentum
-        z0t = z0/100          # Roughness length for heat
-        z0q = z0/10           # Roughness length for moisture
 
         # adjust wind speed to reference height
         z = 2 # reference height in m
         wind_2m = forcings.wind * jnp.where(
             WIND_REF_Z == 2, 1.0, jnp.log(2/z0) / jnp.log(WIND_REF_Z/z0)
         )
+
+        # roughness lengths for heat and moisture
+        if params.method_scalar_roughness == 'Andreas':
+            z0t, z0q = self.scalar_roughness_andreas(z0, wind_2m, z)
+        else:
+            z0t = z0/100
+            z0q = z0/10
 
         # transform humidity into mixing ratio (q) 
         Ewz = self.sat_vapor_pressure(forcings.temp)  # saturation vapor pressure at 2m
@@ -290,13 +295,13 @@ class EnergyBalanceDriver():
         csT = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0t))
         csQ = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0q))
 
-        # Psi stability factor (Beljaars & Holtslag)
+        # Psi stability factor: stable (1-5Ri)^2 shuts off turbulence at the critical Ri of 0.2 (Braithwaite 1995)
         ri_unstable = jnp.minimum(RICHARDSON, 0.0)
-        ri_stable = jnp.maximum(RICHARDSON, 0.0)
+        ri_stable = jnp.minimum(jnp.maximum(RICHARDSON, 0.0), 0.2)
         psi = jnp.where(
             RICHARDSON <= 0.0,
             jnp.sqrt(1.0 - 15.0 * ri_unstable),
-            jnp.exp(-5.0 * ri_stable)
+            (1.0 - 5.0 * ri_stable) ** 2
         )
         
         # final flux calculation
@@ -305,6 +310,28 @@ class EnergyBalanceDriver():
 
         return Qs, Ql
     
+    def scalar_roughness_andreas(self, z0, wind, z):
+        """
+        Calculates roughness lengths for heat and moisture
+        using the surface renewal model (Andreas 1987).
+        """
+        params = self.params
+        ustar = params.karman * wind / jnp.log(z / z0)
+        reynolds = jnp.clip(ustar * z0 / params.kinematic_viscosity_air, 1e-3, 1000.0)
+        ln_re = jnp.log(reynolds)
+
+        # (b0, b1, b2) for the smooth, transitional and rough regimes
+        smooth = reynolds <= 0.135
+        rough = reynolds >= 2.5
+        def ln_ratio(b_smooth, b_trans, b_rough):
+            coeffs = [jnp.where(smooth, bs, jnp.where(rough, br, bt))
+                      for bs, bt, br in zip(b_smooth, b_trans, b_rough)]
+            return coeffs[0] + coeffs[1] * ln_re + coeffs[2] * ln_re ** 2
+
+        z0t = z0 * jnp.exp(ln_ratio((1.250, 0.0, 0.0), (0.149, -0.550, 0.0), (0.317, -0.565, -0.183)))
+        z0q = z0 * jnp.exp(ln_ratio((1.610, 0.0, 0.0), (0.351, -0.628, 0.0), (0.396, -0.512, -0.180)))
+        return z0t, z0q
+
     def sat_vapor_pressure(self, airtemp, method='ARM'):
         """
         Calculates saturation vapor pressure [Pa] 

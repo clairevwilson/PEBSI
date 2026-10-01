@@ -144,7 +144,7 @@ class MassBalanceDriver:
         new_grainsize = self.evolve_grain_size(state, forcings)
 
         # update age (in days)
-        new_age = state.lage + self.params.dt / self.params.daily_dt
+        new_age = state.lage + is_day_start[:, None].astype(jnp.int32)
 
         # update surface type 
         new_surftype = state.ltype[:, 0]

@@ -40,6 +40,7 @@ static_fields = [
     'method_turbulent', 'method_stability', 'method_diffuse',
     'method_heateq', 'method_densification', 'method_cooling',
     'method_ground', 'method_conductivity',
+    'method_scalar_roughness',
 
     'option_SWpen', 'option_accel_grains',
     'option_uniform_ice', 'option_uniform_snow',
