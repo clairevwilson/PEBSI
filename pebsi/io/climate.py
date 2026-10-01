@@ -3,7 +3,7 @@ Climate class for PEBSI
 
 Loads the climate dataset and processes it
 for the simulation, including:
-- Bias correction (i.e., quantile mapping)
+- Bias correction (i.e., quantile delta mapping)
 - Elevation adjustments
 - Spatial adjustments (e.g., precipitation factor)
 - Perturbations (e.g., additive temperature factor)
@@ -19,6 +19,11 @@ import numpy as np
 import xarray as xr
 # Internal libraries
 from pebsi.config import ConfigError
+
+# quantile delta mapping applies the station bias at each quantile additively
+# for unbounded variables and multiplicatively for positive ones
+QM_DELTA = {'temp': 'add', 'LWin': 'add', 'rh': 'add',
+            'sp': 'mult', 'wind': 'mult', 'SWin': 'mult'}
 
 class Climate():
     """
@@ -327,7 +332,7 @@ class Climate():
         by the model.
 
         - Calculates wind speed and direction vectors from u and v
-        - Corrects biases using quantile mapping
+        - Corrects biases using quantile delta mapping
         - Adjusts elevation-dependent variables
         - Validates that all variables are filled
         """
@@ -366,13 +371,12 @@ class Climate():
         if not hasattr(self, 'temp_elev'):
             self.temp_elev = self.terrain.gcm_elev_n  # (N_UNIQUE,)
 
-        # ensure sp_elev and LWin_elev are set: AWS elevation if measured, else GCM elevation
-        if not hasattr(self, 'aws_elev'):
-            self.sp_elev = self.terrain.gcm_elev_n
-            self.LWin_elev = self.terrain.gcm_elev_n
-        else:
-            self.sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
-            self.LWin_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
+        # ensure sp_elev and LWin_elev are set: set by bias correction, AWS elevation if measured, else GCM elevation
+        aws_elev = getattr(self, 'aws_elev', None)
+        if not hasattr(self, 'sp_elev'):
+            self.sp_elev = aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
+        if not hasattr(self, 'LWin_elev'):
+            self.LWin_elev = aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
 
         # NOTE: apply_parameters (kp, wind_factor, dust_factor) and
         # adjust_to_elevation are applied per-point inside the JAX
@@ -717,56 +721,85 @@ class Climate():
         self.LWin = new_LWin
         return
     
-    def bias_correct_qm(self,var):
+    def bias_correct_qm(self, var):
         """
-        Applies preprocessed quantile mapping to
+        Applies preprocessed quantile delta mapping to
         reanalysis climate data for a single variable.
         """
-        # open the dataset for this group
         ds = xr.open_dataset(self.params.bias_fn, group=var)
-
-        # load lats/lons from quantile mapping data and unique MERRA-2 cells
-        data_lat = ds.lat.values[None, :]
-        glacier_lat = self.unique_lats[:, None]
-        data_lon = ds.lon.values[None, :]
-        glacier_lon = self.unique_lons[:, None]
-
-        # find nearest station to each unique cell
-        coslat = np.cos(np.deg2rad(glacier_lat))
-        dist = ((data_lat - glacier_lat))**2 + ((data_lon - glacier_lon) * coslat)**2
-        station_idx = dist.argmin(axis=1)          # (N_UNIQUE,) which station each cell uses
-
-        # load data
-        to_correct = getattr(self, var)
-        corrected = np.empty_like(to_correct, dtype=float)
-
-        # storage for elevation (needed for temp)
-        temp_elev = np.empty(self.N_UNIQUE)
-
-        # load CDF from the pre-processed quantile mapping data
+        quantiles = ds['quantile'].values
         merra_cdf = ds.merra_cdf.values     # (N_STATIONS, N_QUANTILES)
         aws_cdf = ds.aws_cdf.values         # (N_STATIONS, N_QUANTILES)
-        elevation = ds.elevation.values     # (N_STATIONS, )
+        station_elev = ds.elevation.values  # (N_STATIONS, )
 
-        # loop through unique stations
-        for s in np.unique(station_idx):
-            m = station_idx == s
-            corrected[m] = np.interp(to_correct[m], merra_cdf[s], aws_cdf[s])
-            temp_elev[m] = elevation[s]
+        # find nearest station to each unique cell
+        coslat = np.cos(np.deg2rad(self.unique_lats[:, None]))
+        dist = (ds.lat.values[None, :] - self.unique_lats[:, None])**2 + \
+               ((ds.lon.values[None, :] - self.unique_lons[:, None]) * coslat)**2
+        station_idx = dist.argmin(axis=1)   # (N_UNIQUE,)
 
-            # make sure zeros stay as zeros in shortwave radiation
-            if var == 'SWin':
-                corrected[m] = np.wnere(to_correct[m] < 5, 0, corrected[m])
+        # MERRA-2 cell each station was trained on, and its elevation
+        z_fp = self.GCM_fp + self.var_dict['elev']['fn']
+        with xr.open_dataarray(z_fp) as zds:
+            train = zds.sel({self.lat_vn: xr.DataArray(ds.lat.values, dims='station'),
+                             self.lon_vn: xr.DataArray(ds.lon.values, dims='station')},
+                            method='nearest')
+            train_lats = train[self.lat_vn].values
+            train_lons = train[self.lon_vn].values
+            train_elev = self.check_units('elev', train).isel(time=0).values
+        is_train = (self.unique_lats == train_lats[station_idx]) & \
+                   (self.unique_lons == train_lons[station_idx])
 
+        # quantile of each value within its own cell's climatology
+        cell_cdf = merra_cdf[station_idx].copy()
+        if not np.all(is_train):
+            cell_cdf[~is_train] = self.climatology_cdf(var, np.where(~is_train)[0], quantiles)
+
+        to_correct = getattr(self, var)
+        corrected = to_correct.astype(float).copy()
+        for c, s in enumerate(station_idx):
+            x = to_correct[c]
+            # SWin CDFs only hold daytime values, so night stays untouched
+            m = x > 100 if var == 'SWin' else np.ones_like(x, dtype=bool)
+            q = np.interp(x[m], cell_cdf[c], quantiles)
+            aws_q = np.interp(q, quantiles, aws_cdf[s])
+            merra_q = np.interp(q, quantiles, merra_cdf[s])
+            if QM_DELTA[var] == 'add':
+                corrected[c, m] = x[m] + aws_q - merra_q
+            else:
+                ratio = np.where(merra_q > 1e-3 * merra_cdf[s, -1], aws_q / np.maximum(merra_q, 1e-10), 1.0)
+                corrected[c, m] = x[m] * ratio
+        if var == 'rh':
+            corrected = np.clip(corrected, 0, 100)
+
+        # corrected values sit at the station's elevation offset from its training cell
+        ref_elev = self.terrain.gcm_elev_n + (station_elev - train_elev)[station_idx]
         if var == 'temp':
-            self.temp_elev = temp_elev
+            self.temp_elev = ref_elev
+        elif var == 'sp':
+            self.sp_elev = ref_elev
+        elif var == 'LWin':
+            self.LWin_elev = ref_elev
 
-        # update values
         setattr(self, var, corrected)
-
         ds.close()
         return
-    
+
+    def climatology_cdf(self, var, cells, quantiles):
+        """
+        Loads the preprocessed CDF of a variable
+        at the given unique cells.
+        """
+        region = 'reg' + str(self.params.rgi_region).zfill(2)
+        fn = self.params.climate_fp + self.params.bias_cell_fn.format(r=region)
+        with xr.open_dataset(fn, group=var) as ds:
+            assert np.allclose(ds['quantile'].values, quantiles), \
+                f'{fn} quantiles do not match {self.params.bias_fn}'
+            cdf = ds.cdf.sel({self.lat_vn: xr.DataArray(self.unique_lats[cells], dims='cell'),
+                              self.lon_vn: xr.DataArray(self.unique_lons[cells], dims='cell')},
+                             method='nearest')
+            return cdf.transpose('cell', 'quantile').values
+
     def create_rh2m_ds(self, fn):
         """
         Calculates 2-m relative humidity in % from

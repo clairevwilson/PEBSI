@@ -57,6 +57,12 @@ GLACIERS = ['gulkana', 'kahiltna', 'kennicott', 'wolverine', 'lemon_creek']
 # the point-density rule and other sanity checks were run at
 baseline = {'kp': 2.5, 'wind_factor': 2.5}
 
+# AWS/MERRA-2 ratio of mean wind speed from the wind CDFs in
+# data/quantile_cdfs.nc; lemon_creek has no wind station, so it takes the
+# median across all five stations
+wind_factor_aws = {'gulkana': 1.56, 'kahiltna': 1.72, 'kennicott': 1.23,
+                   'wolverine': 2.85, 'lemon_creek': 1.72}
+
 # physics settings shared with the distributed reference run (config.yaml).
 # Anything that builds a config to run PEBSI on these glaciers starts from
 # this rather than repeating the physics options by hand.
