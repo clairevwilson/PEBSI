@@ -1,5 +1,5 @@
 """
-Plots the (kp, wind_factor) log-loss surfaces as a 2x2 heatmap figure
+Plots the (kp, wind_factor) log-loss surfaces as a row of heatmaps
 per glacier.
 
 Reads only the .npz that compute_loss_surface.py writes, so this reruns
@@ -24,8 +24,7 @@ import matplotlib.pyplot as plt
 ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
 
-PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'),
-          ('snow', 'Snow extent'), ('melt', 'Melt extent')]
+PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'), ('wet', 'Wet extent')]
 
 
 def parse_args():
@@ -40,7 +39,7 @@ def parse_args():
 
 
 def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
-    fig, axes = plt.subplots(2, 2, figsize=(8, 7), gridspec_kw={'hspace': 0.3, 'wspace': 0.3})
+    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), gridspec_kw={'wspace': 0.3})
     extent = [kp_values[0] - 0.25, kp_values[-1] + 0.25,
               wf_values[0] - 0.25, wf_values[-1] + 0.25]
 

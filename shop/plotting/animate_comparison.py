@@ -27,10 +27,10 @@ from shapely.geometry import Polygon
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from project.glacierwide_loss import Albedo, SnowlineMelt, _load_rgi_outline
+from project.glacierwide_loss import Albedo, Wet, _load_rgi_outline
 from project.parameters import translate_rgi
 
-VARIABLE = 'albedo'  # 'albedo', 'snow', or 'melt'
+VARIABLE = 'albedo'  # 'albedo' or 'wet'
 GLACIER = 'gulkana'
 YEAR = 2021
 RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
@@ -38,7 +38,7 @@ RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
 # pick the combination with the lowest summed loss for this glacier
 grid = np.load(RUN_DIR + 'loss_surface_grid.npz', allow_pickle=True)
 loss = np.load(RUN_DIR + 'loss_surface_losses.npz', allow_pickle=True)
-total = sum(loss[f'{GLACIER}_{k}'] for k in ['albedo', 'mb', 'snow', 'melt'])
+total = sum(loss[k] for k in loss.files if k.startswith(f'{GLACIER}_'))
 i, j = np.unravel_index(np.nanargmin(total), total.shape)
 kp, wf = loss['kp'][i], loss['wind_factor'][j]
 c = i * len(loss['wind_factor']) + j
@@ -54,8 +54,8 @@ if VARIABLE == 'albedo':
     obs = Albedo(GLACIER, use='s2')
     obs_time = obs.ds_meas.time.values
 else:
-    obs = SnowlineMelt(GLACIER)
-    obs_time = obs.ds_meas_snow.time.values
+    obs = Wet(GLACIER)
+    obs_time = obs.ds_meas_wet.time.values
 
 obs_years = np.unique(pd.DatetimeIndex(obs_time).year)
 if YEAR not in obs_years:
@@ -63,7 +63,7 @@ if YEAR not in obs_years:
                      f'years with observations: {obs_years.tolist()}')
 
 pad = np.timedelta64(5, 'D')
-sub = (block[['lon', 'lat', 'albedo', 'surftype', 'total_water']]
+sub = (block[['lon', 'lat', 'albedo', 'total_water']]
        .isel(point=gmask)
        .sel(time=slice(obs_time.min() - pad, obs_time.max() + pad))
        .load())
@@ -76,18 +76,12 @@ if VARIABLE == 'albedo':
     dates = obs.ds_meas_matched.time.values
     cmap, vmin, vmax = 'Reds_r', -0.5, 0
     label = 'albedo change from March'
-elif VARIABLE == 'snow':
-    obs.get_model_snow(sub)
-    meas, mod = obs.meas_snow, obs.mod_snow
-    dates = obs.time
-    cmap, vmin, vmax = 'Greys_r', 0, 1
-    label = 'snow covered'
-elif VARIABLE == 'melt':
-    obs.get_model_snow(sub)
-    meas, mod = obs.meas_melt, obs.mod_melt
+elif VARIABLE == 'wet':
+    obs.get_model_wet(sub)
+    meas, mod = obs.meas_wet, obs.mod_wet
     dates = obs.time
     cmap, vmin, vmax = 'Blues', 0, 1
-    label = 'melting'
+    label = 'wet'
 
 # the whole record is matched first so albedo's March reference is the same
 # one the loss uses, then only this year's dates are kept
@@ -126,7 +120,7 @@ height = np.ceil((4.5 * (ymax - ymin) / (xmax - xmin) + 0.6) * 4) / 4
 fig, axes = plt.subplots(1, 2, figsize=(10, height), dpi=100,
                          sharex=True, sharey=True, layout='compressed')
 cells = []
-name = {'albedo': 'albedo', 'snow': 'snow cover', 'melt': 'melt'}[VARIABLE]
+name = {'albedo': 'albedo', 'wet': 'wet extent'}[VARIABLE]
 for ax, data, source in zip(axes, [meas, mod], ['Measured', 'Modeled']):
     cell = PathCollection(paths, cmap=cmap, edgecolors='none')
     cell.set_clim(vmin, vmax)

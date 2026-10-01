@@ -143,22 +143,21 @@ def plot_glacier(glacier):
     # ===================== ERROR =====================
     ab = Albedo(glacier)
     mb = MassBalance(glacier, dates=(start, end))
-    sm = SnowlineMelt(glacier)
+    wet = Wet(glacier)
 
     ab.get_model_albedo(ds)
     ab.get_deltas()
     mb.get_model_mb(ds)
-    sm.get_model_snow(ds)
+    wet.get_model_wet(ds)
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
         albedo_residual = ab.mod - ab.meas
         albedo_pts = weighted_pts(0.5 * np.log(2 * np.pi * ALBEDO_SIGMA**2)
                                   + albedo_residual**2 / (2 * ALBEDO_SIGMA**2))
-        snow_pts = weighted_pts(bce(sm.mod_snow, sm.meas_snow))
-        melt_pts = weighted_pts(bce(sm.mod_melt, sm.meas_melt))
+        wet_pts = weighted_pts(bce(wet.mod_wet, wet.meas_wet))
 
-    point_losses = {'snow': snow_pts, 'melt': melt_pts, 'albedo': albedo_pts}
+    point_losses = {'wet': wet_pts, 'albedo': albedo_pts}
 
     # ===================== VORONOI CELLS =====================
     pts = np.column_stack([xs, ys])
@@ -182,22 +181,22 @@ def plot_glacier(glacier):
     bx1, by1 = bx1 + spacing_m, by1 + spacing_m
 
     # ===================== PLOT =====================
-    error_labels = {'snow': 'Snowline', 'melt': 'Melt extent', 'albedo': 'Albedo'}
+    error_labels = {'wet': 'Wet extent', 'albedo': 'Albedo'}
     cm = 'magma_r'
 
-    # size the figure to the glacier's own aspect ratio (4 map/bar cells
-    # in a single row tile to 4x the aspect ratio of one cell): derive
+    # size the figure to the glacier's own aspect ratio (3 map/bar cells
+    # in a single row tile to 3x the aspect ratio of one cell): derive
     # both dimensions from that ratio, capped at 10in wide, with a
     # legibility floor on height for glaciers wide enough that 10in
     # would flatten it
     aspect = (bx1 - bx0) / (by1 - by0)
     max_w, min_h = 10, 3.0
-    fig_h = max(min_h, max_w / (4 * aspect))
-    fig_w = min(max_w, 4 * aspect * fig_h)
+    fig_h = max(min_h, max_w / (3 * aspect))
+    fig_w = min(max_w, 3 * aspect * fig_h)
 
-    fig, axes = plt.subplots(1, 4, figsize=(fig_w, fig_h), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(fig_w, fig_h), constrained_layout=True)
 
-    map_axes = axes[:3]
+    map_axes = axes[:2]
     for ax in map_axes[1:]:
         ax.sharex(map_axes[0])
         ax.sharey(map_axes[0])
@@ -206,11 +205,11 @@ def plot_glacier(glacier):
         glacier_outline.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
         ax.set_aspect('equal')
     map_axes[0].set_ylabel('Northing [m]')
-    map_axes[1].set_xlabel('Easting [m]')
+    map_axes[0].set_xlabel('Easting [m]')
     for ax in map_axes[1:]:
         ax.tick_params(labelleft=False)
 
-    for ax, var in zip(map_axes, ['snow', 'melt', 'albedo']):
+    for ax, var in zip(map_axes, ['wet', 'albedo']):
         vals = point_losses[var]
         vmin, vmax = np.nanpercentile(vals, [2, 98])
 
@@ -233,12 +232,12 @@ def plot_glacier(glacier):
 
     ab_loss = ab.log_loss()
     mb_loss = mb.log_loss()
-    snow_loss, melt_loss = sm.bernoulli_loss()
-    losses = [mb_loss, ab_loss, snow_loss, melt_loss]
+    wet_loss = wet.bernoulli_loss()
+    losses = [mb_loss, ab_loss, wet_loss]
 
     axes[-1].bar(range(len(losses)), losses)
     axes[-1].set_xticks(range(len(losses)))
-    axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Snowline', 'Melt extent'], rotation=20, ha='right')
+    axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Wet extent'], rotation=20, ha='right')
     axes[-1].set_ylabel('log loss [nats]')
 
     fig.suptitle(f'{glacier}: distributed error at best combo '

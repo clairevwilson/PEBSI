@@ -7,12 +7,11 @@ This is the distributed successor to the point-scale jax_optimize.py.
 The domain is the adaptive point mesh (method_distribute='adaptive'),
 so every glacier is represented by an area-scaled cloud of points
 rather than a handful of named benchmark sites, and the objective is
-built from the four glacier-wide error metrics in
+built from the three glacier-wide error metrics in
 project/glacierwide_loss.py:
 
   - remotely sensed albedo         (Gaussian NLL on the residuals)
-  - SAR snow extent                (Bernoulli log-loss)
-  - SAR melt extent                (Bernoulli log-loss)
+  - SAR wet extent                 (Bernoulli log-loss)
   - Hugonnet glacier-wide balance  (Gaussian NLL on the run's cumulative total)
 
 Every glacier keeps its own (kp, wind_factor) pair and its own losses;
@@ -32,12 +31,11 @@ point-scale version did not need:
      is set by the chunk length rather than the run length -- at ~1600
      points a 172-day chunk holds roughly 1.3 GB of state.
 
-  2. Softened snow/melt indicators. The observed quantities are binary
-     masks, and the model's own snow/melt tests are step functions with
-     no useful gradient. Both are replaced by a logistic on the
-     underlying continuous field (snow + firn depth; column liquid
-     water), which reduces to the hard threshold as the width goes to
-     zero.
+  2. Softened wet indicator. The observed quantity is a binary mask,
+     and the model's own wet test is a step function with no useful
+     gradient. It is replaced by a logistic on the underlying continuous
+     field (column liquid water), which reduces to the hard threshold as
+     the width goes to zero.
 """
 import os
 import sys
@@ -66,7 +64,7 @@ import xarray as xr
 import yaml
 from pyproj import Transformer
 
-from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, translate_rgi, ALBEDO_SIGMA
+from project.glacierwide_loss import Albedo, Wet, MassBalance, translate_rgi, ALBEDO_SIGMA
 from project.parameters import host, HOST_PATHS, GLACIERS, baseline, BASE_CONFIG
 
 # ---------------------------------------------------------------------------
@@ -80,20 +78,18 @@ END_DATE = '2025-01-01 23:00'
 # on a 32 GB card: 1 year ~ 10 GB total, 3 years ~ 17 GB, 5 years ~ 24 GB
 CHUNK_DAYS = 365
 
-# only these are needed by the four metrics; every extra field is carried
+# only these are needed by the three metrics; every extra field is carried
 # through the whole differentiated graph, so the list is kept minimal
-STORE_VARS = ('mass_balance', 'albedo', 'total_water', 'snowdepth')
+STORE_VARS = ('mass_balance', 'albedo', 'total_water')
 
 # observation uncertainty
 BERNOULLI_EPS = 1e-3
 
-# threshold for model output to consider snow=True and melt=True
-SNOW_DEPTH_THRESHOLD = 0.05
-MELT_WATER_THRESHOLD = 0.05
+# total water [m w.e.] above which the model surface is considered wet
+WET_WATER_THRESHOLD = 0.03
 
-# width of logistic function used to smooth snow/melt thresholds
-SNOW_DEPTH_WIDTH = 0.02
-MELT_WATER_WIDTH = 0.02
+# width [m w.e.] of logistic function used to smooth the wet threshold
+WET_WATER_WIDTH = 0.005
 
 # months of the year the albedo product is scored over
 ALBEDO_MONTHS = list(range(3, 10))
@@ -274,32 +270,28 @@ def _albedo_entry(name, lon, lat, point_idx, model_days, n_points,
     return day_idx, values, year_idx
 
 
-def load_snow_melt_obs(name, lon, lat, point_idx, model_days, n_points, direction=None):
+def load_wet_obs(name, lon, lat, point_idx, model_days, n_points, direction=None):
     """
-    SAR snow and melt extent masks, sampled at each point and matched to
-    the nearest model day, following SnowlineMelt.get_model_snow. Returns
-    (None, None) if this glacier has no SAR cube, so a missing product
-    simply drops those two terms from that glacier's objective.
+    SAR wet extent mask, sampled at each point and matched to the nearest
+    model day, following Wet.get_model_wet. Returns None if this glacier
+    has no SAR cube, so a missing product simply drops the wet term from
+    that glacier's objective.
     """
     try:
-        sm = SnowlineMelt(name, direction=direction)
+        wet = Wet(name, direction=direction)
     except (FileNotFoundError, OSError) as err:
         print(f'  ! no SAR cube for {name} ({err}); '
-              'snow and melt terms dropped for this glacier', flush=True)
-        return None, None
+              'wet term dropped for this glacier', flush=True)
+        return None
 
-    x, y = _to_grid_xy(sm.crs, lon[point_idx], lat[point_idx])
+    x, y = _to_grid_xy(wet.crs, lon[point_idx], lat[point_idx])
     sel = dict(x=xr.DataArray(x, dims='point'),
                y=xr.DataArray(y, dims='point'), method='nearest')
-    meas_snow = sm.ds_meas_snow.sel(**sel)
-    meas_melt = sm.ds_meas_melt.sel(**sel)
+    meas = wet.ds_meas_wet.sel(**sel)
 
-    out = []
-    for meas in (meas_snow, meas_melt):
-        day_idx, keep = _match_times(meas.time.values, model_days)
-        values = meas.transpose('time', 'point').values[keep].astype(np.float32)
-        out.append((day_idx, _scatter_to_points(values, point_idx, n_points)))
-    return out[0], out[1]
+    day_idx, keep = _match_times(meas.time.values, model_days)
+    values = meas.transpose('time', 'point').values[keep].astype(np.float32)
+    return day_idx, _scatter_to_points(values, point_idx, n_points)
 
 
 def build_observations(model, model_days):
@@ -312,7 +304,7 @@ def build_observations(model, model_days):
     rgiid = np.asarray(model.terrain.rgiid_n)
     n_points = len(lon)
 
-    obs = {'albedo': [], 'snow': [], 'melt': [],
+    obs = {'albedo': [], 'wet': [],
            'mb_meas': [], 'mb_sigma': [], 'mb_years': [], 'mb_end_day': [], 'point_idx': []}
 
     # year axis the March baselines live on, one entry per calendar year the
@@ -331,9 +323,8 @@ def build_observations(model, model_days):
         obs['albedo'].append(
             _albedo_entry(name, lon, lat, point_idx, model_days, n_points,
                           year_pos, obs['meas_march']))
-        snow, melt = load_snow_melt_obs(name, lon, lat, point_idx, model_days, n_points)
-        obs['snow'].append(snow)
-        obs['melt'].append(melt)
+        wet = load_wet_obs(name, lon, lat, point_idx, model_days, n_points)
+        obs['wet'].append(wet)
 
         mb = MassBalance(name, dates=(START_DATE, END_DATE))
         obs['mb_meas'].append(float(mb.meas))
@@ -347,7 +338,7 @@ def build_observations(model, model_days):
                    f'{mb.matched_end.date()} (data ends there)' if truncated else '')
 
         n_alb = 0 if obs['albedo'][-1] is None else len(obs['albedo'][-1][0])
-        n_sar = 0 if snow is None else len(snow[0])
+        n_sar = 0 if wet is None else len(wet[0])
         print(f'  {name:<12} {len(point_idx):>5} points  '
               f'{n_alb:>5} albedo scenes  {n_sar:>5} SAR scenes  '
               f'MB {mb.meas:+.2f} +/- {mb.sigma:.2f} m w.e. yr-1{mb_note}', flush=True)
@@ -517,8 +508,7 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
     n_days = len(model_days)
 
     alb = _pack_metric(obs['albedo'], chunk_bounds, n_points)
-    snow = _pack_metric(obs['snow'], chunk_bounds, n_points)
-    melt = _pack_metric(obs['melt'], chunk_bounds, n_points)
+    wet = _pack_metric(obs['wet'], chunk_bounds, n_points)
 
     march = _march_baseline(obs, model_days, chunk_bounds) \
         if ALBEDO_USE_DELTAS else None
@@ -532,8 +522,7 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
         forcings.append(model.pack_forcings(model.params, chunk_dates, d0 * 24))
         chunk_obs = dict(
             alb=(alb[0][c], alb[1][c], alb[2][c], alb[3][c]),
-            snow=(snow[0][c], snow[1][c], snow[2][c]),
-            melt=(melt[0][c], melt[1][c], melt[2][c]),
+            wet=(wet[0][c], wet[1][c], wet[2][c]),
             mb_valid=mb_valid_full[:, d0:d1],
         )
         if march is not None:
@@ -560,7 +549,7 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
         nbytes = sum(x.nbytes for x in jax.tree.leaves(tree))
         print(f'  stacked {label}: {nbytes / 1e9:.2f} GB', flush=True)
 
-    counts = dict(albedo=alb[4], snow=snow[4], melt=melt[4])
+    counts = dict(albedo=alb[4], wet=wet[4])
     return stacked, tail, counts, march
 
 
@@ -636,7 +625,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     count = {k: jnp.asarray(v, dtype=jnp.float64) for k, v in counts.items()}
 
     # fields to be checked directly for non-finite values anywhere
-    RAW_FIELDS = ('albedo', 'snowdepth', 'total_water', 'mass_balance')
+    RAW_FIELDS = ('albedo', 'total_water', 'mass_balance')
 
     # March-referenced albedo deltas: constants of the run, and the two
     # extra running sums the correction is assembled from
@@ -650,8 +639,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     def init_acc():
         acc = dict(
             albedo_ssr=jnp.zeros(n_glaciers),   # sum of squared albedo residuals
-            snow_nll=jnp.zeros(n_glaciers),     # summed Bernoulli log-loss
-            melt_nll=jnp.zeros(n_glaciers),
+            wet_nll=jnp.zeros(n_glaciers),      # summed Bernoulli log-loss
             mb=jnp.zeros(n_points),             # per-point mass balance total
             raw_nonfinite={f: jnp.array(False) for f in RAW_FIELDS},
         )
@@ -668,8 +656,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     def accumulate(acc, records, obs_chunk):
         alb_idx, alb_meas, alb_mask, alb_year = obs_chunk['alb']
         mb_valid = obs_chunk['mb_valid']
-        snow_idx, snow_meas, snow_mask = obs_chunk['snow']
-        melt_idx, melt_meas, melt_mask = obs_chunk['melt']
+        wet_idx, wet_meas, wet_mask = obs_chunk['wet']
 
         # (n_glaciers, K, N_POINTS) gathers of the model's daily fields at
         # each glacier's observation days
@@ -680,18 +667,16 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
         # protects the forward sum but not the gradient -- 2*resid is NaN at
         # a NaN resid, and 0 (mask) * NaN = NaN through the masked branch.
         # So albedo is masked to a neutral placeholder (resid == 0) BEFORE
-        # squaring, same pattern as the snow/melt sigmoid inputs below.
+        # squaring, same pattern as the wet sigmoid input below.
         safe_albedo = jnp.where(alb_mask, records.albedo[alb_idx], alb_meas)
         resid = safe_albedo - alb_meas
         albedo_ssr = jnp.sum(jnp.where(alb_mask, resid ** 2, 0.0), axis=(1, 2))
 
-        # relax hard cut-off functions to logistic thresholds for derivation
-        safe_snowdepth = jnp.where(snow_mask, records.snowdepth[snow_idx],
-                                   SNOW_DEPTH_THRESHOLD)
-        safe_water = jnp.where(melt_mask, records.total_water[melt_idx],
-                               MELT_WATER_THRESHOLD)
-        p_snow = jax.nn.sigmoid((safe_snowdepth - SNOW_DEPTH_THRESHOLD) / SNOW_DEPTH_WIDTH)
-        p_melt = jax.nn.sigmoid((safe_water - MELT_WATER_THRESHOLD) / MELT_WATER_WIDTH)
+        # relax hard cut-off function to a logistic threshold for derivation;
+        # total_water is in kg m-2, so convert to m w.e.
+        safe_water = jnp.where(wet_mask, records.total_water[wet_idx] / 1000,
+                               WET_WATER_THRESHOLD)
+        p_wet = jax.nn.sigmoid((safe_water - WET_WATER_THRESHOLD) / WET_WATER_WIDTH)
 
         raw_nonfinite = {
             f: acc['raw_nonfinite'][f] | jnp.any(~jnp.isfinite(getattr(records, f)))
@@ -700,8 +685,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
 
         out = dict(
             albedo_ssr=acc['albedo_ssr'] + albedo_ssr,
-            snow_nll=acc['snow_nll'] + _bernoulli(p_snow, snow_meas, snow_mask),
-            melt_nll=acc['melt_nll'] + _bernoulli(p_melt, melt_meas, melt_mask),
+            wet_nll=acc['wet_nll'] + _bernoulli(p_wet, wet_meas, wet_mask),
             mb=acc['mb'] + jnp.sum(
                 jnp.where(mb_valid[glacier_of_point].T, records.mass_balance, 0.0),
                 axis=0),
@@ -723,7 +707,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
 
     def finalize(acc):
         """
-        Turns the accumulated sums into the four glacier-wide metrics, each
+        Turns the accumulated sums into the three glacier-wide metrics, each
         a negative log-likelihood in nats so they add without weighting --
         the same construction the glacierwide_loss metrics use. A metric
         with no observations for a glacier (a missing SAR cube, say) has
@@ -752,15 +736,14 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
             0.5 * jnp.log(2 * jnp.pi * ALBEDO_SIGMA ** 2)
             + per_obs(albedo_ssr, count['albedo']) / (2 * ALBEDO_SIGMA ** 2),
             0.0)
-        snow = per_obs(acc['snow_nll'], count['snow'])
-        melt = per_obs(acc['melt_nll'], count['melt'])
+        wet = per_obs(acc['wet_nll'], count['wet'])
 
         mb_mod = member @ acc['mb'] / mb_years
         mb = (0.5 * jnp.log(2 * jnp.pi * mb_sigma ** 2)
               + (mb_mod - mb_meas) ** 2 / (2 * mb_sigma ** 2))
 
-        total = jnp.sum(albedo + snow + melt + mb)
-        return total, dict(albedo=albedo, snow=snow, melt=melt, mb=mb,
+        total = jnp.sum(albedo + wet + mb)
+        return total, dict(albedo=albedo, wet=wet, mb=mb,
                            mb_mod=mb_mod, acc=acc)
 
     # static_args and point_attrs stay in the closure: jax.checkpoint only
@@ -824,14 +807,14 @@ def report_forward_health(step, metrics, model, obs):
     dense matmul over every point: one NaN point anywhere poisons mb_mod,
     and therefore the mb term and its gradient, for EVERY glacier at once
     (0 * nan = nan even at a zero-weighted entry) -- which is exactly the
-    all-five-glaciers-at-once failure mode seen in practice. albedo/snow/
-    melt are already per-glacier sums, so the finalized values are enough.
+    all-five-glaciers-at-once failure mode seen in practice. albedo/wet
+    are already per-glacier sums, so the finalized values are enough.
 
     Returns True if nothing came back non-finite.
     """
     healthy = True
 
-    for key in ('albedo', 'snow', 'melt', 'mb'):
+    for key in ('albedo', 'wet', 'mb'):
         vals = np.asarray(metrics[key])
         bad = np.where(~np.isfinite(vals))[0]
         if len(bad):
@@ -904,8 +887,8 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
     optimizer = optax.adam(schedule)
     opt_state = optimizer.init(params)
 
-    header = (f"{'Step':>4}  {'Total':>12}  {'Albedo':>10}  {'Snow':>10}  "
-              f"{'Melt':>10}  {'MB':>10}  {'|grad|':>10}  {'lr':>10}")
+    header = (f"{'Step':>4}  {'Total':>12}  {'Albedo':>10}  {'Wet':>10}  "
+              f"{'MB':>10}  {'|grad|':>10}  {'lr':>10}")
     print(header, flush=True)
 
     history = []
@@ -946,8 +929,7 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
 
         print(f'{i:>4}  {float(total):>12.2f}  '
               f"{float(jnp.sum(metrics['albedo'])):>10.3f}  "
-              f"{float(jnp.sum(metrics['snow'])):>10.3f}  "
-              f"{float(jnp.sum(metrics['melt'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['wet'])):>10.3f}  "
               f"{float(jnp.sum(metrics['mb'])):>10.3f}  "
               f'{raw_norm:>10.3e}  {cur_lr:>10.3e}  ({time.time() - t0:.1f}s)', flush=True)
 
@@ -1011,7 +993,7 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
                 wind_factor=list(np.asarray(init_wind_factor, dtype=np.float64)))
 
     header = (f"{'Eval':>4}  {'Iter':>4}  {'Total':>12}  {'Albedo':>10}  "
-              f"{'Snow':>10}  {'Melt':>10}  {'MB':>10}  {'|grad|':>10}  "
+              f"{'Wet':>10}  {'MB':>10}  {'|grad|':>10}  "
               f"{'radius':>10}")
     print(header, flush=True)
 
@@ -1047,8 +1029,7 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
 
         print(f"{step:>4}  {progress['n_iter']:>4}  {float(total):>12.2f}  "
               f"{float(jnp.sum(metrics['albedo'])):>10.3f}  "
-              f"{float(jnp.sum(metrics['snow'])):>10.3f}  "
-              f"{float(jnp.sum(metrics['melt'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['wet'])):>10.3f}  "
               f"{float(jnp.sum(metrics['mb'])):>10.3f}  "
               f"{np.linalg.norm(grad):>10.3e}  {progress['radius']:>10.3e}  "
               f'({time.time() - t0:.1f}s)', flush=True)
