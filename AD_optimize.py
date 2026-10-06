@@ -72,7 +72,7 @@ from project.parameters import host, HOST_PATHS, GLACIERS, baseline, BASE_CONFIG
 # ---------------------------------------------------------------------------
 
 START_DATE = '2000-01-01 00:00'
-END_DATE = '2025-01-01 23:00'
+END_DATE = '2025-08-31 23:00'
 
 # days per temporal chunk to set peak device memory
 # on a 32 GB card: 1 year ~ 10 GB total, 3 years ~ 17 GB, 5 years ~ 24 GB
@@ -80,16 +80,16 @@ CHUNK_DAYS = 365
 
 # only these are needed by the three metrics; every extra field is carried
 # through the whole differentiated graph, so the list is kept minimal
-STORE_VARS = ('mass_balance', 'albedo', 'total_water')
+STORE_VARS = ('mass_balance', 'albedo', 'top_water')
 
 # observation uncertainty
 BERNOULLI_EPS = 1e-3
 
-# total water [m w.e.] above which the model surface is considered wet
-WET_WATER_THRESHOLD = 0.03
+# near-surface water [m w.e.] above which the model surface is considered wet
+WET_WATER_THRESHOLD = 0.002
 
 # width [m w.e.] of logistic function used to smooth the wet threshold
-WET_WATER_WIDTH = 0.005
+WET_WATER_WIDTH = 0.001
 
 # months of the year the albedo product is scored over
 ALBEDO_MONTHS = list(range(3, 10))
@@ -98,12 +98,13 @@ ALBEDO_USE_DELTAS = True
 ALBEDO_BASELINE_MONTH = 3
 
 
-def build_config():
+def build_config(overrides=None, tag='AD_optimize'):
     """
     Writes the PEBSI config for the optimization run: the five calibration
     glaciers on the adaptive point mesh, daily output, and nothing written
     to disk (every field the objective needs is read straight off the JAX
-    records).
+    records). overrides replaces any of those settings; tag names the
+    config file, so concurrent jobs do not share one.
     """
     config = dict(BASE_CONFIG)
     config.update(
@@ -120,8 +121,9 @@ def build_config():
         wind_factor=baseline['wind_factor'],
         **HOST_PATHS[host],
     )
+    config.update(overrides or {})
     config_fn = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             f'configs_{host}_AD_optimize.yaml')
+                             f'configs_{host}_{tag}.yaml')
     with open(config_fn, 'w') as f:
         yaml.dump(config, f, sort_keys=False)
     return config_fn
@@ -570,9 +572,10 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     chunk's interior when it reaches it -- without that, the scan would
     retain every chunk's full inner graph at once.
 
-    The forcings, observations and initial state are passed as ARGUMENTS
-    to the jitted function rather than captured in its closure. Captured
-    arrays are constants: jax would fold all ~5 GB of them into the
+    The forcings, observations, initial state and point attributes (whose
+    shading and solar-angle tables are (N_POINTS, hours of a year) each)
+    are passed as ARGUMENTS to the jitted function rather than captured in
+    its closure. Captured arrays are constants: jax would fold them into the
     lowered HLO, serializing a second host-side copy at lowering time on
     top of the numpy originals and the device arrays -- enough to get the
     job killed by the cgroup OOM handler before a single step ran.
@@ -625,7 +628,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     count = {k: jnp.asarray(v, dtype=jnp.float64) for k, v in counts.items()}
 
     # fields to be checked directly for non-finite values anywhere
-    RAW_FIELDS = ('albedo', 'total_water', 'mass_balance')
+    RAW_FIELDS = ('albedo', 'top_water', 'mass_balance')
 
     # March-referenced albedo deltas: constants of the run, and the two
     # extra running sums the correction is assembled from
@@ -673,8 +676,8 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
         albedo_ssr = jnp.sum(jnp.where(alb_mask, resid ** 2, 0.0), axis=(1, 2))
 
         # relax hard cut-off function to a logistic threshold for derivation;
-        # total_water is in kg m-2, so convert to m w.e.
-        safe_water = jnp.where(wet_mask, records.total_water[wet_idx] / 1000,
+        # top_water is in kg m-2, so convert to m w.e.
+        safe_water = jnp.where(wet_mask, records.top_water[wet_idx] / 1000,
                                WET_WATER_THRESHOLD)
         p_wet = jax.nn.sigmoid((safe_water - WET_WATER_THRESHOLD) / WET_WATER_WIDTH)
 
@@ -746,13 +749,13 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
         return total, dict(albedo=albedo, wet=wet, mb=mb,
                            mb_mod=mb_mod, acc=acc)
 
-    # static_args and point_attrs stay in the closure: jax.checkpoint only
-    # sees JAX-traceable arguments
-    def _run_chunk(state, forcings, new_dynamic_args):
+    # static_args stays in the closure: jax.checkpoint only sees
+    # JAX-traceable arguments
+    def _run_chunk(state, forcings, new_dynamic_args, point_attrs):
         return pebsi_main(state, forcings, point_attrs, static_args,
                           new_dynamic_args)
 
-    def loss_fn(log_kp, log_wind_factor, initial_state, stacked, tail):
+    def loss_fn(log_kp, log_wind_factor, initial_state, stacked, tail, point_attrs):
         stacked_forcings, stacked_obs = stacked
         kp = jnp.exp(log_kp)[glacier_of_point]
         wind_factor = jnp.exp(log_wind_factor)[glacier_of_point]
@@ -762,7 +765,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
             state, acc = carry
             forcings, obs_chunk = xs
             state, records = jax.checkpoint(_run_chunk)(
-                state, forcings, new_dynamic_args)
+                state, forcings, new_dynamic_args, point_attrs)
             return (state, accumulate(acc, records, obs_chunk)), None
 
         carry, _ = jax.lax.scan(
@@ -778,7 +781,14 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     # plain python wrapper, so the big arrays reach the jitted function as
     # arguments without the optimizer loop having to carry them around
     def value_and_grad(log_kp, log_wind_factor):
-        return jitted(log_kp, log_wind_factor, initial_state, stacked, tail)
+        return jitted(log_kp, log_wind_factor, initial_state, stacked, tail,
+                      point_attrs)
+
+    # lets a caller compile ahead of time, to time compilation separately
+    # and read XLA's memory analysis before anything runs
+    value_and_grad.lower = lambda log_kp, log_wind_factor: jitted.lower(
+        log_kp, log_wind_factor, initial_state, stacked, tail, point_attrs)
+    value_and_grad.args = (initial_state, stacked, tail, point_attrs)
 
     # bare, no-aux, single-pytree-arg wrapper around the SAME loss_fn, for
     # optax.lbfgs's linesearch: it differentiates this function itself
@@ -787,7 +797,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     # guarantees the two paths compute identical math.
     params_jitted = jax.jit(
         lambda params: loss_fn(params['log_kp'], params['log_wind_factor'],
-                               initial_state, stacked, tail)[0])
+                               initial_state, stacked, tail, point_attrs)[0])
 
     return value_and_grad, params_jitted
 
