@@ -357,12 +357,16 @@ class Climate():
         # apply coefficients to adjust deposition
         if params.rgi_region == 0:
             pass  # test glacier: no adjustmenets necessary
-        elif not params.deposition_data:
-            # MERRA-2 representative bin --> total deposition
-            self.apply_merra_dep_ratio()
         else:
-            # UKESM --> MERRA-2
-            self.apply_ukesm_dep_ratio()
+            # dust always comes from MERRA-2: representative bin --> total
+            self.dustdry *= params.ratio_DU3_DUtot
+            self.dustwet *= params.ratio_DU3_DUtot
+            if not params.deposition_data:
+                # MERRA-2 representative bin --> total deposition
+                self.apply_merra_dep_ratio()
+            else:
+                # UKESM --> MERRA-2
+                self.apply_ukesm_dep_ratio()
 
         # apply climatic perturbations
         self.apply_perturbations()
@@ -481,12 +485,10 @@ class Climate():
     
     def apply_merra_dep_ratio(self):
         """
-        Applies pre-computed factors to adjust a
-        representative bin (e.g., dust size bin 3)
-        to total deposition of a given particle type.
+        Applies pre-computed factors to adjust the
+        representative BC/OC bins to total deposition.
         """
         params = self.params
-        RATIO_DUST = params.ratio_DU3_DUtot
 
         # load the pre-computed maps of BC/OC factors
         region = str(self.params.rgi_region).zfill(2)
@@ -507,8 +509,6 @@ class Climate():
         # apply to dry deposition
         self.bcdry *= ratio_bc
         self.ocdry *= ratio_oc
-        self.dustdry *= RATIO_DUST
-        self.dustwet *= RATIO_DUST
 
         # close datasets
         ds_bc.close()
