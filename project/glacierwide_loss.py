@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from pyproj import Transformer
 import rioxarray
 from rioxarray.merge import merge_arrays
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, norm
+from scipy.special import expit
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -36,6 +37,16 @@ from project.parameters import translate_rgi, translate_names
 
 # albedo observation uncertainty, derived from the data
 ALBEDO_SIGMA = 0.0777
+
+def crps_gaussian(mod, meas, sigma):
+    """
+    CRPS of a Gaussian forecast N(mod, sigma^2) against observation meas,
+    in the units of meas. The continuous analogue of the Brier score
+    (the Brier score integrated over every threshold); reduces to
+    |mod - meas| as sigma -> 0.
+    """
+    z = (meas - mod) / sigma
+    return sigma * (z * (2 * norm.cdf(z) - 1) + 2 * norm.pdf(z) - 1 / np.sqrt(np.pi))
 
 class Albedo():
     def __init__(self, name, use='s2'):
@@ -105,7 +116,8 @@ class Albedo():
         self.time = np.array(self.time)
         self.dtype = np.array(self.dtype)
 
-        self.ds_meas = self.ds_meas.squeeze('band')
+        if 'band' in self.ds_meas.variables:
+            self.ds_meas = self.ds_meas.squeeze('band')
 
         # get rid of duplicates by averaging 
         ds_mean = self.ds_meas.groupby("time").mean()
@@ -235,6 +247,15 @@ class Albedo():
         residual = mod - meas
         return np.nanmean(0.5 * np.log(2 * np.pi * sigma**2) + residual**2 / (2 * sigma**2))
 
+    def crps_loss(self, mod=None, meas=None, sigma=ALBEDO_SIGMA):
+        """
+        Mean Gaussian CRPS of the albedo residuals, divided by sigma so it
+        is unitless and can be summed with the Brier score for wet extent.
+        """
+        mod = self.mod if mod is None else mod
+        meas = self.meas if meas is None else meas
+        return np.nanmean(crps_gaussian(mod, meas, sigma)) / sigma
+
     def bias(self, mod=None, meas=None):
         mod = self.mod if mod is None else mod
         meas = self.meas if meas is None else meas
@@ -282,7 +303,8 @@ class Albedo():
         plt.show()
 
 class Wet():
-    def __init__(self, name, direction=None, water_threshold=0.03):
+    def __init__(self, name, direction=None, water_threshold=0.002, wet_scale=0.001,
+                 water_var='top_water'):
         """
         Loads the SAR wet extent preprocessed 2D dataset.
 
@@ -292,10 +314,19 @@ class Wet():
         direction : ascending, descending, or None for both
         water_threshold : model total water [m w.e.] above which
                           the surface is considered wet (seen by SAR)
+        wet_scale : width [m w.e.] of the logistic transition used to turn
+                    total water into a wet probability for the Brier score
+        water_var : model output compared to the SAR. 'top_water' counts
+                    only water within top_water_depth of the surface, since
+                    water stored meters deep in firn under dry snow is not
+                    seen by SAR; 'total_water' counts the whole column, and
+                    is used instead when the output has no top_water
         """
         self.name = name
         self.direction = direction
         self.water_threshold = water_threshold
+        self.wet_scale = wet_scale
+        self.water_var = water_var
 
         # find rgi7 glacier number
         rgi7id = translate_rgi[name]['7']
@@ -305,7 +336,8 @@ class Wet():
         # load dataset
         ds = xr.open_dataset(fn)
         if direction is not None:
-            ds = ds.sel(time=ds['pass_direction'] == direction)
+            ds = ds.sel(time=ds['pass_direction'].str.lower() == direction.lower())
+            assert ds.time.size, f'no {direction} passes for {name}'
 
         self.crs = ds.attrs['projection']
         self.dem = ds['dem']
@@ -317,8 +349,16 @@ class Wet():
         return
 
     def get_model_wet(self, model_ds):
-        # total_water is in kg m-2, threshold is in m w.e.
-        mod_wet = model_ds['total_water'].resample(time='1d').min() > self.water_threshold * 1000
+        # older runs never stored top_water, so score them on the column
+        water_var = self.water_var
+        if water_var not in model_ds and 'total_water' in model_ds:
+            warnings.warn(f'{water_var} not in model output; scoring wet extent on total_water')
+            water_var = 'total_water'
+
+        # water is in kg m-2, threshold is in m w.e.
+        water_mean = model_ds[water_var].resample(time='1d').mean()
+        mod_wet = water_mean > self.water_threshold * 1000
+        p_wet = expit((water_mean - self.water_threshold * 1000) / (self.wet_scale * 1000))
 
         # select the measured boolean grid at each simulation point
         proj = Transformer.from_crs('EPSG:4326', self.crs, always_xy=True)
@@ -335,11 +375,13 @@ class Wet():
         # its nearest model timestep instead of slicing on a shared range
         tolerance = pd.Timedelta('12h')
         mod_wet_matched = mod_wet.reindex(time=meas_wet.time, method='nearest', tolerance=tolerance)
+        p_wet_matched = p_wet.reindex(time=meas_wet.time, method='nearest', tolerance=tolerance)
 
         # drop measurement times with no model timestep close enough to match
         valid = mod_wet_matched.notnull().all(dim='point')
 
         self.mod_wet = mod_wet_matched.sel(time=valid).values.astype(bool)
+        self.p_wet = p_wet_matched.sel(time=valid).values
         self.meas_wet = meas_wet.sel(time=valid).values
         self.time = meas_wet.sel(time=valid).time.values
 
@@ -353,6 +395,15 @@ class Wet():
         p = np.clip(np.asarray(mod_wet, dtype=float), eps, 1 - eps)
         y = np.asarray(meas_wet, dtype=float)
         return -np.nanmean(y * np.log(p) + (1 - y) * np.log(1 - p))
+
+    def brier_loss(self, p_wet=None, meas_wet=None):
+        """
+        Brier score of the modeled wet probability against the SAR wet
+        mask; NaN retrievals are ignored.
+        """
+        p_wet = self.p_wet if p_wet is None else p_wet
+        meas_wet = self.meas_wet if meas_wet is None else meas_wet
+        return np.nanmean((p_wet - meas_wet)**2)
 
 def _load_rgi_outline(glac_no):
     """
@@ -560,6 +611,17 @@ class MassBalance():
         sigma = self.sigma if sigma is None else sigma
         residual = mod - meas
         return 0.5 * np.log(2 * np.pi * sigma**2) + residual**2 / (2 * sigma**2)
+
+    def crps_loss(self, mod=None, meas=None, sigma=None):
+        """
+        Gaussian CRPS of the mass balance residual divided by sigma, so it
+        is unitless and can be summed with the albedo and wet terms.
+        sigma is the reported measurement uncertainty [m w.e. yr-1].
+        """
+        mod = self.mod if mod is None else mod
+        meas = self.meas if meas is None else meas
+        sigma = self.sigma if sigma is None else sigma
+        return crps_gaussian(mod, meas, sigma) / sigma
 
 class DEM():
     def __init__(self, name, epsg='default'):
