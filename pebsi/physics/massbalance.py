@@ -314,7 +314,7 @@ class MassBalanceDriver:
         updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
         updated_delayed_snow = jnp.where(action_taken_mask, 0.0, updated_delayed_snow)
         actual_snowfall = jnp.where(delay_mask, 0.0, total_snowfall)
-        updated_last_snow = jnp.where(action_taken_mask, time_idx, state.last_snow)
+        updated_last_snow = jnp.where(action_taken_mask & (total_snowfall > 0), time_idx, state.last_snow)
 
         state = state._replace(
             delayed_snow = updated_delayed_snow,

@@ -73,10 +73,11 @@ def get_albedo(state, params, forcings):
     lh = state.lheight[:, 0]
 
     # concentrations in ppb (mass of impurity / mass of snow)
-    safe_lh = jnp.where(lh > 0, lh, 1.0)
-    cBC = state.lBC[:, 0] / safe_lh * 1e6
-    cOC = state.lOC[:, 0] / safe_lh * 1e6
-    cdust = state.ldust[:, 0] / safe_lh * 1e6
+    layer_mass = lh * rho
+    safe_mass = jnp.where(layer_mass > 0, layer_mass, 1.0)
+    cBC = state.lBC[:, 0] / safe_mass * 1e9
+    cOC = state.lOC[:, 0] / safe_mass * 1e9
+    cdust = state.ldust[:, 0] / safe_mass * 1e9
 
     has_refreeze = state.lrefreeze[:, 0] > 1e-3
     has_water = state.lwater[:, 0] > 1e-3
