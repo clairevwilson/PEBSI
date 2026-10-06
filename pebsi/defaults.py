@@ -148,6 +148,7 @@ initial_ice_depth = 50                  # default amount of initial ice [m] (unl
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
 output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', or 'monthly' (lower resolution reduces VRAM and disk usage)
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
+top_water_depth = 0.5                   # Depth below the surface [m] over which top_water sums liquid water
 
 # METHODS
 method_distribute = 'grid'              # 'sites', 'grid', 'adaptive', 'mesh'

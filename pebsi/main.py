@@ -174,6 +174,14 @@ def main(
         if 'total_water' in requested_fields:
             out['total_water'] = jnp.sum(next_state.lwater, axis=1)
 
+        # liquid water within top_water_depth of the surface [kg m-2]
+        if 'top_water' in requested_fields:
+            lheight = next_state.lheight
+            layer_top = jnp.cumsum(lheight, axis=1) - lheight
+            safe_height = jnp.where(lheight > 0, lheight, 1.0)
+            frac_above = jnp.clip((params.top_water_depth - layer_top) / safe_height, 0.0, 1.0)
+            out['top_water'] = jnp.sum(next_state.lwater * frac_above, axis=1)
+
         # depth of the snow column [m], for differentiability against SAR
         if 'snowdepth' in requested_fields:
             out['snowdepth'] = jnp.sum(
@@ -186,10 +194,11 @@ def main(
                 state_field = field.replace('layer', 'l')
                 values = getattr(next_state, state_field)
                 if field in ['layerBC', 'layerOC', 'layerdust']:
-                    lheight = next_state.lheight
-                    safe_height = jnp.where(lheight > 0, lheight, 1e-6)
-                    concentration = values / safe_height
-                    values = concentration * (1e6 if field in ['layerBC', 'layerOC'] else 1e3)
+                    # mass of impurity / mass of layer
+                    layer_mass = next_state.lheight * next_state.ldensity
+                    safe_mass = jnp.where(layer_mass > 0, layer_mass, 1e-6)
+                    concentration = values / safe_mass
+                    values = concentration * (1e9 if field in ['layerBC', 'layerOC'] else 1e6)
                 out[field] = values
 
         step_records = StepOutputs(**out)

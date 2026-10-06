@@ -22,8 +22,8 @@ OUTPUT_GROUPS = {
     'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
                  'sublimation', 'deposition', 'evaporation',
                  'condensation', 'accumulation', 'rainfall', 'error',
-                 'total_mass', 'total_water', 'mass_balance'],
-    'surface':  ['surftemp', 'surftype', 'albedo'],
+                 'total_mass', 'total_water', 'top_water', 'mass_balance'],
+    'surface':  ['surftemp', 'surftype', 'albedo', 'snowdepth'],
     'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
                  'longwave_in', 'longwave_out', 'sensible_heat',
                  'latent_heat', 'rain_heat', 'ground_heat',
@@ -67,8 +67,11 @@ AGG_METHOD = {
     'cumrefreeze':     'last',
     'total_mass':      'last',
 
+    # liquid water, as the day's typical state
+    'total_water':     'mean',
+    'top_water':       'mean',
+
     # snapshot, collapsed conservatively 
-    'total_water':     'min',
     'snowdepth':       'min',
 
     # climate (instantaneous conditions, except precipitation)
@@ -313,6 +316,7 @@ class StepOutputs(NamedTuple):
     cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
     total_mass: jnp.ndarray         # Total mass: layers (ice+water) + basal_reservoir [m w.e.]
     total_water: jnp.ndarray        # Total water: layers only [kg m-2]
+    top_water: jnp.ndarray          # Water within top_water_depth of the surface [kg m-2]
 
     # ============================= Climate ==============================
     airtemp: jnp.ndarray            # Air temperature [C]

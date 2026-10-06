@@ -198,6 +198,7 @@ class Output():
             'layerOC': 'ppb', 'layerdust':'ppm',
             'layergrainsize': 'um', 'layerage': 'days',
             'layertype': '-', 'total_water': 'kg m-2',
+            'top_water': 'kg m-2',
         }
 
         z = zarr.open(self.out_fn, mode='a')
