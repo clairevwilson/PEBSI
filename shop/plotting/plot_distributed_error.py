@@ -215,9 +215,9 @@ for ax, var in zip(map_axes, ['wet', 'albedo']):
     ax.set_title(error_labels[var])
 
 # bar chart for last subpanel
-ab_loss = ab.log_loss()
-mb_loss = mb.log_loss()
-wet_loss = wet.bernoulli_loss()
+ab_loss = ab.crps_loss()
+mb_loss = mb.crps_loss()
+wet_loss = wet.brier_loss()
 losses = [mb_loss, ab_loss, wet_loss]
 
 axes[-1].bar(range(len(losses)), losses)

@@ -1,8 +1,8 @@
 """
 Find the day near DATE with ≥90% satellite albedo coverage, then plot
-a two-panel map: satellite albedo (left) and kriged simulation albedo (right).
+a two-panel map: satellite albedo (left) and the simulation's Voronoi cells (right).
 
-Edit DATE and output_dir before running.
+Edit DATE before running.
 """
 import sys, os
 import numpy as np
@@ -10,18 +10,18 @@ import pandas as pd
 import xarray as xr
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from scipy.interpolate import RBFInterpolator
+from scipy.spatial import cKDTree
 from pyproj import CRS, Transformer
 from shapely.geometry import mapping
 import rasterio.features
 import rasterio.transform
 
 # ===================== USER CONFIG =====================
-DATE = '2024-09-20'          # date to search near
-output_dir = 'Output/gulkana_windfactor_precgrad_0/'   # simulation zarrs
-albedo_dir = '../data/albedo/'
-rgi_fp = '../RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
-COVERAGE_THRESH = 0.90              # fraction of glacier pixels required
+DATE = '2023-03-20'   # date to search near
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'   # holds best.zarr
+albedo_dir = '/ocean/projects/ees260009p/cwilson4/data/albedo/'
+rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
+COVERAGE_THRESH = 0.75              # fraction of glacier pixels required
 
 # Gulkana IDs (from translate_rgi)
 RGI6_ID = '01.00570'
@@ -33,7 +33,7 @@ ds_list = []
 epsg = None
 
 for sensor in sensors:
-    fp = f'{albedo_dir}{RGI7_NUM}/{RGI7_NUM}_{sensor}.nc'
+    fp = f'{albedo_dir}{RGI7_NUM}/RGI2000-v7.0-G-01-{RGI7_NUM}_{sensor}.nc'
     try:
         ds = xr.open_dataset(fp)
     except FileNotFoundError:
@@ -42,7 +42,7 @@ for sensor in sensors:
     crs_wkt = ds['spatial_ref'].attrs['crs_wkt']
     if epsg is None:
         epsg = crs_wkt.split('AUTHORITY["EPSG","')[-1].split('"]')[0]
-    ds = ds['albedo'].squeeze('band', drop=True).to_dataset()
+
     ds_list.append(ds)
 
 assert ds_list, 'No albedo files loaded'
@@ -83,23 +83,15 @@ sat_y    = albedo_map.y.values
 xx_sat, yy_sat = np.meshgrid(sat_x, sat_y)
 
 # ===================== LOAD SIMULATION POINTS =====================
-ds_sim = xr.open_zarr(f'{output_dir}/output.zarr')
-ds_sim['time'] = ds_sim.time - pd.Timedelta(hours=8)
+ds_sim = xr.open_zarr(f'{output_dir}/best.zarr', consolidated=False)
 
-idx_id = np.where(ds_sim['rgiid'].values == RGI6_ID)[0]
-assert len(idx_id) > 0, f'RGI ID {RGI6_ID} not found in output.zarr'
-points = ds_sim.point.values[idx_id]
-model_glac = ds_sim.sel(point=points, layer=0)
+idx_id = np.where(ds_sim['rgiid'].values.astype(str) == RGI6_ID)[0]
+assert len(idx_id) > 0, f'RGI ID {RGI6_ID} not found in best.zarr'
+points = idx_id
+model_glac = ds_sim.isel(point=points)
 
-# albedo is computed once daily at 14:00 local
-target_mask = (
-    (model_glac.time.dt.year  == best_date.year)  &
-    (model_glac.time.dt.month == best_date.month) &
-    (model_glac.time.dt.day   == best_date.day)   &
-    (model_glac.time.dt.hour  == 14)
-)
-alb_day = model_glac['albedo'].where(target_mask, drop=True)
-vals_alb = alb_day.isel(time=0).values if alb_day.sizes['time'] > 0 else np.full(len(points), np.nan)
+# output is daily; albedo is computed once daily at 14:00 local
+vals_alb = model_glac['albedo'].sel(time=best_date.normalize()).values
 
 lats = model_glac.lat.values
 lons = model_glac.lon.values
@@ -117,9 +109,9 @@ gdf      = gpd.read_file(rgi_fp)
 glacier  = gdf[gdf['RGIId'].isin(['RGI60-' + i for i in rgi_ids])].to_crs(metric_crs)
 glacier_sat = glacier.to_crs(sat_crs)
 
-# ===================== KRIGE SIMULATION ALBEDO =====================
+# ===================== VORONOI CELLS OF SIMULATION ALBEDO =====================
 bounds = glacier.total_bounds
-res    = 200
+res    = 20
 grid_x = np.arange(bounds[0], bounds[2], res)
 grid_y = np.arange(bounds[1], bounds[3], res)
 xx, yy = np.meshgrid(grid_x, grid_y)
@@ -133,8 +125,9 @@ glacier_mask = np.flipud(
                                  transform=sw_transform)
 )
 
-rbf    = RBFInterpolator(pts, vals_alb, kernel='thin_plate_spline')
-z_alb  = rbf(query).reshape(xx.shape)
+# each grid cell takes the albedo of its nearest simulation point
+_, nearest = cKDTree(pts).query(query)
+z_alb  = vals_alb[nearest].reshape(xx.shape)
 z_alb  = np.where(glacier_mask == 1, z_alb, np.nan)
 
 # ===================== PLOT =====================
@@ -154,15 +147,12 @@ ax.set_xlabel('Easting [m]')
 ax.set_ylabel('Northing [m]')
 ax.set_aspect('equal')
 
-# ---- right: simulated albedo (kriged) ----
+# ---- right: simulated albedo (Voronoi cells) ----
 ax = axes[1]
 im_sim = ax.pcolormesh(xx, yy, z_alb,
                         cmap='Greys_r', vmin=alb_range[0], vmax=alb_range[1],
                         shading='auto')
 glacier.plot(ax=ax, facecolor='none', edgecolor='red', linewidth=1.0)
-ax.scatter(xs, ys, c=vals_alb, cmap='Greys_r',
-           vmin=alb_range[0], vmax=alb_range[1],
-           s=15, edgecolors='k', linewidths=0.3, zorder=5)
 fig.colorbar(im_sim, ax=ax, label='Albedo [-]', fraction=0.03, pad=0.03)
 ax.set_title(f'Simulated albedo — {best_date.date()} (14:00 local)')
 ax.set_xlabel('Easting [m]')
@@ -173,7 +163,7 @@ rgi_label = ', '.join(sorted(rgi_ids))
 fig.suptitle(f'Gulkana Glacier albedo — {best_date.date()} ({rgi_label})', fontsize=13)
 
 plt.tight_layout()
-out_path = f'{output_dir}/albedo_map_{best_date.date()}.png'
+out_path = f'albedo_map_{best_date.date()}.png' # {output_dir}/
 plt.savefig(out_path, dpi=150, bbox_inches='tight')
 plt.show()
 print(f'saved to {out_path}')

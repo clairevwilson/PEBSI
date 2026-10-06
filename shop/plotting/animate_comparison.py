@@ -1,13 +1,14 @@
 """
 Side-by-side animation of measured (left) vs modeled (right) fields at
-gulkana's best (kp, wind_factor) from loss_surface_1, with the
+a glacier's best (kp, wind_factor) from a loss surface run, with the
 measurement sampled at the model points the same way the glacier-wide
 loss compares them.
 
-Set VARIABLE below and rerun.
+Settings come from the command line; see the parser below.
 
 @author: clairevwilson
 """
+import argparse
 import os
 import sys
 
@@ -24,46 +25,49 @@ from matplotlib.collections import PathCollection
 from matplotlib.path import Path
 from scipy.spatial import Voronoi
 from shapely.geometry import Polygon
+from shapely.plotting import plot_line
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
 from project.glacierwide_loss import Albedo, Wet, _load_rgi_outline
 from project.parameters import translate_rgi
 
-VARIABLE = 'albedo'  # 'albedo' or 'wet'
-GLACIER = 'gulkana'
-YEAR = 2021
-RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
+parser = argparse.ArgumentParser()
+parser.add_argument('--variable', default='wet', choices=['albedo', 'wet'])
+parser.add_argument('--deltas', action=argparse.BooleanOptionalAction, default=False,
+                    help='albedo only: change from March, or --no-deltas for raw albedo')
+parser.add_argument('--glacier', default='gulkana')
+parser.add_argument('--year', type=int, default=None, help='omit for the whole record')
+parser.add_argument('--run_dir', default='/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/')
+args = parser.parse_args()
+VARIABLE = args.variable
+DELTAS = args.deltas
+GLACIER = args.glacier
+YEAR = args.year
+RUN_DIR = args.run_dir
 
-# pick the combination with the lowest summed loss for this glacier
-grid = np.load(RUN_DIR + 'loss_surface_grid.npz', allow_pickle=True)
-loss = np.load(RUN_DIR + 'loss_surface_losses.npz', allow_pickle=True)
-total = sum(loss[k] for k in loss.files if k.startswith(f'{GLACIER}_'))
-i, j = np.unravel_index(np.nanargmin(total), total.shape)
-kp, wf = loss['kp'][i], loss['wind_factor'][j]
-c = i * len(loss['wind_factor']) + j
-n_base = int(grid['n_base'])
-print(f'{GLACIER}: kp={kp}, wind_factor={wf}', flush=True)
-
-# this combination's points for this glacier
-ds = xr.open_zarr(RUN_DIR + 'output.zarr', consolidated=False)
-block = ds.isel(point=slice(c * n_base, (c + 1) * n_base))
-gmask = block['rgiid'].values == translate_rgi[GLACIER]['6']
+# best.zarr holds each glacier's best-combination points
+ds = xr.open_zarr(RUN_DIR + 'best.zarr', consolidated=False)
+gmask = ds['rgiid'].values == translate_rgi[GLACIER]['6']
+print(f"{GLACIER}: kp={ds['kp'].values[gmask][0]}, "
+      f"wind_factor={ds['wind_factor'].values[gmask][0]}", flush=True)
 
 if VARIABLE == 'albedo':
     obs = Albedo(GLACIER, use='s2')
     obs_time = obs.ds_meas.time.values
 else:
-    obs = Wet(GLACIER)
+    # older runs only saved total_water
+    water_var = 'top_water' if 'top_water' in ds else 'total_water'
+    obs = Wet(GLACIER, water_var=water_var)
     obs_time = obs.ds_meas_wet.time.values
 
 obs_years = np.unique(pd.DatetimeIndex(obs_time).year)
-if YEAR not in obs_years:
+if YEAR is not None and YEAR not in obs_years:
     raise ValueError(f'no {VARIABLE} observations for {GLACIER} in {YEAR}; '
                      f'years with observations: {obs_years.tolist()}')
 
-pad = np.timedelta64(5, 'D')
-sub = (block[['lon', 'lat', 'albedo', 'total_water']]
+pad = np.timedelta64(7, 'D')
+sub = (ds[['lon', 'lat', 'albedo'] + ([water_var] if VARIABLE == 'wet' else [])]
        .isel(point=gmask)
        .sel(time=slice(obs_time.min() - pad, obs_time.max() + pad))
        .load())
@@ -71,11 +75,16 @@ sub = (block[['lon', 'lat', 'albedo', 'total_water']]
 # match measurement to model points and times exactly as the loss does
 if VARIABLE == 'albedo':
     obs.get_model_albedo(sub)
-    obs.get_deltas(method='march_mean')
+    raw_mod = obs.mod
+    if DELTAS:
+        obs.get_deltas(method='march_mean')
+        cmap, vmin, vmax = 'Reds_r', -0.5, 0
+        label = 'albedo change from March'
+    else:
+        cmap, vmin, vmax = 'Greys_r', 0, 1
+        label = 'albedo'
     meas, mod = obs.meas, obs.mod
     dates = obs.ds_meas_matched.time.values
-    cmap, vmin, vmax = 'Reds_r', -0.5, 0
-    label = 'albedo change from March'
 elif VARIABLE == 'wet':
     obs.get_model_wet(sub)
     meas, mod = obs.meas_wet, obs.mod_wet
@@ -85,11 +94,35 @@ elif VARIABLE == 'wet':
 
 # the whole record is matched first so albedo's March reference is the same
 # one the loss uses, then only this year's dates are kept
-in_year = pd.DatetimeIndex(dates).year == YEAR
-if not in_year.any():
+keep = pd.DatetimeIndex(dates).year == YEAR if YEAR is not None else np.ones(len(dates), bool)
+if not keep.any():
     raise ValueError(f'no {VARIABLE} observations for {GLACIER} in {YEAR} '
                      'overlap the model period')
-meas, mod, dates = meas[in_year], mod[in_year], dates[in_year]
+meas, mod, dates = meas[keep], mod[keep], dates[keep]
+
+# the model is shown every day from the first to the last measurement, while
+# each measurement is held until the next one arrives; winters are skipped
+meas_days = pd.DatetimeIndex(dates).normalize()
+years = np.unique(meas_days.year)
+days = pd.date_range(meas_days[0], meas_days[-1], freq='D')
+days = days[days.month.isin(range(3, 11)) & days.year.isin(years)]
+if VARIABLE == 'albedo':
+    # sample the model at the overpass time of day, relative to the same
+    # per-year March reference the loss subtracts
+    offset = raw_mod[keep] - mod
+    refs = np.array([np.nanmean(offset[meas_days.year == y], axis=0) for y in years])
+    march_ref = refs[np.searchsorted(years, days.year)]
+    time_of_day = (pd.DatetimeIndex(dates) - meas_days).mean()
+    mod_daily = (sub['albedo'].sel(time=days + time_of_day, method='nearest')
+                 .transpose('time', 'point').values - march_ref)
+else:
+    water_min = sub[water_var].resample(time='1d').min()
+    mod_daily = ((water_min > obs.water_threshold * 1000).sel(time=days)
+                 .transpose('time', 'point').values)
+meas_idx = np.searchsorted(meas_days, days, side='right') - 1
+# SAR revisits about weekly, so it is held longer than the optical scenes
+max_age = pd.Timedelta(days=10 if VARIABLE == 'wet' else 5)
+stale = (days - meas_days[meas_idx]) > max_age
 
 proj = Transformer.from_crs('EPSG:4326', obs.crs, always_xy=True)
 x, y = proj.transform(sub.lon.values, sub.lat.values)
@@ -121,31 +154,34 @@ fig, axes = plt.subplots(1, 2, figsize=(10, height), dpi=100,
                          sharex=True, sharey=True, layout='compressed')
 cells = []
 name = {'albedo': 'albedo', 'wet': 'wet extent'}[VARIABLE]
-for ax, data, source in zip(axes, [meas, mod], ['Measured', 'Modeled']):
+for ax, data, source in zip(axes, [meas, mod_daily], ['Measured', 'Modeled']):
     cell = PathCollection(paths, cmap=cmap, edgecolors='none')
     cell.set_clim(vmin, vmax)
     cell.set_array(data[0].astype(float))
     ax.add_collection(cell)
-    ax.plot(*outline.exterior.xy, color='k', lw=0.8)
+    plot_line(outline.boundary, ax=ax, add_points=False, color='k', linewidth=0.8)
     ax.set_title(f'{source} {name}')
     ax.set_aspect('equal')
     ax.set_xticks([])
     ax.set_yticks([])
     cells.append(cell)
 fig.colorbar(cells[1], ax=axes, label=label, shrink=0.8)
-title = fig.suptitle(str(pd.Timestamp(dates[0]).date()))
+title = fig.suptitle(str(days[0].date()))
 
 
 def update(t):
-    cells[0].set_array(meas[t].astype(float))
-    cells[1].set_array(mod[t].astype(float))
-    title.set_text(str(pd.Timestamp(dates[t]).date()))
+    # the measured panel goes blank when the latest measurement is too old
+    cells[0].set_visible(not stale[t])
+    cells[0].set_array(meas[meas_idx[t]].astype(float))
+    cells[1].set_array(mod_daily[t].astype(float))
+    title.set_text(str(days[t].date()))
     return cells + [title]
 
 
-anim = FuncAnimation(fig, update, frames=len(dates), interval=250)
-out_fn = RUN_DIR + f'comparison_{GLACIER}_{VARIABLE}_{YEAR}.gif'
-anim.save(out_fn, writer='pillow', fps=3)
+anim = FuncAnimation(fig, update, frames=len(days), interval=125)
+suffix = '_raw' if VARIABLE == 'albedo' and not DELTAS else ''
+out_fn = RUN_DIR + f'comparison_{GLACIER}_{VARIABLE}{suffix}_{YEAR or "all"}.gif'
+anim.save(out_fn, writer='pillow', fps=10)
 
 # matplotlib always writes the gif to loop forever; resave it without the
 # loop flag so it plays once and holds on the last frame (e.g. in Google Slides)

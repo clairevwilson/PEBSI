@@ -1,5 +1,5 @@
 """
-Plots the (kp, wind_factor) log-loss surfaces as a row of heatmaps
+Plots the (kp, wind_factor) loss surfaces as a row of heatmaps
 per glacier.
 
 Reads only the .npz that compute_loss_surface.py writes, so this reruns
@@ -21,10 +21,15 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_2/'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
 
-PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'), ('wet', 'Wet extent')]
+PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'), ('wet', 'Water extent')]
+
+# albedo/mb are CRPS / sigma, where a perfect match scores 0.234;
+# wet is a Brier score (perfect = 0)
+CRPS_PERFECT = 0.234
+PERFECT = {'albedo': CRPS_PERFECT, 'mb': CRPS_PERFECT, 'wet': 0, 'total': 2 * CRPS_PERFECT}
 
 
 def parse_args():
@@ -39,18 +44,19 @@ def parse_args():
 
 
 def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), gridspec_kw={'wspace': 0.3})
+    fig, axes = plt.subplots(2, 2, figsize=(7, 5), gridspec_kw={'wspace': 0.3, 'hspace': 0.3})
     extent = [kp_values[0] - 0.25, kp_values[-1] + 0.25,
               wf_values[0] - 0.25, wf_values[-1] + 0.25]
+    axes = axes.flatten()
 
     total_err = np.zeros((len(wf_values), len(kp_values)))
-    for ax, (key, label) in zip(axes.flat, PANELS):
+    for ax, (key, label) in zip(axes[:-1], PANELS):
         # transposed so kp runs along x and wind_factor along y
         field = grids[f'{glacier}_{key}'].T
         im = ax.imshow(field, origin='lower', extent=extent, aspect='auto',
                        cmap='viridis_r', interpolation='nearest')
         cb = fig.colorbar(im, ax=ax, pad=0.02)
-        cb.set_label('log loss [nats]', fontsize=9)
+        cb.set_label(f'loss (perfect = {PERFECT[key]:g})', fontsize=9)
         cb.ax.tick_params(labelsize=10)
 
         j, i = np.unravel_index(np.nanargmin(field), field.shape)
@@ -61,14 +67,26 @@ def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
 
         ax.set_title(f'{label}', fontsize=12)
 
-        fig.supxlabel('Precipitation factor', fontsize=11)
-        fig.supylabel('Wind factor', fontsize=11)
         ax.set_xticks(kp_values[::2])
         ax.set_yticks(wf_values[::2])
         ax.tick_params(labelsize=10)
         ax.minorticks_on()
         ax.xaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
         ax.yaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
+
+    ax = axes[-1]
+    im = ax.imshow(total_err, origin='lower', extent=extent, aspect='auto',
+                       cmap='viridis_r', interpolation='nearest')
+    cb = fig.colorbar(im, ax=ax, pad=0.02)
+    cb.set_label(f'loss (perfect = {PERFECT["total"]:g})', fontsize=9)
+    cb.ax.tick_params(labelsize=10)
+    ax.set_title('Combined', fontsize=12)
+    ax.set_xticks(kp_values[::2])
+    ax.set_yticks(wf_values[::2])
+    ax.tick_params(labelsize=10)
+    ax.minorticks_on()
+    ax.xaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
+    ax.yaxis.set_minor_locator(mpl.ticker.MultipleLocator(0.5))
 
     j, i = np.unravel_index(np.nanargmin(total_err), total_err.shape)
     best_kp = str(kp_values[i])
@@ -78,9 +96,12 @@ def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
         ax.plot(kp_values[i], wf_values[j], marker='x', ms=9, mfc='none',
                 mec='r', mew=2.0, zorder=5)
 
-    title = (f'{glacier}: log loss by parameter combination'
-              f'\nBest $k_p=${best_kp} $k_w=${best_kw} log loss: {best_err:.1f}')
-    fig.suptitle(title, fontsize=12)
+    fig.supxlabel('Precipitation factor', fontsize=11, y=0)
+    fig.supylabel('Wind factor', fontsize=11, x=.03)
+
+    title = (f'{glacier}: loss by parameter combination'
+              f'\nBest $k_p=${best_kp} $k_w=${best_kw} loss: {best_err:.3f}')
+    fig.suptitle(title, fontsize=12, y=1.03)
     fig_fn = fig_fn_template.format(glacier=glacier)
     fig.savefig(fig_fn, dpi=160, bbox_inches='tight')
     plt.close(fig)

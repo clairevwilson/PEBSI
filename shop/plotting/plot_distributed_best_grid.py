@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from project.glacierwide_loss import *
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_2/'
 OUT_ZARR = ROOT + 'best.zarr'
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
@@ -230,9 +230,9 @@ def plot_glacier(glacier):
         fig.colorbar(pc, ax=ax, label='weighted log loss [nats]', shrink=0.7)
         ax.set_title(error_labels[var])
 
-    ab_loss = ab.log_loss()
-    mb_loss = mb.log_loss()
-    wet_loss = wet.bernoulli_loss()
+    ab_loss = ab.crps_loss()
+    mb_loss = mb.crps_loss()
+    wet_loss = wet.brier_loss()
     losses = [mb_loss, ab_loss, wet_loss]
 
     axes[-1].bar(range(len(losses)), losses)
