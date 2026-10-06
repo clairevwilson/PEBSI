@@ -1,3 +1,4 @@
+import os
 import sys
 import xarray as xr
 import pandas as pd
@@ -91,4 +92,4 @@ axes[1].axvline(0, c='k', lw=0.8)
 axes[1].set_xlabel('Model - observed annual mass balance (m w.e.)')
 axes[1].legend(fontsize=8)
 plt.tight_layout()
-plt.savefig('index_site_mb_bias.png', dpi=150)
+plt.savefig(os.path.join(os.path.dirname(model_fp.rstrip('/')), 'index_site_mb_bias.png'), dpi=150)

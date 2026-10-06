@@ -41,14 +41,14 @@ from project.parameters import host, HOST_PATHS, GLACIERS, BASE_CONFIG, translat
 # (pebsi/config.py requires the inclusive hourly count to land on a
 # multiple of 24, which any 00:00-to-23:00 pair always satisfies).
 START_DATE = '2000-01-01 00:00'
-END_DATE = '2025-04-01 23:00'
+END_DATE = '2025-08-31 23:00'
 
 KP_VALUES = np.arange(0.5, 5.01, 0.5)
 WIND_FACTOR_VALUES = np.arange(0.5, 5.01, 0.5)
 
 # enough for all four glacier-wide metrics: mass balance, albedo, melt
-# extent (total_water) and snow extent (surftype)
-STORE_VARS = ['mass_balance', 'albedo', 'total_water', 'surftype']
+# extent (top_water) and snow extent (surftype)
+STORE_VARS = ['mass_balance', 'albedo', 'top_water', 'surftype']
 
 def run_filenames(tag):
     """
@@ -69,6 +69,7 @@ def build_config(start_date, end_date, glaciers, preclimit, out_config_fn,
     config.update(
         rgi_ids=[translate_rgi[g]['6'] for g in glaciers],
         option_preclimit=preclimit,
+        dust_factor=500,
         option_ice_thickness_tif=False,
         initial_ice_depth=500,
         method_distribute='adaptive',

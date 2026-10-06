@@ -1,6 +1,7 @@
 """
 Scores every (kp, wind_factor) combination in the loss_surface run and
-saves the four glacier-wide log-losses to an .npz, summed across every
+saves the three glacier-wide losses (CRPS/sigma for albedo and mass
+balance, Brier score for wet extent) to an .npz, summed across every
 calibration glacier -- the same convention AD_optimize's own total uses.
 
 The run tiled the combined mesh (every glacier at once) once per
@@ -30,11 +31,11 @@ import xarray as xr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from project.glacierwide_loss import Albedo, SnowlineMelt, MassBalance, ALBEDO_SIGMA
+from project.glacierwide_loss import Albedo, Wet, MassBalance, ALBEDO_SIGMA
 from project.parameters import translate_rgi
 
 # the most recent loss_surface.py run, used when --run-dir is not given
-RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_1/'
+RUN_DIR = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'
 
 
 def resolve_run_dir(run_dir):
@@ -78,12 +79,12 @@ def parse_args():
             setattr(args, k, v)
     return args
 
-METRICS = ('albedo', 'mb', 'snow', 'melt')
+METRICS = ('albedo', 'mb', 'wet')
 
 # only these are touched anywhere in the loop below; mass_balance/weight
 # are handled separately (see mb_weighted below) since their observation
-# period runs 2000-2020, far wider than albedo/snow's post-2017 window
-NEEDED_VARS = ['lon', 'lat', 'time', 'rgiid', 'albedo', 'surftype', 'total_water']
+# period runs 2000-2020, far wider than albedo/wet's post-2015 window
+NEEDED_VARS = ['lon', 'lat', 'time', 'rgiid', 'albedo', 'top_water']
 
 
 def main():
@@ -91,10 +92,11 @@ def main():
     grid = np.load(args.grid_fn, allow_pickle=True)
     kp_values = grid['kp']
     wf_values = grid['wind_factor']
+    lr_values = grid['lapse_rate'] if 'lapse_rate' in grid else None
     n_base = int(grid['n_base'])
     n_combos = int(grid['n_combos'])
     glaciers = [str(g) for g in grid['glaciers']]
-    start, end = str(grid['start']), '2025-03-20' # str(grid['end'])
+    start, end = str(grid['start']), str(grid['end'])
     rgi_ids = {g: translate_rgi[g]['6'] for g in glaciers}
 
     print(f'grid  {args.grid_fn}', flush=True)
@@ -111,12 +113,12 @@ def main():
     obs = {}
     for g in glaciers:
         albedo = Albedo(g, use='s2')
-        snowmelt = SnowlineMelt(g)
+        wet = Wet(g)
         mb = MassBalance(g, dates=(start, end))
         print(f'  {g:<12} MB measured {mb.meas:+.3f} +/- {mb.sigma:.3f} '
               f'm w.e. yr-1 over {mb.matched_start.date()} to '
               f'{mb.matched_end.date()}', flush=True)
-        obs[g] = dict(albedo=albedo, snowmelt=snowmelt, mb=mb)
+        obs[g] = dict(albedo=albedo, wet=wet, mb=mb)
 
     # every combo covers the same calendar span, so the whole time x point
     # block only needs to be pulled from the zarr once, trimmed to the
@@ -127,11 +129,9 @@ def main():
     for g in glaciers:
         o = obs[g]
         tmins += [o['albedo'].ds_meas.time.values.min(),
-                  o['snowmelt'].ds_meas_snow.time.values.min(),
-                  o['snowmelt'].ds_meas_melt.time.values.min()]
+                  o['wet'].ds_meas_wet.time.values.min()]
         tmaxs += [o['albedo'].ds_meas.time.values.max(),
-                  o['snowmelt'].ds_meas_snow.time.values.max(),
-                  o['snowmelt'].ds_meas_melt.time.values.max()]
+                  o['wet'].ds_meas_wet.time.values.max()]
     pad = np.timedelta64(5, 'D')
     tmin, tmax = min(tmins) - pad, max(tmaxs) + pad
 
@@ -184,19 +184,19 @@ def main():
 
             o['albedo'].get_model_albedo(sub)
             o['albedo'].get_deltas(method='march_mean')
-            a_loss = o['albedo'].log_loss(sigma=ALBEDO_SIGMA)
+            a_loss = o['albedo'].crps_loss(sigma=ALBEDO_SIGMA)
 
-            o['snowmelt'].get_model_snow(sub)
-            s_loss, m_loss = o['snowmelt'].bernoulli_loss()
+            o['wet'].get_model_wet(sub)
+            w_loss = o['wet'].brier_loss()
 
             # area-weighted by ds.weight rather than a flat mean across
             # points, and truncated to the period the observation covers
             # (pre-reduced above, since mass_balance's own 2000-2020 span
-            # is far wider than what albedo/snow need)
+            # is far wider than what albedo/wet need)
             o['mb'].mod = float(combo_mb_weighted[gmask].sum()) / o['mb'].n_years
-            mb_loss = o['mb'].log_loss(mod=o['mb'].mod)
+            mb_loss = o['mb'].crps_loss(mod=o['mb'].mod)
 
-            vals = dict(albedo=a_loss, snow=s_loss, melt=m_loss, mb=mb_loss)
+            vals = dict(albedo=a_loss, wet=w_loss, mb=mb_loss)
             for k, v in vals.items():
                 per_glacier[g][k][c] = float(v)
                 totals[k] += float(v)
@@ -208,22 +208,25 @@ def main():
         if c % 10 == 0 or c == n_combos - 1:
             print(f'  [{c + 1}/{n_combos}] kp={grid["kp_of_point"][c * n_base]:.1f} '
                   f'wf={grid["wind_factor_of_point"][c * n_base]:.1f} '
+                  + (f'lr={grid["lapse_rate_of_point"][c * n_base]:.1f} ' if lr_values is not None else '') +
                   f'total={losses["total"][c]:.3f}', flush=True)
 
-    # combos were built kp-major, so index c = i_kp * n_wf + j_wf
-    shape = (len(kp_values), len(wf_values))
+    # combos were built kp-major, then wind_factor, then lapse_rate (if gridded)
+    shape = (len(kp_values), len(wf_values)) + ((len(lr_values),) if lr_values is not None else ())
     grids = {k: v.reshape(shape) for k, v in losses.items()}
     per_glacier_grids = {f'{g}_{k}': v.reshape(shape)
                          for g, kv in per_glacier.items() for k, v in kv.items()}
 
-    np.savez(args.loss_fn, kp=kp_values, wind_factor=wf_values,
+    lapse_kw = {} if lr_values is None else dict(lapse_rate=lr_values)
+    np.savez(args.loss_fn, kp=kp_values, wind_factor=wf_values, **lapse_kw,
              glaciers=np.array(glaciers), start=np.array(start),
              end=np.array(end), n_base=n_base, **grids, **per_glacier_grids)
     print(f'\nWrote {args.loss_fn}', flush=True)
 
     best = np.unravel_index(np.nanargmin(grids['total']), shape)
     print(f'Best total {grids["total"][best]:.3f} at '
-          f'kp={kp_values[best[0]]:.1f}, wind_factor={wf_values[best[1]]:.1f}',
+          f'kp={kp_values[best[0]]:.1f}, wind_factor={wf_values[best[1]]:.1f}'
+          + (f', lapse_rate={lr_values[best[2]]:.1f}' if lr_values is not None else ''),
           flush=True)
 
 
