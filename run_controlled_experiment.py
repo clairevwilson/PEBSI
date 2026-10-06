@@ -26,13 +26,17 @@ from project.parameters import (host, HOST_PATHS, BASE_CONFIG,
                                 GLACIERS, translate_rgi)
 
 RUN = os.environ.get('RUN', 'controlled')
+START_DATE = os.environ.get('START_DATE', '1997-04-01')
 END_DATE = os.environ.get('END_DATE', '2015-09-01')
+STORE_VARS = os.environ.get('STORE_VARS', 'MB,EB,climate').split(',')
+OUTPUT_FREQ = os.environ.get('OUTPUT_FREQ', 'hourly')
+DUST_FACTOR = float(os.environ.get('DUST_FACTOR', 500))
 DEPOSITION = os.environ.get('DEPOSITION', 'UKESM')
-BEST_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/best.zarr'
+BEST_FN = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/best.zarr'
 
 sim_type = os.environ.get('SIM_TYPE', 'base')
 output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/{RUN}/{sim_type}/'
-out_config_fn = f'{sim_type}.yaml'
+out_config_fn = f'{RUN}_{sim_type}.yaml'
 
 rgi_ids = [translate_rgi[g]['6'] for g in GLACIERS]
 
@@ -76,15 +80,18 @@ def build_config(kp=None, wind_factor=None):
 
     # PHYSICS
     configs['option_ice_thickness_tif'] = False 
-    configs['initial_ice_depth'] = 200
+    configs['initial_ice_depth'] = 500
+    configs['option_preclimit'] = True
+    configs['dust_factor'] = DUST_FACTOR
 
     # CONFIGURATION
-    configs['start_date'] = '1997-04-01'
+    configs['start_date'] = START_DATE
     configs['end_date'] = END_DATE
     configs['debug'] = True
     configs['store_data'] = True
     configs['progress_bar'] = False
-    configs['store_vars'] = ['MB','EB','climate']
+    configs['store_vars'] = STORE_VARS
+    configs['output_freq'] = OUTPUT_FREQ
 
     # None falls back to MERRA-2 deposition
     configs['deposition_data'] = None if DEPOSITION == 'MERRA2' else DEPOSITION
