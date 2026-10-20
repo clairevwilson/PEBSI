@@ -78,4 +78,5 @@ BASE_CONFIG = dict(
     precgrad=0.000100,
     bias_vars=['temp'],
     n_layers=25,
+    dust_factor=500,
 )

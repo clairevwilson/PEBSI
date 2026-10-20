@@ -24,6 +24,20 @@ def _load_emulator(path):
         biases.append(jnp.array(data[f'biases_{i}'], dtype=jnp.float32))
         i += 1
 
+    param_names = meta['param_names']
+
+    # input transforms and activation recorded at training time; older
+    # emulators predate these fields and used linear scaling + ReLU
+    input_transform = meta.get('input_transform', {})
+    activation = meta.get('activation', 'relu')
+    for name, t in input_transform.items():
+        if t not in ('log1p', 'identity', 'none', None):
+            raise ValueError(f"Unsupported input_transform {t!r} for {name!r}")
+
+    # one flag per input column for the log1p-transformed params
+    log1p_mask = jnp.array(
+        [input_transform.get(name) == 'log1p' for name in param_names], dtype=bool)
+
     return {
         'weights':        weights,
         'biases':         biases,
@@ -32,11 +46,29 @@ def _load_emulator(path):
         'input_min':      jnp.array(data['input_min'],      dtype=jnp.float32),
         'input_max':      jnp.array(data['input_max'],      dtype=jnp.float32),
         'flx_slr':        jnp.array(data['flx_slr'],        dtype=jnp.float32),
-        'param_names':    meta['param_names'],
+        'param_names':    param_names,
+        'log1p_mask':     log1p_mask,
+        'activation':     activation,
     }
 
 _emu = _load_emulator(_NPZ_PATH)
 _flx_slr_norm = _emu['flx_slr'] / _emu['flx_slr'].sum()  # normalized for BBA
+
+# jax.nn versions are overflow-safe, so their derivatives stay finite
+_ACTIVATIONS = {
+    'relu':     jax.nn.relu,
+    'tanh':     jnp.tanh,
+    'logistic': jax.nn.sigmoid,
+    'identity': lambda x: x,
+    'softplus': jax.nn.softplus,
+    'silu':     jax.nn.silu,
+}
+_activation_fn = _ACTIVATIONS[_emu['activation']]
+
+
+def _transform_inputs(X):
+    """Applies the recorded input transforms (log1p on flagged columns) to raw X."""
+    return jnp.where(_emu['log1p_mask'], jnp.log1p(X), X)
 
 
 def _forward(x):
@@ -44,7 +76,7 @@ def _forward(x):
     for i, (W, b) in enumerate(zip(_emu['weights'], _emu['biases'])):
         x = x @ W + b
         if i < len(_emu['weights']) - 1:
-            x = jnp.maximum(x, 0.0)  # ReLU
+            x = _activation_fn(x)
     spectral = x @ _emu['pca_components'] + _emu['pca_mean']
     return jnp.clip(spectral, 0.0, 1.0)  # (480,)
 
@@ -70,14 +102,21 @@ def get_albedo(state, params, forcings):
 
     rds = state.lgrainsize[:, 0]
     rho = state.ldensity[:, 0]
-    lh = state.lheight[:, 0]
 
-    # concentrations in ppb (mass of impurity / mass of snow)
-    layer_mass = lh * rho
-    safe_mass = jnp.where(layer_mass > 0, layer_mass, 1.0)
-    cBC = state.lBC[:, 0] / safe_mass * 1e9
-    cOC = state.lOC[:, 0] / safe_mass * 1e9
-    cdust = state.ldust[:, 0] / safe_mass * 1e9
+    # concentrations in ppb over a fixed near-surface depth rather than the
+    # top layer alone: a melting top layer's mass can shrink toward zero,
+    # and dividing by it made concentration -> albedo -> melt -> layer mass
+    # a runaway loop in the gradients. Each layer counts by the fraction of
+    # it lying within albedo_impurity_depth of the surface
+    lheight = state.lheight
+    layer_top = jnp.cumsum(lheight, axis=1) - lheight
+    safe_height = jnp.where(lheight > 0, lheight, 1.0)
+    frac_within = jnp.clip((params.albedo_impurity_depth - layer_top) / safe_height, 0.0, 1.0)
+    window_mass = jnp.sum(lheight * state.ldensity * frac_within, axis=1)
+    safe_mass = jnp.where(window_mass > 0, window_mass, 1.0)
+    cBC = jnp.sum(state.lBC * frac_within, axis=1) / safe_mass * 1e9
+    cOC = jnp.sum(state.lOC * frac_within, axis=1) / safe_mass * 1e9
+    cdust = jnp.sum(state.ldust * frac_within, axis=1) / safe_mass * 1e9
 
     has_refreeze = state.lrefreeze[:, 0] > 1e-3
     has_water = state.lwater[:, 0] > 1e-3
@@ -96,7 +135,9 @@ def get_albedo(state, params, forcings):
     X = jnp.stack([rds, rho, cBC, cOC, cdust,
                    solzen, direct, shp], axis=1)  # (N, 8)
 
-    # min-max scale to [0, 1]
+    # recorded input transforms first: input_min/input_max are in the
+    # transformed space. Then min-max scale to [0, 1]
+    X = _transform_inputs(X)
     X = (X - _emu['input_min']) / (_emu['input_max'] - _emu['input_min'] + 1e-30)
     X = jnp.clip(X, 0.0, 1.0)
 
