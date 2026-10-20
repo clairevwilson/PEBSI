@@ -28,42 +28,52 @@ class EnergyBalanceDriver():
         y_melt, _ = self.compute_fluxes(t_melt, state, forcings, point_attrs)
 
         # 2. solve for the root of the energy balance equation
-        # initialize two starting guesses
-        t0 = state.surftemp     # previous surface temperature
-        t1 = forcings.temp     # current air temperature
+        # derivative comes from the implicit function theorem
+        def residual(t):
+            return self.compute_fluxes(t, state, forcings, point_attrs)[0]
 
-        # evaluate the initial energy balance residuals for both guesses
-        y0, _ = self.compute_fluxes(t0, state, forcings, point_attrs)
-        y1, _ = self.compute_fluxes(t1, state, forcings, point_attrs)
+        def secant_solve(f, t0):
+            # second starting guess is the current air temperature
+            t1 = forcings.temp
+            y0 = f(t0)
+            y1 = f(t1)
 
-        # define the internal loop step that JAX will execute
-        def secant_step(carry, i):
-            # unpack the current state of the root finder
-            t_prev, t_curr, y_prev, y_curr = carry
+            def secant_step(carry, i):
+                # unpack the current state of the root finder
+                t_prev, t_curr, y_prev, y_curr = carry
 
-            # must mask the whole update for differentiability
-            converged = jnp.abs(y_curr) < 1e-6
+                # stop updating converged points
+                converged = jnp.abs(y_curr) < 1e-6
 
-            # calculate the denominator with divide-by-zero safeguard
-            denom = jnp.where(jnp.abs(y_curr - y_prev) < 1e-4, 1e-4, y_curr - y_prev)
+                # calculate the denominator with divide-by-zero safeguard
+                denom = jnp.where(jnp.abs(y_curr - y_prev) < 1e-4, 1e-4, y_curr - y_prev)
 
-            # standard secant formula to calculate the next temperature guess
-            t_next_secant = t_curr - y_curr * (t_curr - t_prev) / denom
-            t_next_secant = jnp.clip(t_next_secant, -60.0, 0.0) # clip to physical bounds
-            t_next = jnp.where(converged, t_curr, t_next_secant)
+                # standard secant formula to calculate the next temperature guess
+                t_next_secant = t_curr - y_curr * (t_curr - t_prev) / denom
+                t_next_secant = jnp.clip(t_next_secant, -60.0, 0.0) # clip to physical bounds
+                t_next = jnp.where(converged, t_curr, t_next_secant)
 
-            # evaluate the new energy balance residual with the updated temperature
-            y_next_secant, _ = self.compute_fluxes(t_next, state, forcings, point_attrs)
-            y_next = jnp.where(converged, y_curr, y_next_secant)
+                # evaluate the new energy balance residual with the updated temperature
+                y_next = jnp.where(converged, y_curr, f(t_next))
 
-            # pass the updated values forward to the next iteration
-            return (t_curr, t_next, y_curr, y_next), None
+                # pass the updated values forward to the next iteration
+                return (t_curr, t_next, y_curr, y_next), None
 
-        # run a strict, fixed-length loop of 8 steps using jax.lax.scan
-        # 98% of solutions are converged in 8 steps - should not be any higher or lower
-        initial_carry = (t0, t1, y0, y1)
-        final_carry, _ = jax.lax.scan(secant_step, initial_carry, xs=jnp.arange(8), length=8)
-        surftemp_cooling = jnp.clip(final_carry[1], -60.0, 0.0)
+            # run a strict, fixed-length loop of 8 steps using jax.lax.scan
+            # 98% of solutions are converged in 8 steps - should not be any higher or lower
+            final_carry, _ = jax.lax.scan(secant_step, (t0, t1, y0, y1), xs=jnp.arange(8), length=8)
+            return jnp.clip(final_carry[1], -60.0, 0.0)
+
+        def tangent_solve(linear_residual, y):
+            # points are independent, so dF/dT is diagonal: one product gives it
+            dF_dT = linear_residual(jnp.ones_like(y))
+            return y / dF_dT
+
+        surftemp_root = jax.lax.custom_root(residual, state.surftemp, secant_solve, tangent_solve)
+
+        # a temperature pinned at a clip bound is not a root, and does not move
+        at_bound = (surftemp_root <= -60.0) | (surftemp_root >= 0.0)
+        surftemp_cooling = jnp.where(at_bound, jax.lax.stop_gradient(surftemp_root), surftemp_root)
 
         # 3. extract final results for melting or cooling case
         is_melting = y_melt > 0.0
