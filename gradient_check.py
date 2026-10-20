@@ -77,6 +77,7 @@ def build_config(n_points, start_date, end_date, heateq):
         option_dynamics=False,
         constant_freshgrainsize=54.5,
         bias_vars=['temp'],
+        dust_factor=500,
         kp=2.5,
         wind_factor=3.0,
         **PATHS,
