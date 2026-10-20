@@ -255,11 +255,14 @@ def main(
 
     else:
         # daily: only one record per period is retained on-device
-        # the hourly step is checkpointed too: otherwise a period's backward
-        # pass holds every intermediate of all its steps at once
+        # optionally checkpoint the hourly step too: otherwise a period's
+        # backward pass holds every intermediate of all its steps at once,
+        # which is faster but sets the point limit on a GPU
+        hour_step = scan_step if static_args.checkpoint_hourly else step
+
         def period_step(period_state, period_forcings):
             next_state, hourly_records = jax.lax.scan(
-                scan_step, period_state, period_forcings, unroll=1
+                hour_step, period_state, period_forcings, unroll=1
             )
             return next_state, aggregate_period(hourly_records)
 

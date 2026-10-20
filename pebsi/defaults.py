@@ -79,7 +79,7 @@ initial_LAP_fn = 'data/init/initial_laps_profile.csv'       # Initial LAP conten
 # UTILITY
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
-emulator_fn = 'data/snicar_emulator.npz'                    # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
+emulator_fn = 'data/snicar_emulator_newest.npz'                  # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
 sigma_table_fn = 'data/point_density.csv'                   # Per-glacier mass balance sigma [cm w.e. a-1]
 
 # CLIMATE
@@ -148,6 +148,7 @@ initial_ice_depth = 50                  # default amount of initial ice [m] (unl
 store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
 output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', or 'monthly' (lower resolution reduces VRAM and disk usage)
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
+checkpoint_hourly = False               # With differentiable and daily output, also checkpoint each hourly step: ~4x less VRAM per point, one extra forward pass
 top_water_depth = 0.5                   # Depth below the surface [m] over which top_water sums liquid water
 
 # METHODS
@@ -292,6 +293,7 @@ dynamics_sliding_m = 1.0 / 3.0         # Sliding law exponent
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
 diffuse_cloud_limit = 0.6   # Threshold to consider cloudy vs clear-sky in SNICAR [-]
+albedo_impurity_depth = 0.05 # Near-surface depth over which impurity concentrations are averaged for SNICAR [m]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
 ksp_BC = 1                  #* Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)

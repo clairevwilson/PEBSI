@@ -31,7 +31,7 @@ import pebsi.defaults as defaults
 # make choices in the compilation (e.g., options / methods)
 static_fields = [
     'n_layers', 'albedo_TOD', 'bias_vars', 'n_heat_steps',
-    'store_vars', 'differentiable', 'steps_per_output', 'month_lengths',
+    'store_vars', 'differentiable', 'checkpoint_hourly', 'steps_per_output', 'month_lengths',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
     'carbon_vars','climate_all_vars','climate_optional_vars',
