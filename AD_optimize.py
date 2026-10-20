@@ -789,6 +789,7 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     value_and_grad.lower = lambda log_kp, log_wind_factor: jitted.lower(
         log_kp, log_wind_factor, initial_state, stacked, tail, point_attrs)
     value_and_grad.args = (initial_state, stacked, tail, point_attrs)
+    value_and_grad.loss_fn = loss_fn
 
     # bare, no-aux, single-pytree-arg wrapper around the SAME loss_fn, for
     # optax.lbfgs's linesearch: it differentiates this function itself
@@ -953,6 +954,18 @@ class _NonFiniteGradient(Exception):
     """Raised out of the trust-region objective when a pass comes back bad."""
 
 
+def write_progress(best, history):
+    """
+    Rewrites the best parameters so far and the full evaluation history
+    after every objective evaluation, so a run that hits its time limit
+    still leaves its results behind.
+    """
+    fn = os.path.join(HOST_PATHS[host]['output_fp'], 'AD_optimize_progress.yaml')
+    os.makedirs(os.path.dirname(fn), exist_ok=True)
+    with open(fn, 'w') as f:
+        yaml.dump(dict(glaciers=GLACIERS, best=best, history=history), f, sort_keys=False)
+
+
 def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
                                   model, obs, n_steps=30, initial_radius=0.2,
                                   gtol=1e-4, xtol=1e-10, hessian='bfgs'):
@@ -1036,6 +1049,7 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
                             radius=progress['radius']))
         if float(total) < best['total']:
             best.update(step=step, total=float(total), kp=cur_kp, wind_factor=cur_wf)
+        write_progress(best, history)
 
         print(f"{step:>4}  {progress['n_iter']:>4}  {float(total):>12.2f}  "
               f"{float(jnp.sum(metrics['albedo'])):>10.3f}  "
@@ -1090,6 +1104,9 @@ def main():
     parser.add_argument('-n', '--n_steps', type=int, default=30)
     parser.add_argument('-lr', '--learning_rate', type=float, default=5e-2)
     parser.add_argument('--chunk_days', type=int, default=CHUNK_DAYS)
+    parser.add_argument('--checkpoint_hourly', action='store_true',
+                        help='also checkpoint each hourly step: ~4x less VRAM per point, '
+                             'one extra forward pass; needed above a few thousand points')
     parser.add_argument('--optimizer', choices=['trust', 'adam', 'lbfgs'],
                         default='trust')
     parser.add_argument('--tr_radius', type=float, default=0.2,
@@ -1102,7 +1119,7 @@ def main():
           flush=True)
 
     t0 = _tick('starting')
-    config_fn = build_config()
+    config_fn = build_config(dict(checkpoint_hourly=opts.checkpoint_hourly))
     print(f'Config -> {config_fn}', flush=True)
 
     model = init_pebsi(config_fn)
