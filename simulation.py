@@ -21,7 +21,8 @@ import yaml
 # External libraries
 import jax
 os.environ["JAX_TRACEBACK_FILTERING"] = "off"   # show full error statements
-jax.config.update("jax_enable_x64", True)       # enable floaf64 storage
+# float64 unless PEBSI_FLOAT32=1, which turns every float64 request into float32
+jax.config.update("jax_enable_x64", os.environ.get('PEBSI_FLOAT32', '0') != '1')
 import numpy as np
 import pandas as pd
 import jax.numpy as jnp
