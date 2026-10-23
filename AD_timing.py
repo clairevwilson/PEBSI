@@ -54,9 +54,11 @@ def glacier_ids():
     return ids
 
 
-def build_config(n_points, checkpoint_hourly, tolerance=None):
+def build_config(n_points, checkpoint_hourly, tolerance=None, tif_ice=False):
     if n_points is None:
         overrides = dict(checkpoint_hourly=checkpoint_hourly)
+        if tif_ice:
+            overrides.update(option_ice_thickness_tif=True, option_preclimit=False)
         tag = 'AD_timing_adaptive'
         if tolerance is not None:
             overrides['point_error_tolerance'] = tolerance
@@ -72,6 +74,73 @@ def build_config(n_points, checkpoint_hourly, tolerance=None):
         option_windmaps=False,
     )
     return ad.build_config(overrides, tag=f'AD_timing_{n_points}')
+
+
+def albedo_tangent(model, obs, stacked, tail, model_days, log_kp, log_wf, g_param):
+    """
+    Forward-mode derivative of every point's daily albedo with respect to
+    one glacier's log(kp), over the whole run. Saves the albedo and its
+    tangent to AD_optimize's output folder and prints where and when the
+    tangent is largest on that glacier.
+    """
+    static_args = model.config.static_args
+    dynamic_args = model.config.dynamic_args
+    point_attrs = model.point_attrs
+    n_points = model.terrain.N_POINTS
+    glacier_of_point = np.zeros(n_points, dtype=np.int32)
+    for g, idx in enumerate(obs['point_idx']):
+        glacier_of_point[idx] = g
+    wind_factor = jnp.exp(jnp.asarray(log_wf))[glacier_of_point]
+
+    def daily_albedo(lkp):
+        dyn = dynamic_args._replace(kp=jnp.exp(lkp)[glacier_of_point], wind_factor=wind_factor)
+
+        def chunk(state, forcings):
+            state, records = ad.pebsi_main(state, forcings, point_attrs, static_args, dyn)
+            return state, records.albedo
+
+        state, albedo = jax.lax.scan(chunk, model.initial_state, stacked[0])
+        albedo = albedo.reshape(-1, n_points)
+        if tail is not None:
+            _, records = ad.pebsi_main(state, tail[0], point_attrs, static_args, dyn)
+            albedo = jnp.concatenate([albedo, records.albedo])
+        return albedo
+
+    tangent = np.zeros(len(ad.GLACIERS))
+    tangent[g_param] = 1.0
+    t0 = time.time()
+    albedo, dalbedo = jax.jit(lambda l, t: jax.jvp(daily_albedo, (l,), (t,)))(
+        jnp.asarray(log_kp), jnp.asarray(tangent))
+    albedo, dalbedo = np.asarray(albedo), np.asarray(dalbedo)
+    print(f'albedo tangent: {(time.time() - t0) / 3600:.2f} hr', flush=True)
+
+    name = ad.GLACIERS[g_param]
+    out_fn = ad.HOST_PATHS[ad.host]['output_fp'] + f'albedo_tangent_{name}.npz'
+    np.savez(out_fn, albedo=albedo, dalbedo=dalbedo, days=np.asarray(model_days),
+             point_idx=obs['point_idx'][g_param], elev=np.asarray(model.terrain.elev_n),
+             lat=np.asarray(model.terrain.lat_n), lon=np.asarray(model.terrain.lon_n))
+    print(f'saved {out_fn}', flush=True)
+
+    idx = obs['point_idx'][g_param]
+    d = np.abs(dalbedo[:, idx])
+    elev = np.asarray(model.terrain.elev_n)[idx]
+    print(f'\n{name}: |d albedo / d log kp| over {d.shape[0]} days x {len(idx)} points')
+    print(f'  median {np.median(d):.3e}  p99 {np.percentile(d, 99):.3e}  max {d.max():.3e}')
+    print(f'  point-days above 1: {(d > 1).sum()}, above 10: {(d > 10).sum()}')
+
+    print(f'\nlargest point-days:')
+    print(f'  {"point":>6} {"elev":>7} {"day":<12} {"albedo":>7} {"d albedo/d log kp":>18}')
+    flat = np.argsort(d, axis=None)[::-1][:15]
+    for t, j in zip(*np.unravel_index(flat, d.shape)):
+        print(f'  {idx[j]:>6} {elev[j]:>7.0f} {str(model_days[t].date()):<12} '
+              f'{albedo[t, idx[j]]:>7.3f} {dalbedo[t, idx[j]]:>18.3e}')
+
+    by_year = pd.Series(d.max(axis=1), index=model_days).groupby(model_days.year).max()
+    print('\nmax |d albedo / d log kp| by year:')
+    print('  ' + '  '.join(f'{y}:{v:.1e}' for y, v in by_year.items()))
+    by_month = pd.Series(d.max(axis=1), index=model_days).groupby(model_days.month).max()
+    print('max by month:')
+    print('  ' + '  '.join(f'{m}:{v:.1e}' for m, v in by_month.items()), flush=True)
 
 
 def directional(value_and_grad, log_kp, log_wf, g_param):
@@ -180,6 +249,10 @@ def main():
     parser.add_argument('--jacfwd', action='store_true',
                         help='forward-mode Jacobian of every per-glacier loss term '
                              'with respect to every glacier\'s log(kp) and log(wind_factor)')
+    parser.add_argument('--tif_ice', action='store_true',
+                        help='ice thickness from the tif and no preclimit, as in the Oct 19 calibration')
+    parser.add_argument('--albedo_tangent', choices=ad.GLACIERS,
+                        help='save d(daily albedo at every point)/d(log kp of this glacier)')
     parser.add_argument('--jvp', choices=ad.GLACIERS,
                         help='forward-mode derivative of every per-glacier loss term '
                              'with respect to this glacier\'s log(kp)')
@@ -195,7 +268,7 @@ def main():
     print(f'JAX backend: {jax.default_backend()}  device: {device.device_kind}', flush=True)
 
     t0 = time.time()
-    config_fn = build_config(opts.n_points, opts.checkpoint_hourly, opts.tolerance)
+    config_fn = build_config(opts.n_points, opts.checkpoint_hourly, opts.tolerance, opts.tif_ice)
 
     if opts.shading_only:
         args = sim.get_args(parse=False).parse_args([])
@@ -222,7 +295,8 @@ def main():
     log_kp = np.log(np.full(n_glaciers, ad.baseline['kp']))
     log_wf = np.log(np.full(n_glaciers, ad.baseline['wind_factor']))
     if opts.at_result:
-        with open(ad.HOST_PATHS[ad.host]['output_fp'] + 'AD_optimize_result.yaml') as f:
+        result_fn = 'AD_optimize_result_finiteice.yaml' if opts.tif_ice else 'AD_optimize_result.yaml'
+        with open(ad.HOST_PATHS[ad.host]['output_fp'] + result_fn) as f:
             result = yaml.safe_load(f)
         log_kp, log_wf = np.log(result['kp']), np.log(result['wind_factor'])
         print(f'evaluating at AD_optimize result: kp {result["kp"]}, '
@@ -249,6 +323,11 @@ def main():
         stats = device.memory_stats() or {}
         print(f'device limit: {stats.get("bytes_limit", 0) / 1e9:.1f} GB  '
               f'in use: {stats.get("bytes_in_use", 0) / 1e9:.1f} GB', flush=True)
+
+        if opts.albedo_tangent:
+            albedo_tangent(model, obs, stacked, tail, model_days, log_kp, log_wf,
+                           ad.GLACIERS.index(opts.albedo_tangent))
+            continue
 
         if opts.jvp:
             directional(value_and_grad, log_kp, log_wf, ad.GLACIERS.index(opts.jvp))

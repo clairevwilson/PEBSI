@@ -10,9 +10,9 @@ rather than a handful of named benchmark sites, and the objective is
 built from the three glacier-wide error metrics in
 project/glacierwide_loss.py:
 
-  - remotely sensed albedo         (Gaussian NLL on the residuals)
-  - SAR wet extent                 (Bernoulli log-loss)
-  - Hugonnet glacier-wide balance  (Gaussian NLL on the run's cumulative total)
+  - remotely sensed albedo         (Gaussian CRPS / sigma on the raw albedo)
+  - SAR wet extent                 (Brier score)
+  - Hugonnet glacier-wide balance  (Gaussian CRPS / sigma on the run's cumulative total)
 
 Every glacier keeps its own (kp, wind_factor) pair and its own losses;
 the objective is their sum, so a glacier's gradient never depends on
@@ -56,6 +56,7 @@ if os.environ.get('PEBSI_DEBUG_NANS', '0') != '0':
     jax.config.update("jax_debug_nans", True)
     jax.config.update("jax_debug_infs", True)
 import jax.numpy as jnp
+from jax.scipy.special import ndtr
 import optax
 import numpy as np
 import pandas as pd
@@ -82,9 +83,6 @@ CHUNK_DAYS = 365
 # through the whole differentiated graph, so the list is kept minimal
 STORE_VARS = ('mass_balance', 'albedo', 'top_water')
 
-# observation uncertainty
-BERNOULLI_EPS = 1e-3
-
 # near-surface water [m w.e.] above which the model surface is considered wet
 WET_WATER_THRESHOLD = 0.002
 
@@ -93,9 +91,6 @@ WET_WATER_WIDTH = 0.001
 
 # months of the year the albedo product is scored over
 ALBEDO_MONTHS = list(range(3, 10))
-
-ALBEDO_USE_DELTAS = True
-ALBEDO_BASELINE_MONTH = 3
 
 
 def build_config(overrides=None, tag='AD_optimize'):
@@ -211,65 +206,7 @@ def load_albedo_obs(name, lon, lat, point_idx, model_days, n_points, use='s2'):
 
     day_idx, keep = _match_times(measured.time.values, model_days)
     values = measured['albedo'].transpose('time', 'point').values[keep]
-    times = pd.to_datetime(measured.time.values)[keep]
-    return (day_idx,
-            _scatter_to_points(values.astype(np.float32), point_idx, n_points),
-            np.asarray(times.year), np.asarray(times.month))
-
-
-def _albedo_entry(name, lon, lat, point_idx, model_days, n_points,
-                  year_pos, meas_march):
-    """
-    Loads one glacier's albedo observations and, when ALBEDO_USE_DELTAS is
-    on, works out the MEASURED per-year, per-point March baseline they are
-    scored relative to -- the observation half of
-    Albedo.get_deltas(method='march_mean'). Writes that baseline into the
-    shared (n_years, N_POINTS) `meas_march` array in place.
-
-    A year with no March scene at a point inherits that point's mean over
-    the years that do have one, exactly as get_deltas fills its NaNs. If a
-    point has no March scene in ANY year the baseline stays NaN, and every
-    observation at that point is marked invalid here rather than later:
-    get_deltas would hand those on as NaN deltas for a downstream nanmean
-    to skip, and dropping them at the mask is the same thing, but it also
-    keeps NaN out of the differentiated graph entirely.
-
-    Returns (day_idx, values, year_idx) -- the third element is each
-    surviving observation's position on the run's year axis.
-    """
-    day_idx, values, obs_years, obs_months = load_albedo_obs(
-        name, lon, lat, point_idx, model_days, n_points)
-
-    year_idx = np.array([year_pos[int(y)] for y in obs_years], dtype=np.int32)
-    if not ALBEDO_USE_DELTAS:
-        return day_idx, values, year_idx
-
-    block = values[:, point_idx]                        # (T, n_glacier_points)
-    baseline = np.full((len(year_pos), len(point_idx)), np.nan, dtype=np.float64)
-    is_march = obs_months == ALBEDO_BASELINE_MONTH
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)  # all-NaN slices
-        for y, i in year_pos.items():
-            sel = np.where(is_march & (obs_years == y))[0]
-            if len(sel):
-                baseline[i] = np.nanmean(block[sel], axis=0)
-
-        across = np.nanmean(baseline, axis=0)            # (n_glacier_points,)
-    missing = np.isnan(baseline)
-    baseline[missing] = np.broadcast_to(across, baseline.shape)[missing]
-    meas_march[:, point_idx] = baseline
-
-    # an observation whose baseline is undefined cannot form a delta
-    usable = np.isfinite(baseline)[year_idx]             # (T, n_glacier_points)
-    orphan = ~np.isfinite(across)
-    if orphan.any():
-        lost = int(np.sum(np.isfinite(block) & ~usable))
-        print(f'  ! {name}: {orphan.sum()} of {len(point_idx)} points have no '
-              f'March scene in any year, so no delta baseline; '
-              f'{lost} of {int(np.isfinite(block).sum())} albedo observations '
-              'dropped', flush=True)
-    values[:, point_idx] = np.where(usable, block, np.nan)
-    return day_idx, values, year_idx
+    return day_idx, _scatter_to_points(values.astype(np.float32), point_idx, n_points)
 
 
 def load_wet_obs(name, lon, lat, point_idx, model_days, n_points, direction=None):
@@ -309,22 +246,13 @@ def build_observations(model, model_days):
     obs = {'albedo': [], 'wet': [],
            'mb_meas': [], 'mb_sigma': [], 'mb_years': [], 'mb_end_day': [], 'point_idx': []}
 
-    # year axis the March baselines live on, one entry per calendar year the
-    # run touches. Observations are matched onto model days first, so their
-    # years are a subset of these.
-    years = np.unique(model_days.year)
-    year_pos = {int(y): i for i, y in enumerate(years)}
-    obs['years'] = years
-    obs['meas_march'] = np.full((len(years), n_points), np.nan, dtype=np.float64)
-
     for name in GLACIERS:
         point_idx = np.where(rgiid == translate_rgi[name]['6'])[0]
         assert len(point_idx) > 0, f'no simulation points landed on {name}'
         obs['point_idx'].append(point_idx)
 
         obs['albedo'].append(
-            _albedo_entry(name, lon, lat, point_idx, model_days, n_points,
-                          year_pos, obs['meas_march']))
+            load_albedo_obs(name, lon, lat, point_idx, model_days, n_points))
         wet = load_wet_obs(name, lon, lat, point_idx, model_days, n_points)
         obs['wet'].append(wet)
 
@@ -358,44 +286,35 @@ def _pack_metric(entries, chunk_bounds, n_points):
     possibly None -- into per-chunk arrays padded to a common width so
     every chunk compiles to the same shapes.
 
-    An entry may carry a third element, a per-observation integer label
-    (albedo's year index); it is packed alongside as a (n_glaciers, K)
-    array so the graph can group observations by year.
-
-    Returns (idx, meas, mask, tag, counts): idx/meas/mask are lists (one
+    Returns (idx, meas, mask, counts): idx/meas/mask are lists (one
     per chunk) of (n_glaciers, K, N_POINTS) arrays holding the day index
     within that chunk, the observed value, and whether the entry is real;
-    tag is the matching list of (n_glaciers, K) label arrays, or None if
-    no entry carried labels; counts is the (n_glaciers,) total number of
-    valid observed values, which turns the accumulated sums into means.
+    counts is the (n_glaciers,) total number of valid observed values,
+    which turns the accumulated sums into means.
     """
     n_glaciers = len(entries)
     n_chunks = len(chunk_bounds)
-    tagged = any(e is not None and len(e) > 2 for e in entries)
 
     # per (glacier, chunk) selection of observations falling in that chunk
     selections = [[None] * n_chunks for _ in range(n_glaciers)]
     for g, entry in enumerate(entries):
         if entry is None:
             continue
-        day_idx, values = entry[0], entry[1]
-        labels = entry[2] if tagged else None
+        day_idx, values = entry
         for c, (d0, d1) in enumerate(chunk_bounds):
             sel = np.where((day_idx >= d0) & (day_idx < d1))[0]
-            selections[g][c] = (day_idx[sel] - d0, values[sel],
-                                None if labels is None else labels[sel])
+            selections[g][c] = (day_idx[sel] - d0, values[sel])
 
     width = max((len(s[0]) for row in selections for s in row if s is not None),
                 default=0)
     width = max(width, 1)  # keep a well-formed (all-masked) block if empty
 
     counts = np.zeros(n_glaciers, dtype=np.int64)
-    idx_chunks, meas_chunks, mask_chunks, tag_chunks = [], [], [], []
+    idx_chunks, meas_chunks, mask_chunks = [], [], []
     for c in range(n_chunks):
         idx = np.zeros((n_glaciers, width), dtype=np.int32)
         meas = np.zeros((n_glaciers, width, n_points), dtype=np.float32)
         mask = np.zeros((n_glaciers, width, n_points), dtype=bool)
-        tag = np.zeros((n_glaciers, width), dtype=np.int32)
         for g in range(n_glaciers):
             s = selections[g][c]
             if s is None or len(s[0]) == 0:
@@ -405,95 +324,12 @@ def _pack_metric(entries, chunk_bounds, n_points):
             valid = np.isfinite(s[1])
             meas[g, :n] = np.where(valid, s[1], 0.0)
             mask[g, :n] = valid
-            if s[2] is not None:
-                tag[g, :n] = s[2]
             counts[g] += int(valid.sum())
         idx_chunks.append(idx)
         meas_chunks.append(meas)
         mask_chunks.append(mask)
-        tag_chunks.append(tag)
 
-    return (idx_chunks, meas_chunks, mask_chunks,
-            tag_chunks if tagged else None, counts)
-
-
-def _march_baseline(obs, model_days, chunk_bounds):
-    """
-    Everything the March-referenced albedo delta needs that is a constant
-    of the run, plus the per-chunk selector that lets the MODEL half of the
-    baseline be accumulated as the forward pass goes.
-
-    The model's baseline is parameter-dependent, so it cannot be computed
-    up front the way get_deltas does from a finished run -- and it must not
-    cost a second pass, since a pass is the expensive thing here. Instead
-    the residual is expanded so a single chunked pass suffices. Writing
-    e_t = mod_t - meas_t and E = mod_march - meas_march, the delta residual
-    is just e_t - E[year, point], so
-
-        SSR = sum_t mask (e_t - E)^2
-            = sum_t mask e_t^2  -  2 sum_yp S1[y,p] E[y,p]
-              + sum_yp N[y,p] E[y,p]^2
-
-    with S1[y,p] the sum of masked residuals in that year at that point and
-    N[y,p] their count. S1 and mod_march accumulate additively over chunks
-    exactly like the raw sum of squares already does, and the correction is
-    applied once in finalize.
-
-    Returns:
-      weights  per-chunk (n_years, chunk_days) selector, 1 on the model
-               days inside that year's March window (get_deltas slices
-               MAR-01 to APR-01 inclusive, so Apr 1 is included). A year
-               with no model day in March PROPER is zeroed out rather than
-               left to average its lone Apr 1 -- a run starting Apr 1
-               would otherwise get a one-day "March" mean instead of
-               falling through to the across-year fill.
-      count    (n_years,) model days per March window, over the whole run
-      have     (n_years,) whether that year has a usable March window
-      meas     (n_years, N_POINTS) measured baseline, NaN replaced by 0 --
-               every entry it is missing at has N == 0 and S1 == 0, so the
-               placeholder is multiplied by exact zeros. The value is
-               neutralized BEFORE it enters the graph rather than the term
-               masked after, since 0 * NaN is NaN in a gradient.
-      n        (n_glaciers, n_years, N_POINTS) count of valid observations
-    """
-    years = obs['years']
-    n_years = len(years)
-    n_points = obs['meas_march'].shape[1]
-
-    in_month = model_days.month == ALBEDO_BASELINE_MONTH
-    in_march = in_month | ((model_days.month == 4) & (model_days.day == 1))
-    year_of_day = np.array([np.searchsorted(years, y) for y in model_days.year])
-
-    has_march = np.zeros(n_years, dtype=bool)
-    np.logical_or.at(has_march, year_of_day, np.asarray(in_month))
-
-    weights = []
-    count = np.zeros(n_years)
-    for d0, d1 in chunk_bounds:
-        w = np.zeros((n_years, d1 - d0), dtype=np.float64)
-        sel = np.where(np.asarray(in_march)[d0:d1])[0]
-        w[year_of_day[d0:d1][sel], sel] = 1.0
-        w[~has_march] = 0.0
-        count += w.sum(axis=1)
-        weights.append(w)
-
-    if count.sum() == 0:
-        raise ValueError(
-            f'ALBEDO_USE_DELTAS is on but {START_DATE} to {END_DATE} contains '
-            f'no model days in month {ALBEDO_BASELINE_MONTH}, so the March '
-            'baseline the deltas are referenced to is undefined. Widen the '
-            'window to include a March, or set ALBEDO_USE_DELTAS = False to '
-            'score raw albedo residuals.')
-
-    n = np.zeros((len(GLACIERS), n_years, n_points))
-    for g, entry in enumerate(obs['albedo']):
-        if entry is None:
-            continue
-        _, values, year_idx = entry
-        np.add.at(n[g], year_idx, np.isfinite(values).astype(np.float64))
-
-    return dict(weights=weights, count=count, have=count > 0,
-                meas=np.nan_to_num(obs['meas_march']), n=n)
+    return idx_chunks, meas_chunks, mask_chunks, counts
 
 
 def build_chunk_data(model, obs, model_days, chunk_bounds):
@@ -512,9 +348,6 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
     alb = _pack_metric(obs['albedo'], chunk_bounds, n_points)
     wet = _pack_metric(obs['wet'], chunk_bounds, n_points)
 
-    march = _march_baseline(obs, model_days, chunk_bounds) \
-        if ALBEDO_USE_DELTAS else None
-
     mb_end_day = np.asarray(obs['mb_end_day'])
     mb_valid_full = np.arange(n_days)[None, :] <= mb_end_day[:, None]
 
@@ -523,12 +356,10 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
         chunk_dates = model.dates[d0 * 24:d1 * 24]
         forcings.append(model.pack_forcings(model.params, chunk_dates, d0 * 24))
         chunk_obs = dict(
-            alb=(alb[0][c], alb[1][c], alb[2][c], alb[3][c]),
+            alb=(alb[0][c], alb[1][c], alb[2][c]),
             wet=(wet[0][c], wet[1][c], wet[2][c]),
             mb_valid=mb_valid_full[:, d0:d1],
         )
-        if march is not None:
-            chunk_obs['march_w'] = march['weights'][c]
         obs_chunks.append(chunk_obs)
         print(f'\033[2K\r~ Packing forcings [{c + 1}/{len(chunk_bounds)}] ~',
               end='', flush=True)
@@ -551,21 +382,31 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
         nbytes = sum(x.nbytes for x in jax.tree.leaves(tree))
         print(f'  stacked {label}: {nbytes / 1e9:.2f} GB', flush=True)
 
-    counts = dict(albedo=alb[4], wet=wet[4])
-    return stacked, tail, counts, march
+    counts = dict(albedo=alb[3], wet=wet[3])
+    return stacked, tail, counts
 
 
 # ---------------------------------------------------------------------------
 # 3. The differentiated objective
 # ---------------------------------------------------------------------------
 
-def make_loss_fn(model, obs, counts, march, stacked, tail):
+def _crps_gaussian(mod, meas, sigma):
+    """
+    JAX form of glacierwide_loss.crps_gaussian: CRPS of a Gaussian forecast
+    N(mod, sigma^2) against meas, in the units of meas.
+    """
+    z = (meas - mod) / sigma
+    pdf = jnp.exp(-0.5 * z ** 2) / jnp.sqrt(2 * jnp.pi)
+    return sigma * (z * (2 * ndtr(z) - 1) + 2 * pdf - 1 / jnp.sqrt(jnp.pi))
+
+
+def make_loss_fn(model, obs, counts, stacked, tail):
     """
     Builds the value-and-gradient of the whole run with respect to the
     per-glacier log(kp) and log(wind_factor).
 
     The full-length temporal chunks are walked by one lax.scan, carrying
-    the glacier state and a set of running sums the four metrics are built
+    the glacier state and a set of running sums the three metrics are built
     from; a short trailing chunk, if there is one, runs after it. Each
     chunk's forward pass is wrapped in jax.checkpoint, so reverse mode
     keeps only the state at the chunk boundaries and rematerializes a
@@ -630,34 +471,16 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
     # fields to be checked directly for non-finite values anywhere
     RAW_FIELDS = ('albedo', 'top_water', 'mass_balance')
 
-    # March-referenced albedo deltas: constants of the run, and the two
-    # extra running sums the correction is assembled from
-    n_years = 0 if march is None else len(march['count'])
-    if march is not None:
-        march_count = jnp.asarray(march['count'])
-        march_have = jnp.asarray(march['have'])
-        meas_march = jnp.asarray(march['meas'])
-        march_n = jnp.asarray(march['n'])
-
     def init_acc():
-        acc = dict(
-            albedo_ssr=jnp.zeros(n_glaciers),   # sum of squared albedo residuals
-            wet_nll=jnp.zeros(n_glaciers),      # summed Bernoulli log-loss
-            mb=jnp.zeros(n_points),             # per-point mass balance total
+        return dict(
+            albedo_crps=jnp.zeros(n_glaciers),
+            wet_brier=jnp.zeros(n_glaciers),
+            mb=jnp.zeros(n_points),
             raw_nonfinite={f: jnp.array(False) for f in RAW_FIELDS},
         )
-        if march is not None:
-            acc['alb_resid'] = jnp.zeros((n_glaciers, n_years, n_points))
-            acc['march_sum'] = jnp.zeros((n_years, n_points))
-        return acc
-
-    def _bernoulli(prob, meas, mask):
-        p = jnp.clip(prob, BERNOULLI_EPS, 1 - BERNOULLI_EPS)
-        loss = -(meas * jnp.log(p) + (1 - meas) * jnp.log(1 - p))
-        return jnp.sum(jnp.where(mask, loss, 0.0), axis=(1, 2))
 
     def accumulate(acc, records, obs_chunk):
-        alb_idx, alb_meas, alb_mask, alb_year = obs_chunk['alb']
+        alb_idx, alb_meas, alb_mask = obs_chunk['alb']
         mb_valid = obs_chunk['mb_valid']
         wet_idx, wet_meas, wet_mask = obs_chunk['wet']
 
@@ -667,13 +490,17 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
         # padding entries (this glacier's own width padded to match whichever
         # glacier has the most albedo scenes) gather day-index 0's REAL
         # model value; if that's ever NaN, masking only the final loss term
-        # protects the forward sum but not the gradient -- 2*resid is NaN at
-        # a NaN resid, and 0 (mask) * NaN = NaN through the masked branch.
-        # So albedo is masked to a neutral placeholder (resid == 0) BEFORE
-        # squaring, same pattern as the wet sigmoid input below.
+        # protects the forward sum but not the gradient -- the CRPS gradient
+        # is NaN at a NaN model value, and 0 (mask) * NaN = NaN through the
+        # masked branch. So albedo is masked to a neutral placeholder
+        # (resid == 0) BEFORE scoring, same pattern as the wet sigmoid input
+        # below.
         safe_albedo = jnp.where(alb_mask, records.albedo[alb_idx], alb_meas)
-        resid = safe_albedo - alb_meas
-        albedo_ssr = jnp.sum(jnp.where(alb_mask, resid ** 2, 0.0), axis=(1, 2))
+        albedo_crps = jnp.sum(
+            jnp.where(alb_mask,
+                      _crps_gaussian(safe_albedo, alb_meas, ALBEDO_SIGMA) / ALBEDO_SIGMA,
+                      0.0),
+            axis=(1, 2))
 
         # relax hard cut-off function to a logistic threshold for derivation;
         # top_water is in kg m-2, so convert to m w.e.
@@ -686,64 +513,36 @@ def make_loss_fn(model, obs, counts, march, stacked, tail):
             for f in RAW_FIELDS
         }
 
-        out = dict(
-            albedo_ssr=acc['albedo_ssr'] + albedo_ssr,
-            wet_nll=acc['wet_nll'] + _bernoulli(p_wet, wet_meas, wet_mask),
+        wet_brier = jnp.sum(jnp.where(wet_mask, (p_wet - wet_meas) ** 2, 0.0),
+                            axis=(1, 2))
+
+        return dict(
+            albedo_crps=acc['albedo_crps'] + albedo_crps,
+            wet_brier=acc['wet_brier'] + wet_brier,
             mb=acc['mb'] + jnp.sum(
                 jnp.where(mb_valid[glacier_of_point].T, records.mass_balance, 0.0),
                 axis=0),
             raw_nonfinite=raw_nonfinite,
         )
 
-        if march is not None:
-            # residuals grouped by the year they fall in, and the model's
-            # own March mean, both summed across chunks; the delta
-            # correction is applied once, in finalize
-            masked_resid = jnp.where(alb_mask, resid, 0.0)
-            by_year = jax.nn.one_hot(alb_year, n_years, dtype=masked_resid.dtype)
-            out['alb_resid'] = acc['alb_resid'] + jnp.einsum(
-                'gky,gkp->gyp', by_year, masked_resid)
-            out['march_sum'] = (acc['march_sum']
-                                + obs_chunk['march_w'] @ records.albedo)
-
-        return out
-
     def finalize(acc):
         """
         Turns the accumulated sums into the three glacier-wide metrics, each
-        a negative log-likelihood in nats so they add without weighting --
-        the same construction the glacierwide_loss metrics use. A metric
-        with no observations for a glacier (a missing SAR cube, say) has
-        count 0 and drops out of that glacier's objective.
+        unitless so they add without weighting: Gaussian CRPS / sigma for
+        albedo and mass balance and the Brier score for wet extent, the same
+        construction as Albedo.crps_loss, Wet.brier_loss and
+        MassBalance.crps_loss in glacierwide_loss. A metric with no
+        observations for a glacier (a missing SAR cube, say) has count 0 and
+        drops out of that glacier's objective.
         """
         def per_obs(total, n):
             return jnp.where(n > 0, total / jnp.where(n > 0, n, 1.0), 0.0)
 
-        albedo_ssr = acc['albedo_ssr']
-        if march is not None:
-            # model March mean per year; fill years with no March values with avg from other years
-            safe_count = jnp.where(march_have, march_count, 1.0)[:, None]
-            per_year = acc['march_sum'] / safe_count
-            across = (jnp.sum(jnp.where(march_have[:, None], per_year, 0.0), axis=0)
-                      / jnp.sum(march_have))
-            mod_march = jnp.where(march_have[:, None], per_year, across[None, :])
-
-            # apply the "delta"
-            offset = mod_march - meas_march
-            albedo_ssr = (albedo_ssr
-                          - 2.0 * jnp.sum(acc['alb_resid'] * offset[None], axis=(1, 2))
-                          + jnp.sum(march_n * offset[None] ** 2, axis=(1, 2)))
-
-        albedo = jnp.where(
-            count['albedo'] > 0,
-            0.5 * jnp.log(2 * jnp.pi * ALBEDO_SIGMA ** 2)
-            + per_obs(albedo_ssr, count['albedo']) / (2 * ALBEDO_SIGMA ** 2),
-            0.0)
-        wet = per_obs(acc['wet_nll'], count['wet'])
+        albedo = per_obs(acc['albedo_crps'], count['albedo'])
+        wet = per_obs(acc['wet_brier'], count['wet'])
 
         mb_mod = member @ acc['mb'] / mb_years
-        mb = (0.5 * jnp.log(2 * jnp.pi * mb_sigma ** 2)
-              + (mb_mod - mb_meas) ** 2 / (2 * mb_sigma ** 2))
+        mb = _crps_gaussian(mb_mod, mb_meas, mb_sigma) / mb_sigma
 
         total = jnp.sum(albedo + wet + mb)
         return total, dict(albedo=albedo, wet=wet, mb=mb,
@@ -1046,7 +845,10 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
         cur_wf = np.exp(x[n_glaciers:]).tolist()
         history.append(dict(step=step, iteration=progress['n_iter'],
                             total=float(total), kp=cur_kp, wind_factor=cur_wf,
-                            radius=progress['radius']))
+                            radius=progress['radius'],
+                            albedo=np.asarray(metrics['albedo']).tolist(),
+                            wet=np.asarray(metrics['wet']).tolist(),
+                            mb=np.asarray(metrics['mb']).tolist()))
         if float(total) < best['total']:
             best.update(step=step, total=float(total), kp=cur_kp, wind_factor=cur_wf)
         write_progress(best, history)
@@ -1151,12 +953,12 @@ def main():
     t0 = _tick('observations loaded', t0)
 
     print(f'Packing {len(chunk_bounds)} chunks...', flush=True)
-    stacked, tail, counts, march = build_chunk_data(model, obs, model_days, chunk_bounds)
+    stacked, tail, counts = build_chunk_data(model, obs, model_days, chunk_bounds)
     for metric, c in counts.items():
         print(f'  {metric:<7} observations per glacier: {c.tolist()}', flush=True)
     t0 = _tick('chunks packed', t0)
 
-    value_and_grad, params_loss_fn = make_loss_fn(model, obs, counts, march, stacked, tail)
+    value_and_grad, params_loss_fn = make_loss_fn(model, obs, counts, stacked, tail)
 
     n_glaciers = len(GLACIERS)
     init_kp = np.full(n_glaciers, baseline['kp'])
