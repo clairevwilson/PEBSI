@@ -10,7 +10,7 @@ import simulation as sim
 from pebsi.io.terrain import Terrain
 
 RESULT_FN = ad.HOST_PATHS[ad.host]['output_fp'] + 'AD_optimize_result.yaml'
-OUTPUT_FP = '/ocean/projects/ees260009p/cwilson4/Output/AD_result/'
+OUTPUT_FP = ad.HOST_PATHS[ad.host]['output_fp'].replace('AD_optimize', 'AD_result')
 
 
 def config_with(**overrides):

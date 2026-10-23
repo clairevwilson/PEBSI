@@ -1,31 +1,27 @@
 """
 Per-point gradient health check for PEBSI's differentiable core.
 
-Runs one glacier for a few years and differentiates the glacier-wide mass
-balance with respect to a PER-POINT wind_factor. Because wind_factor is an
-(N_POINTS,) array, reverse mode returns one gradient per point in a single
-backward pass -- so a few hundred points give a few hundred independent
-samples of the adjoint, which is what makes this a useful test of whether
-the gradient blow-ups are actually gone rather than just absent at the one
-or two points a small run happens to cover.
-
-The heat equation solver is selectable (-heateq implicit|explicit) so the
-same run can be repeated against the old scheme for comparison.
+Runs one glacier for a few years with the shared physics settings
+(BASE_CONFIG) and differentiates the glacier-wide mass balance with respect
+to a PER-POINT parameter. Because the parameter is an (N_POINTS,) array,
+reverse mode returns one gradient per point in a single backward pass, so a
+few hundred points give a few hundred independent samples of the adjoint:
+a blow-up that a small run might miss shows up as a handful of outliers.
 
 What to look for:
   - no non-finite gradients
-  - max |grad| within an order of magnitude or two of the median; a single
-    point orders of magnitude above the rest is the signature of the old
-    blow-up
-  - with -fd, the analytic gradient matching finite differences
+  - max |sensitivity| within an order of magnitude or two of the median; a
+    few points orders of magnitude above the rest is the signature of a
+    gradient blow-up, and their elevations show where on the glacier it is
+
+Run it after any change to the physics or the albedo emulator, and before
+trusting an AD calibration. Set PEBSI_FLOAT32=1 to check float32.
 
 @author: clairevwilson
 """
 import os
 import sys
 import time
-import socket
-import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,28 +36,27 @@ import pandas as pd
 import yaml
 
 from pebsi.main import main as pebsi_main
+from project.parameters import host, HOST_PATHS, BASE_CONFIG, translate_rgi
 
-GLACIER_RGI = '01.00570'   # Gulkana
+GLACIER = 'gulkana'
+N_POINTS = 300
+START_YEAR = 2015
+YEARS = 5
+CHUNK_DAYS = 365
 
-BASE_FP = ('/trace/group/rounce/cvwilson/' if 'trace' in socket.gethostname()
-           else '/ocean/projects/ees260009p/cwilson4/')
-
-PATHS = dict(
-    climate_fp=BASE_FP + 'climate_data/',
-    rgi_fp=BASE_FP + 'RGI/rgi60/00_rgi60_attribs/',
-    output_fp=BASE_FP + 'Output/gradient_check/',
-    cop30_vrt_path=BASE_FP + 'data/dems/COP30/COP30_reg01.vrt',
-    shading_fp=BASE_FP + 'data/shading/',
-    ice_albedo_fn=BASE_FP + 'data/ice_albedo/{gid}_albedo.tif',
-    windmap_fn=BASE_FP + 'data/windmapper/{gid}.nc',
-)
+# parameter whose per-point gradient is checked ('wind_factor' or 'kp'),
+# and the values both parameters are held at
+PARAM = 'wind_factor'
+KP = 2.5
+WIND_FACTOR = 3.0
 
 
-def build_config(n_points, start_date, end_date, heateq):
-    config = dict(
-        rgi_ids=[GLACIER_RGI],
+def build_config(start_date, end_date):
+    config = dict(BASE_CONFIG)
+    config.update(
+        rgi_ids=[translate_rgi[GLACIER]['6']],
         method_distribute='grid',
-        n_points=n_points,
+        n_points=N_POINTS,
         start_date=start_date,
         end_date=end_date,
         output_freq='daily',
@@ -69,19 +64,11 @@ def build_config(n_points, start_date, end_date, heateq):
         store_data=False,
         debug=False,
         progress_bar=False,
-        method_heateq=heateq,
-        option_ice_albedo_tif=True,
-        option_windmaps=True,
-        option_accel_grains=True,
-        option_flat_plates=True,
-        option_dynamics=False,
-        constant_freshgrainsize=54.5,
-        bias_vars=['temp'],
-        dust_factor=500,
-        kp=2.5,
-        wind_factor=3.0,
-        **PATHS,
+        kp=KP,
+        wind_factor=WIND_FACTOR,
+        **HOST_PATHS[host],
     )
+    config['output_fp'] = config['output_fp'].replace('AD_optimize', 'gradient_check')
     config_fn = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              '_gradient_check.yaml')
     with open(config_fn, 'w') as f:
@@ -103,11 +90,11 @@ def init_pebsi(config_fn):
     return model
 
 
-def make_fns(model):
+def make_value_and_grad(model):
     """
-    Returns (value_and_grad, forward), both taking log(wind_factor) as an
-    (N_POINTS,) array. The loss is the glacier-wide mean mass balance over
-    the whole run [m w.e.]; the aux output is the per-point total.
+    Returns value_and_grad taking log(PARAM) as an (N_POINTS,) array. The
+    loss is the glacier-wide mean mass balance over the whole run [m w.e.];
+    the aux output is the per-point total.
 
     Chunks are unrolled in a python loop rather than scanned, so they need
     not be equal length, and each is wrapped in jax.checkpoint so reverse
@@ -123,9 +110,8 @@ def make_fns(model):
         return pebsi_main(state, forcings, point_attrs, static_args,
                           new_dynamic_args)
 
-    def loss_fn(log_wind_factor, initial_state, chunk_forcings):
-        new_dynamic_args = dynamic_args._replace(
-            wind_factor=jnp.exp(log_wind_factor))
+    def loss_fn(log_param, initial_state, chunk_forcings):
+        new_dynamic_args = dynamic_args._replace(**{PARAM: jnp.exp(log_param)})
         state = initial_state
         per_point = jnp.zeros(model.terrain.N_POINTS)
         for forcings in chunk_forcings:
@@ -134,17 +120,15 @@ def make_fns(model):
             per_point = per_point + jnp.sum(records.mass_balance, axis=0)
         return jnp.mean(per_point), per_point
 
-    vg = jax.jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
-    fwd = jax.jit(loss_fn)
-    return vg, fwd
+    return jax.jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
 
 
 def report(grad, model, n_points):
     """
     Prints the per-point gradient distribution. Points are near-independent
-    columns, so d(mean MB)/d(wf_i) carries a 1/N_POINTS factor; multiplying
+    columns, so d(mean MB)/d(param_i) carries a 1/N_POINTS factor; multiplying
     it back out gives each point's own sensitivity [m w.e. per unit
-    wind_factor], which is comparable across runs with different N_POINTS.
+    log(PARAM)], which is comparable across runs with different N_POINTS.
     """
     grad = np.asarray(grad)
     sensitivity = grad * n_points
@@ -184,60 +168,21 @@ def report(grad, model, n_points):
               f'{model.terrain.lat_n[i]:>9.4f} {model.terrain.lon_n[i]:>10.4f}')
 
 
-def finite_difference(fwd, log_wf, initial_state, chunk_forcings,
-                      grad, n_check, eps=1e-3):
-    """
-    Central-difference check on a few points, chosen as the largest-gradient
-    points plus a random sample. Each probe is two more full forward runs,
-    so this is opt-in.
-    """
-    grad = np.asarray(grad)
-    order = np.argsort(-np.abs(np.nan_to_num(grad, nan=np.inf)))
-    rng = np.random.default_rng(0)
-    picks = list(dict.fromkeys(
-        order[:max(1, n_check // 2)].tolist()
-        + rng.choice(len(grad), size=n_check, replace=False).tolist()))[:n_check]
-
-    print(f'\nFinite-difference check on {len(picks)} point(s), eps={eps}:')
-    print(f'  {"idx":>6} {"analytic":>14} {"finite diff":>14} {"rel err":>10}')
-    for i in picks:
-        plus = fwd(log_wf.at[i].add(eps), initial_state, chunk_forcings)[0]
-        minus = fwd(log_wf.at[i].add(-eps), initial_state, chunk_forcings)[0]
-        fd = float((plus - minus) / (2 * eps))
-        rel = abs(fd - grad[i]) / max(abs(fd), 1e-30)
-        flag = '' if rel < 1e-3 else '   <-- mismatch'
-        print(f'  {i:>6} {grad[i]:>14.6e} {fd:>14.6e} {rel:>10.2e}{flag}')
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('-n', '--n_points', type=int, default=300)
-    parser.add_argument('-y', '--years', type=int, default=5)
-    parser.add_argument('-start', '--start_year', type=int, default=2015)
-    parser.add_argument('-heateq', '--method_heateq', default='implicit',
-                        choices=['implicit', 'explicit'])
-    parser.add_argument('-cd', '--chunk_days', type=int, default=365)
-    parser.add_argument('-wf', '--wind_factor', type=float, default=3.0)
-    parser.add_argument('-fd', '--finite_difference', type=int, default=0,
-                        help='number of points to verify by finite differences '
-                             '(each costs two extra forward runs)')
-    opts = parser.parse_args()
-
-    start = pd.Timestamp(f'{opts.start_year}-01-01')
-    end = pd.Timestamp(f'{opts.start_year + opts.years}-01-01') - pd.Timedelta(hours=1)
+    start = pd.Timestamp(f'{START_YEAR}-01-01')
+    end = pd.Timestamp(f'{START_YEAR + YEARS}-01-01') - pd.Timedelta(hours=1)
     print(f'JAX backend: {jax.default_backend()}  devices: {jax.devices()}')
-    print(f'Gulkana, {opts.n_points} points, {start.date()} to {end.date()}, '
-          f'heat equation: {opts.method_heateq}\n', flush=True)
+    print(f'{GLACIER}, {N_POINTS} points, {start.date()} to {end.date()}, '
+          f'per-point d/dlog({PARAM}) at kp={KP}, wind_factor={WIND_FACTOR}, '
+          f'dust_factor={BASE_CONFIG.get("dust_factor")}\n', flush=True)
 
-    model = init_pebsi(build_config(opts.n_points, str(start), str(end),
-                                    opts.method_heateq))
+    model = init_pebsi(build_config(str(start), str(end)))
     n_points = model.terrain.N_POINTS
     n_days = len(model.dates) // 24
     print(f'{n_points} points placed, {n_days} days', flush=True)
 
-    bounds = [(d, min(d + opts.chunk_days, n_days))
-              for d in range(0, n_days, opts.chunk_days)]
+    bounds = [(d, min(d + CHUNK_DAYS, n_days))
+              for d in range(0, n_days, CHUNK_DAYS)]
     chunk_forcings = []
     for i, (d0, d1) in enumerate(bounds):
         chunk_forcings.append(model.pack_forcings(
@@ -247,26 +192,22 @@ def main():
     nbytes = sum(x.nbytes for x in jax.tree.leaves(chunk_forcings))
     print(f'\n{len(bounds)} chunks, forcings {nbytes / 1e9:.2f} GB\n', flush=True)
 
-    value_and_grad, fwd = make_fns(model)
-    log_wf = jnp.log(jnp.full(n_points, opts.wind_factor, dtype=jnp.float64))
+    value_and_grad = make_value_and_grad(model)
+    value = KP if PARAM == 'kp' else WIND_FACTOR
+    log_param = jnp.log(jnp.full(n_points, value))
 
     print('Running forward + backward...', flush=True)
     t0 = time.time()
-    (loss, per_point), grad = value_and_grad(log_wf, model.initial_state,
+    (loss, per_point), grad = value_and_grad(log_param, model.initial_state,
                                              chunk_forcings)
     jax.block_until_ready((loss, grad))
     print(f'done in {time.time() - t0:.1f} s\n', flush=True)
 
     mb = np.asarray(per_point)
-    print(f'{"glacier-wide MB":<28} {float(loss):+.4f} m w.e. '
-          f'over {opts.years} yr')
+    print(f'{"glacier-wide MB":<28} {float(loss):+.4f} m w.e. over {YEARS} yr')
     print(f'{"per-point MB range":<28} {mb.min():+.3f} to {mb.max():+.3f} m w.e.\n')
 
     report(grad, model, n_points)
-
-    if opts.finite_difference:
-        finite_difference(fwd, log_wf, model.initial_state, chunk_forcings,
-                          np.asarray(grad), opts.finite_difference)
 
 
 if __name__ == '__main__':

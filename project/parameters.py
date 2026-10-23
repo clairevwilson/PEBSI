@@ -68,7 +68,9 @@ wind_factor_aws = {'gulkana': 1.56, 'kahiltna': 1.72, 'kennicott': 1.23,
 # this rather than repeating the physics options by hand.
 BASE_CONFIG = dict(
     option_ice_albedo_tif=True,
-    option_ice_thickness_tif=True,
+    option_ice_thickness_tif=False,
+    initial_ice_depth=500,
+    option_preclimit=True,
     option_windmaps=True,
     option_accel_grains=True,
     option_flat_plates=True,
