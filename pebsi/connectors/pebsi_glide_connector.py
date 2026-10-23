@@ -13,9 +13,9 @@ a raster interpolated from the PEBSI simulation points.
 
 GLIDE simulations are run on an RGI O2 subregion basis.
 
-Bed and initial ice thickness are taken straight from the PEBSI
-terrain object, which loads bed elevation from the ice thickness 
-and DEM inputs. All of GLIDE's physical parameters are also taken
+Bed and initial ice thickness are built on the GLIDE grid straight
+from the ice thickness GeoTIFFs and DEM, so there is no ice off-glacier
+or over nunataks. All of GLIDE's physical parameters are also taken
 from the PEBSI config.
 
 Since GLIDE gives a total mass change per point, but PEBSI has already
@@ -28,6 +28,10 @@ import cupy as cp
 import jax.numpy as jnp
 from scipy.interpolate import griddata, RegularGridInterpolator
 from pyproj import Transformer
+import rioxarray as rxr
+from affine import Affine
+from rasterio.enums import Resampling
+from rasterio.features import geometry_mask
 import sys, os
 sys.path.append(os.path.join(os.getcwd(), '../glide/'))
 from glide.model import IceDynamics
@@ -165,15 +169,15 @@ class GlideCoupler:
         """
         One-time construction of a shared GLIDE grid + IceDynamics model
         covering every glacier in O2 sub-region `region`. Bed and initial
-        ice thickness come from terrain.bed_n / terrain.thickness_n (see
-        module docstring), regridded here.
+        ice thickness come from the rasters (_raster_bed_and_thickness).
 
         Returns
         -------
         model : glide.model.IceDynamics
         grid_info : dict with 'x', 'y' (1-D cell-center coordinate arrays,
-            meters, pulled from model.mg.levels[0].grid) and 'crs'
-            (pyproj.CRS), used to regrid this region's PEBSI points.
+            meters, pulled from model.mg.levels[0].grid), 'crs'
+            (pyproj.CRS), used to regrid this region's PEBSI points, and
+            'glacier_mask' ((ny, nx) bool, True inside the RGI outlines).
         """
         terrain = self.terrain
         dx = self.dx
@@ -210,14 +214,7 @@ class GlideCoupler:
         x = cp.asnumpy(model.mg.levels[0].x_cell)
         y = cp.asnumpy(model.mg.levels[0].y_cell)
 
-        region_idx = np.where(np.isin(terrain.rgiid_n, gids_in_region))[0]
-        x_pts, y_pts = latlon_to_glacier_crs(
-            terrain.lat_n[region_idx], terrain.lon_n[region_idx], crs
-        )
-
-        bed = points_to_grid(x_pts, y_pts, terrain.bed_n[region_idx], x, y)
-        thickness = points_to_grid(x_pts, y_pts, terrain.thickness_n[region_idx], x, y)
-        thickness = np.maximum(thickness, 0.0)
+        bed, thickness = self._raster_bed_and_thickness(gids_in_region, x, y, crs)
 
         model.mg.state.H.set(thickness)
         model.mg.state.H_prev.set(thickness)
@@ -233,8 +230,45 @@ class GlideCoupler:
 
         model.mg.forcing.smb.set(np.zeros((ny, nx), dtype=np.float32))
 
-        grid_info = {'x': x, 'y': y, 'crs': crs}
+        glacier_mask = geometry_mask(region_gdf.geometry, out_shape=(ny, nx),
+                                     transform=Affine(dx, 0, minx, 0, -dx, maxy), invert=True)
+
+        grid_info = {'x': x, 'y': y, 'crs': crs, 'glacier_mask': glacier_mask}
         return model, grid_info
+
+    def _raster_bed_and_thickness(self, gids_in_region, x, y, crs):
+        """
+        Builds bed and initial ice thickness on the GLIDE grid straight
+        from the thickness GeoTIFFs and DEM, so ice only exists where the
+        thickness product has it (none over nunataks or off-glacier) and
+        the bed off-glacier is the DEM surface.
+
+        Returns
+        -------
+        bed, thickness : (len(y), len(x)) arrays, meters
+        """
+        shape = (len(y), len(x))
+        transform = Affine(self.dx, 0, x[0] - self.dx / 2, 0, -self.dx, y[0] + self.dx / 2)
+
+        thickness = np.zeros(shape)
+        for gid in gids_in_region:
+            da = rxr.open_rasterio(self.params.thickness_fn.format(gid=gid)).squeeze(drop=True)
+            da = da.rio.reproject(crs, shape=shape, transform=transform,
+                                  resampling=Resampling.average)
+            thickness = np.maximum(thickness, np.nan_to_num(da.values, nan=0.0))
+            da.close()
+
+        # clip the DEM to the grid's lat/lon footprint before reprojecting
+        xx, yy = np.meshgrid([x[0], x[-1]], [y[0], y[-1]])
+        lon, lat = Transformer.from_crs(crs, 'EPSG:4326', always_xy=True).transform(xx, yy)
+        dem = rxr.open_rasterio(self.params.cop30_vrt_path).squeeze(drop=True)
+        dem = dem.rio.clip_box(lon.min() - 0.05, lat.min() - 0.05, lon.max() + 0.05, lat.max() + 0.05)
+        dem = dem.rio.reproject(crs, shape=shape, transform=transform,
+                                resampling=Resampling.average)
+        surface = dem.values.astype(float)
+        dem.close()
+
+        return surface - thickness, np.maximum(thickness, 0.0)
 
     # -------------------------- period coupling -------------------------- #
 
@@ -300,20 +334,21 @@ class GlideCoupler:
             smb_ice_rate = mb_rate_mwe * self.params.density_water / self.params.density_ice # m i.e. yr-1
 
             smb_grid = points_to_grid(x_pts, y_pts, smb_ice_rate, grid["x"], grid["y"])
+            # off-glacier cells can melt ice that flows out, but never grow it
+            smb_grid = np.where(grid["glacier_mask"], smb_grid, np.minimum(smb_grid, 0.0))
             self._push_forcing(region, smb_grid)
             self._advance(region, t=float(t_years), dt=dt_years)
 
-            # ice thickness / surface after this step's dynamics
+            # ice thickness after this step's dynamics
             H_new_grid = self._extract_ice_thickness(region)
             H_new_pts = grid_to_points(grid["x"], grid["y"], H_new_grid, x_pts, y_pts)
+            dH_total = H_new_pts - H_old_pts
 
-            new_surface = self._extract_surface_elevation(region, H_grid=H_new_grid)
-            new_elev_n[region_idx] = grid_to_points(
-                grid["x"], grid["y"], new_surface, x_pts, y_pts
-            )
+            # the bed is fixed, so each point's surface moves by its thickness
+            # change; the 100 m grid surface itself is too coarse to sample
+            new_elev_n[region_idx] += dH_total
 
             # dynamics-only mass change: total change minus SMB over the period
-            dH_total = H_new_pts - H_old_pts
             dH_smb = smb_ice_rate * dt_years
             dH_dynamics = dH_total - dH_smb
             dmass_pts = dH_dynamics * self.params.density_ice  # kg m-2
@@ -344,10 +379,3 @@ class GlideCoupler:
     def _extract_ice_thickness(self, region):
         """Return this region's current ice thickness (H), as NumPy."""
         return cp.asnumpy(self.models[region].mg.levels[0].state.H.data)
-
-    def _extract_surface_elevation(self, region, H_grid=None):
-        """Return updated surface elevation (bed + H) on this region's grid, as NumPy."""
-        if H_grid is None:
-            H_grid = self._extract_ice_thickness(region)
-        bed = cp.asnumpy(self.models[region].mg.levels[0].geometry.bed.data)
-        return bed + H_grid
