@@ -31,6 +31,9 @@ PANELS = [('albedo', 'Albedo'), ('mb', 'Mass balance'), ('wet', 'Water extent')]
 CRPS_PERFECT = 0.234
 PERFECT = {'albedo': CRPS_PERFECT, 'mb': CRPS_PERFECT, 'wet': 0, 'total': 2 * CRPS_PERFECT}
 
+UNITS = {'albedo': 'albedo', 'mb': 'm w.e. yr$^{-1}$', 'wet': 'wet fraction'}
+METRIC_NAMES = {'loss': 'loss', 'mae': 'MAE', 'bias': 'bias'}
+
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
@@ -40,10 +43,13 @@ def parse_args():
                         '(default %(default)s)')
     p.add_argument('--fig-dir', default=None,
                    help='where the figures go (default: beside --loss-fn)')
+    p.add_argument('--metric', default='loss', choices=list(METRIC_NAMES),
+                   help='what the albedo/MB/wet panels show; the combined '
+                        'panel is always the summed loss (default %(default)s)')
     return p.parse_args()
 
 
-def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
+def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template, metric):
     fig, axes = plt.subplots(2, 2, figsize=(7, 5), gridspec_kw={'wspace': 0.3, 'hspace': 0.3})
     extent = [kp_values[0] - 0.25, kp_values[-1] + 0.25,
               wf_values[0] - 0.25, wf_values[-1] + 0.25]
@@ -52,15 +58,30 @@ def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
     total_err = np.zeros((len(wf_values), len(kp_values)))
     for ax, (key, label) in zip(axes[:-1], PANELS):
         # transposed so kp runs along x and wind_factor along y
-        field = grids[f'{glacier}_{key}'].T
-        im = ax.imshow(field, origin='lower', extent=extent, aspect='auto',
-                       cmap='viridis_r', interpolation='nearest')
+        loss = grids[f'{glacier}_{key}'].T
+        total_err += loss
+        if metric == 'loss':
+            field = loss
+            im = ax.imshow(field, origin='lower', extent=extent, aspect='auto',
+                           cmap='viridis_r', interpolation='nearest')
+            cb_label = f'loss (perfect = {PERFECT[key]:g})'
+        elif metric == 'mae':
+            field = grids[f'{glacier}_{key}_mae'].T
+            im = ax.imshow(field, origin='lower', extent=extent, aspect='auto',
+                           cmap='viridis_r', interpolation='nearest')
+            cb_label = f'MAE ({UNITS[key]})'
+        else:
+            field = grids[f'{glacier}_{key}_bias'].T
+            vmax = np.nanmax(np.abs(field))
+            im = ax.imshow(field, origin='lower', extent=extent, aspect='auto',
+                           cmap='RdBu_r', vmin=-vmax, vmax=vmax, interpolation='nearest')
+            cb_label = f'bias, mod $-$ obs ({UNITS[key]})'
         cb = fig.colorbar(im, ax=ax, pad=0.02)
-        cb.set_label(f'loss (perfect = {PERFECT[key]:g})', fontsize=9)
+        cb.set_label(cb_label, fontsize=9)
         cb.ax.tick_params(labelsize=10)
 
-        j, i = np.unravel_index(np.nanargmin(field), field.shape)
-        total_err += field 
+        best = np.abs(field) if metric == 'bias' else field
+        j, i = np.unravel_index(np.nanargmin(best), best.shape)
 
         ax.plot(kp_values[i], wf_values[j], marker='o', ms=9, mfc='none',
                 mec='r', mew=1.2, zorder=4)
@@ -99,7 +120,7 @@ def plot_glacier(glacier, grids, kp_values, wf_values, fig_fn_template):
     fig.supxlabel('Precipitation factor', fontsize=11, y=0)
     fig.supylabel('Wind factor', fontsize=11, x=.03)
 
-    title = (f'{glacier}: loss by parameter combination'
+    title = (f'{glacier}: {METRIC_NAMES[metric]} by parameter combination'
               f'\nBest $k_p=${best_kp} $k_w=${best_kw} loss: {best_err:.3f}')
     fig.suptitle(title, fontsize=12, y=1.03)
     fig_fn = fig_fn_template.format(glacier=glacier)
@@ -116,10 +137,11 @@ def main():
 
     fig_dir = args.fig_dir or os.path.dirname(args.loss_fn)
     os.makedirs(fig_dir, exist_ok=True)
-    fig_fn_template = os.path.join(fig_dir, 'loss_surface_{glacier}.png')
+    suffix = '' if args.metric == 'loss' else f'_{args.metric}'
+    fig_fn_template = os.path.join(fig_dir, f'loss_surface_{{glacier}}{suffix}.png')
 
     for glacier in grids['glaciers']:
-        plot_glacier(str(glacier), grids, kp_values, wf_values, fig_fn_template)
+        plot_glacier(str(glacier), grids, kp_values, wf_values, fig_fn_template, args.metric)
 
 
 if __name__ == '__main__':

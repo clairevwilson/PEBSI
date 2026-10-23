@@ -15,7 +15,7 @@ rather than a flat mean across points -- and the per-glacier losses are
 summed into that combination's total.
 
 Slow (it reads ~2 GB of daily output per glacier), so it is kept apart
-from plot_loss_surface.py -- run this once, then iterate on the figure.
+from plot_loss_surface.py.
 
 @author: clairevwilson
 """
@@ -169,6 +169,12 @@ def main():
     losses['total'] = np.full(n_combos, np.nan)
     per_glacier = {g: {k: np.full(n_combos, np.nan) for k in METRICS}
                    for g in glaciers}
+    # plain error stats in each metric's own units, kept per glacier for
+    # plot_loss_surface.py; wet uses the thresholded mask, so MAE is the
+    # fraction misclassified and bias is modeled minus measured wet fraction
+    per_glacier_stats = {g: {f'{k}_{s}': np.full(n_combos, np.nan)
+                             for k in METRICS for s in ('mae', 'bias')}
+                         for g in glaciers}
 
     for c in range(n_combos):
         combo_slice = slice(c * n_base, (c + 1) * n_base)
@@ -201,6 +207,14 @@ def main():
                 per_glacier[g][k][c] = float(v)
                 totals[k] += float(v)
 
+            wet_err = o['wet'].mod_wet.astype(float) - o['wet'].meas_wet
+            mb_err = o['mb'].mod - o['mb'].meas
+            stats = dict(albedo_mae=o['albedo'].mae(), albedo_bias=o['albedo'].bias(),
+                         wet_mae=np.nanmean(np.abs(wet_err)), wet_bias=np.nanmean(wet_err),
+                         mb_mae=abs(mb_err), mb_bias=mb_err)
+            for k, v in stats.items():
+                per_glacier_stats[g][k][c] = float(v)
+
         for k in METRICS:
             losses[k][c] = totals[k]
         losses['total'][c] = sum(totals.values())
@@ -216,6 +230,8 @@ def main():
     grids = {k: v.reshape(shape) for k, v in losses.items()}
     per_glacier_grids = {f'{g}_{k}': v.reshape(shape)
                          for g, kv in per_glacier.items() for k, v in kv.items()}
+    per_glacier_grids.update({f'{g}_{k}': v.reshape(shape)
+                              for g, kv in per_glacier_stats.items() for k, v in kv.items()})
 
     lapse_kw = {} if lr_values is None else dict(lapse_rate=lr_values)
     np.savez(args.loss_fn, kp=kp_values, wind_factor=wf_values, **lapse_kw,
