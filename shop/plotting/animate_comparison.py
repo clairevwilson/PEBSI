@@ -19,13 +19,14 @@ from pyproj import Transformer
 import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 from matplotlib.animation import FuncAnimation
 from PIL import Image, ImageSequence
 from matplotlib.collections import PathCollection
 from matplotlib.path import Path
 from scipy.spatial import Voronoi
 from shapely.geometry import Polygon
-from shapely.plotting import plot_line
+from shapely.plotting import plot_line, plot_polygon
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
@@ -46,11 +47,14 @@ GLACIER = args.glacier
 YEAR = args.year
 RUN_DIR = args.run_dir
 
-# best.zarr holds each glacier's best-combination points
-ds = xr.open_zarr(RUN_DIR + 'best.zarr', consolidated=False)
+if os.path.exists(RUN_DIR + 'best.zarr'):
+    ds = xr.open_zarr(RUN_DIR + 'best.zarr', consolidated=False)
+else:
+    ds = xr.open_zarr(RUN_DIR + 'output.zarr', consolidated=False)
 gmask = ds['rgiid'].values == translate_rgi[GLACIER]['6']
-print(f"{GLACIER}: kp={ds['kp'].values[gmask][0]}, "
-      f"wind_factor={ds['wind_factor'].values[gmask][0]}", flush=True)
+if 'kp' in ds:
+    print(f"{GLACIER}: kp={ds['kp'].values[gmask][0]}, "
+          f"wind_factor={ds['wind_factor'].values[gmask][0]}", flush=True)
 
 if VARIABLE == 'albedo':
     obs = Albedo(GLACIER, use='s2')
@@ -89,8 +93,9 @@ elif VARIABLE == 'wet':
     obs.get_model_wet(sub)
     meas, mod = obs.meas_wet, obs.mod_wet
     dates = obs.time
-    cmap, vmin, vmax = 'Blues', 0, 1
-    label = 'wet'
+    # wetness is binary, so the colorbar is just a dry block and a wet block
+    cmap, vmin, vmax = ListedColormap(plt.get_cmap('Blues')([0., 1.])), 0, 1
+    label = None
 
 # the whole record is matched first so albedo's March reference is the same
 # one the loss uses, then only this year's dates are kept
@@ -105,7 +110,7 @@ meas, mod, dates = meas[keep], mod[keep], dates[keep]
 meas_days = pd.DatetimeIndex(dates).normalize()
 years = np.unique(meas_days.year)
 days = pd.date_range(meas_days[0], meas_days[-1], freq='D')
-days = days[days.month.isin(range(3, 11)) & days.year.isin(years)]
+days = days[days.month.isin(range(3, 11)) & days.year.isin(years) & (days <= ds.time.values[-1])]
 if VARIABLE == 'albedo':
     # sample the model at the overpass time of day, relative to the same
     # per-year March reference the loss subtracts
@@ -144,28 +149,33 @@ for p in range(len(x)):
     codes = np.concatenate([[Path.MOVETO] + [Path.LINETO] * (len(r.coords) - 1) for r in rings])
     paths.append(Path(verts, codes))
 
-cmap = plt.get_cmap(cmap).with_extremes(bad='lightgray')
+cmap = plt.get_cmap(cmap).with_extremes(bad='none')
 # size the figure to the glacier's shape so the maps fill it; the height is
 # snapped to a quarter inch so the frame is a whole number of pixels (the
 # gif writer shears frames that aren't)
 xmin, ymin, xmax, ymax = outline.bounds
-height = np.ceil((4.5 * (ymax - ymin) / (xmax - xmin) + 0.6) * 4) / 4
-fig, axes = plt.subplots(1, 2, figsize=(10, height), dpi=100,
+height = np.ceil((3.6 * (ymax - ymin) / (xmax - xmin) + 0.48) * 4) / 4
+fig, axes = plt.subplots(1, 2, figsize=(8, height), dpi=100,
                          sharex=True, sharey=True, layout='compressed')
 cells = []
-name = {'albedo': 'albedo', 'wet': 'wet extent'}[VARIABLE]
+name = {'albedo': 'Albedo', 'wet': 'Water extent'}[VARIABLE]
 for ax, data, source in zip(axes, [meas, mod_daily], ['Measured', 'Modeled']):
     cell = PathCollection(paths, cmap=cmap, edgecolors='none')
     cell.set_clim(vmin, vmax)
     cell.set_array(data[0].astype(float))
     ax.add_collection(cell)
+    # hatching under the cells shows through wherever the data is NaN
+    plot_polygon(outline, ax=ax, add_points=False, facecolor='none', edgecolor='darkgray',
+                 hatch='///', linewidth=0, zorder=0)
     plot_line(outline.boundary, ax=ax, add_points=False, color='k', linewidth=0.8)
     ax.set_title(f'{source} {name}')
     ax.set_aspect('equal')
     ax.set_xticks([])
     ax.set_yticks([])
     cells.append(cell)
-fig.colorbar(cells[1], ax=axes, label=label, shrink=0.8)
+cbar = fig.colorbar(cells[1], ax=axes, label=label, shrink=0.8)
+if VARIABLE == 'wet':
+    cbar.set_ticks([0.25, 0.75], labels=['dry', 'wet'])
 title = fig.suptitle(str(days[0].date()))
 
 
@@ -181,7 +191,7 @@ def update(t):
 anim = FuncAnimation(fig, update, frames=len(days), interval=125)
 suffix = '_raw' if VARIABLE == 'albedo' and not DELTAS else ''
 out_fn = RUN_DIR + f'comparison_{GLACIER}_{VARIABLE}{suffix}_{YEAR or "all"}.gif'
-anim.save(out_fn, writer='pillow', fps=10)
+anim.save(out_fn, writer='pillow', fps=16)
 
 # matplotlib always writes the gif to loop forever; resave it without the
 # loop flag so it plays once and holds on the last frame (e.g. in Google Slides)

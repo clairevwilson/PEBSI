@@ -20,8 +20,8 @@ sys.path.insert(0, PEBSI_FP)
 
 from project.data_handling import MassBalance, translate_rgi
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_0/'
-BEST_ZARR = ROOT + 'best.zarr'
+ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_result_1/'
+BEST_ZARR = ROOT + 'output.zarr'
 FIG_FN = ROOT + 'index_site_seasonal_1to1.png'
 
 colors = ['#63c4c7', '#fcc02e', '#4D559C', '#60C252', '#BF1F6A']
@@ -79,10 +79,17 @@ for g, glacier in enumerate(glaciers):
         df_site = df_glac.loc[df_glac['site'] == site]
         for ax, season in zip(axes, ('winter', 'summer')):
             df_season = df_site.loc[df_site['season'] == season]
+            marker = markers[s % len(markers)]
             ax.scatter(df_season['meas'], df_season['mod'], c=colors[g % len(colors)],
-                       marker=markers[s % len(markers)], s=25, alpha=0.8, edgecolor='k', linewidth=0.3)
-        handles.append(Line2D([], [], ls='none', color=colors[g % len(colors)], marker=markers[s % len(markers)],
-                              markeredgecolor='k', markeredgewidth=0.3, label=f'{glacier}/{site}'))
+                       marker=marker, s=25, alpha=0.8, edgecolor='k', linewidth=0.3)
+        # handles.append(Line2D([], [], ls='none', color=colors[g % len(colors)], marker=marker,
+        #                       markeredgecolor='k', markeredgewidth=0.3, label=f'{glacier}/{site}'))
+
+    gg_lab = ''
+    for gg in [f.capitalize() for f in glacier.split('_')]:
+        gg_lab += gg + ' '
+    handles.append(Line2D([], [], ls='none', color=colors[g % len(colors)], marker='o',
+                            markeredgecolor='k', markeredgewidth=0.3, label=gg_lab))
 
 for ax, season in zip(axes, ('winter', 'summer')):
     df_season = df.loc[df['season'] == season]
@@ -100,7 +107,7 @@ for ax, season in zip(axes, ('winter', 'summer')):
 axes[0].set_ylabel('Modeled (m w.e.)')
 
 fig.legend(handles=handles, loc='center left', 
-            bbox_to_anchor=(0.92, 0.5), fontsize=8, 
-            frameon=False, ncols=2)
+            bbox_to_anchor=(0.92, 0.5), fontsize=10, 
+            frameon=False, ncols=1)
 fig.savefig(FIG_FN, dpi=200, bbox_inches='tight')
 print(f'Saved {FIG_FN}')

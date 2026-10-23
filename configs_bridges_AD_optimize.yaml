@@ -1,5 +1,7 @@
 option_ice_albedo_tif: true
-option_ice_thickness_tif: true
+option_ice_thickness_tif: false
+initial_ice_depth: 500
+option_preclimit: true
 option_windmaps: true
 option_accel_grains: true
 option_flat_plates: true

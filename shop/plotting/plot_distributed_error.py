@@ -14,16 +14,19 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from shapely.prepared import prep
 from pyproj import CRS, Transformer
+
+sys.path.append('../../')
 from project.glacierwide_loss import *
 
-output_dir = '/ocean/projects/ees260009p/cwilson4/Output/gulkana_0/' #
+output_dir = '/ocean/projects/ees260009p/cwilson4/Output/AD_result_1/' #
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp' # /ocean/projects/ees260009p/cwilson4/
+use_deltas = False
 
 # ===================== LOAD DATA =====================
 ds = xr.open_zarr(f'{output_dir}/output.zarr', consolidated=False)
 
 n_years = len(np.unique(ds.time.dt.year.values))
-rgi_id = ds.rgiid.values[0]
+rgi_id = '01.00570' # ds.rgiid.values[0]
 
 # keep only the points on the glacier being evaluated
 ds = ds.sel(point=ds.point.values[ds['rgiid'].values == rgi_id])
@@ -50,28 +53,22 @@ glacier_outline = gdf[gdf['RGIId'] == f'RGI60-{rgi_id}'].to_crs(metric_crs)
 # ===================== ERROR =====================
 glacier = translate_names[rgi_id]
 ab = Albedo(glacier)
-mb = MassBalance(glacier, dates=('2016-04-01', '2020-01-01'))
+mb = MassBalance(glacier) # , dates=('2016-04-01', '2020-01-01'))
 wet = Wet(glacier)
 
 # get model vs measurements
 ab.get_model_albedo(ds)
-ab.get_deltas()
+if use_deltas:
+    ab.get_deltas()
 mb.get_model_mb(ds)
 wet.get_model_wet(ds)
 
 # per-point losses, averaged over time
-def bce(mod, meas, eps=1e-3):
-    p = np.clip(np.asarray(mod, dtype=float), eps, 1 - eps)
-    y = np.asarray(meas, dtype=float)
-    return -np.nanmean(y * np.log(p) + (1 - y) * np.log(1 - p), axis=0)
-
 with warnings.catch_warnings():
     # points with no valid measurement in the record reduce to nan
     warnings.simplefilter('ignore', RuntimeWarning)
-    albedo_residual = ab.mod - ab.meas
-    albedo_pts = np.nanmean(0.5 * np.log(2 * np.pi * ALBEDO_SIGMA**2)
-                            + albedo_residual**2 / (2 * ALBEDO_SIGMA**2), axis=0)
-    wet_pts = bce(wet.mod_wet, wet.meas_wet)
+    albedo_pts = np.nanmean(crps_gaussian(ab.mod, ab.meas, ALBEDO_SIGMA), axis=0) / ALBEDO_SIGMA
+    wet_pts = np.nanmean((wet.p_wet - wet.meas_wet)**2, axis=0)
 
 point_losses = {'wet': wet_pts, 'albedo': albedo_pts}
 
@@ -164,7 +161,8 @@ bx0, by0 = bx0 - spacing_m, by0 - spacing_m
 bx1, by1 = bx1 + spacing_m, by1 + spacing_m
 
 # ===================== PLOT =====================
-error_labels = {'wet': 'Wet extent', 'albedo': 'Albedo'}
+error_labels = {'wet': 'Water extent', 'albedo': 'Albedo'}
+loss_labels = {'wet': 'Brier score', 'albedo': 'CRPS / sigma'}
 cm = 'magma_r'
 
 # size the figure to the glacier's own aspect ratio (3 map/bar cells in
@@ -211,7 +209,7 @@ for ax, var in zip(map_axes, ['wet', 'albedo']):
     ax.add_collection(pc)
     ax.set_xlim(bx0, bx1)
     ax.set_ylim(by0, by1)
-    fig.colorbar(pc, ax=ax, label='log loss [nats]', shrink=0.7)
+    fig.colorbar(pc, ax=ax, label=loss_labels[var], shrink=0.7)
     ax.set_title(error_labels[var])
 
 # bar chart for last subpanel
@@ -223,9 +221,10 @@ losses = [mb_loss, ab_loss, wet_loss]
 axes[-1].bar(range(len(losses)), losses)
 axes[-1].set_xticks(range(len(losses)))
 axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Wet extent'], rotation=20)
-axes[-1].set_ylabel('log loss [nats]')
+axes[-1].set_ylabel('CRPS / sigma or Brier score')
 
-output_fn = f'{output_dir}{rgi_id}_loss_map.png'
+suffix = 'deltas' if use_deltas else 'raw'
+output_fn = f'{output_dir}{rgi_id}_loss_map_{suffix}.png'
 plt.savefig(output_fn, dpi=150)
 plt.show()
 print(f'saved to {output_fn}')
