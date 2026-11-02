@@ -26,6 +26,7 @@ FIG_FN = ROOT + 'index_site_seasonal_1to1.png'
 
 colors = ['#63c4c7', '#fcc02e', '#4D559C', '#60C252', '#BF1F6A']
 markers = ['o', 's', '^', 'D', 'v', 'P', 'X', '<', '>', '*']
+# markers = ['o'] * 20
 
 with open(os.path.join(PEBSI_FP, 'project', 'sites.pkl'), 'rb') as f:
     sites_by_rgiid = pickle.load(f)

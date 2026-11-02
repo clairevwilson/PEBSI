@@ -92,19 +92,29 @@ plt.close()
 names = ['Wildfires', 'Heatwaves', 'Both', 'Interaction']
 width = 0.2
 
+# each bar figure is saved once per stage, adding effects in turn; hidden bars are still drawn
+# (invisible) so every stage has the same bar positions and y limits
+stages = {'fires': ['Wildfires'],
+          'fires_heatwaves': ['Wildfires', 'Heatwaves'],
+          'all': names}
+bar_labels = {'Wildfires': 'No wildfires', 'Heatwaves': 'No heatwaves', 'Both': 'Neither',
+              'Interaction': 'Interaction'}
+
 def effect_bars(values, ylabel, fn):
-    fig, ax = plt.subplots(figsize=(7, 3.5), layout='constrained')
-    for j, glacier in enumerate(glaciers):
-        for k, name in enumerate(names):
-            ax.bar(j + (k - 1.5) * width, values[glacier][name], width, facecolor=effect_colors[name],
-                   edgecolor='k', linewidth=0.5, label=name if j == 0 else None)
-    ax.set_xticks(range(len(glaciers)))
-    ax.set_xticklabels([fmt_name(g) for g in glaciers])
-    ax.axhline(0, linewidth=0.5, c='k')
-    ax.set_ylabel(ylabel)
-    fig.legend(loc='outside upper center', ncol=len(names), fontsize=8, frameon=False)
-    plt.savefig(base_fp + fn, dpi=300, bbox_inches='tight')
-    plt.close()
+    for stage, shown in stages.items():
+        fig, ax = plt.subplots(figsize=(7, 3.5), layout='constrained')
+        for j, glacier in enumerate(glaciers):
+            for k, name in enumerate(names):
+                ax.bar(j + (k - 1.5) * width, values[glacier][name], width, facecolor=effect_colors[name],
+                       edgecolor='k', linewidth=0.5, visible=name in shown,
+                       label=bar_labels[name] if j == 0 and name in shown else None)
+        ax.set_xticks(range(len(glaciers)))
+        ax.set_xticklabels([fmt_name(g) for g in glaciers])
+        ax.axhline(0, linewidth=0.5, c='k')
+        ax.set_ylabel(ylabel)
+        fig.legend(loc='outside upper center', ncol=len(names), fontsize=11, frameon=False)
+        plt.savefig(base_fp + fn.replace('.png', f'_{stage}.png'), dpi=300, bbox_inches='tight')
+        plt.close()
 
 rates = {glacier: {name: float(water_years(effect(glac, name).sel(glacier=glacier)).mean()) * 100 for name in names}
          for glacier in glaciers}
@@ -114,23 +124,42 @@ for glacier, r in rates.items():
           f'({r["Interaction"] / r["Both"] * 100:.0f}% of both)')
 effect_bars(rates, r'Change in mass balance (cm w.e. a$^{-1}$)', 'synergy.png')
 
-# Share of observed mass loss over 2000-2014, the calendar years both the run and Hugonnet
-# et al. (2021) cover. Hugonnet's cumulative dh is converted with their 850 kg m-3 density.
-obs_start, obs_end = pd.Timestamp('2000-01-01'), pd.Timestamp('2015-01-01')
-n_years = obs_end.year - obs_start.year
-cumul = pd.read_csv(base_fp + '../../data/mass_balance/dh_01_rgi60_pergla_cumul.csv',
-                    usecols=['rgiid', 'time', 'dh'], parse_dates=['time']).set_index(['rgiid', 'time'])['dh']
+# Total modeled mass balance over the whole run, stacked into the part each extreme caused
+# and the rest; each stage splits off the effects shown so the full bar is always Base
+totals = {glacier: {sim: float(glac[sim]['mass_balance'].sel(glacier=glacier).sum()) for sim in runs}
+          for glacier in glaciers}
+parts = {glacier: {name: float(effect(glac, name).sel(glacier=glacier).sum()) for name in names}
+         for glacier in glaciers}
+stack_names = ['Wildfires', 'Heatwaves']
+stack_colors = {'Other': '0.8', **effect_colors}
 
-shares = {}
+for stage in ['fires', 'fires_heatwaves']:
+    shown = stages[stage]
+    fig, ax = plt.subplots(figsize=(7, 3.5), layout='constrained')
+    for j, glacier in enumerate(glaciers):
+        other = totals[glacier]['Base'] - sum(parts[glacier][name] for name in shown)
+        bottom = 0
+        for name in ['Other'] + shown:
+            height = other if name == 'Other' else parts[glacier][name]
+            ax.bar(j, height, 0.6, bottom=bottom, facecolor=stack_colors[name], edgecolor='k',
+                   linewidth=0.5, label=name if j == 0 else None)
+            bottom += height
+    ax.set_xticks(range(len(glaciers)))
+    ax.set_xticklabels([fmt_name(g) for g in glaciers])
+    ax.axhline(0, linewidth=0.5, c='k')
+    ax.set_ylim(1.05 * min(t['Base'] for t in totals.values()), 0)
+    ax.set_ylabel('Mass balance, 1997$-$2015 (m w.e.)')
+    fig.legend(loc='outside upper center', ncol=len(stack_names) + 1, fontsize=11, frameon=False)
+    plt.savefig(base_fp + f'familiar_units_{stage}.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+shares = {name: {glacier: parts[glacier][name] / totals[glacier]['Base'] * 100 for glacier in glaciers}
+          for name in names}
 for glacier in glaciers:
-    dh = cumul['RGI60-' + translate_rgi[glacier]['6']]
-    observed = (dh[obs_end] - dh[obs_start]) * 0.85 / n_years
-    shares[glacier] = {}
-    for name in names:
-        modeled = float(effect(glac, name).sel(glacier=glacier, time=slice(obs_start, obs_end - pd.Timedelta('1s'))).sum()) / n_years
-        shares[glacier][name] = modeled / observed * 100
-    print(f'{glacier:<12} observed {observed:.2f} m w.e. a-1, both {shares[glacier]["Both"]:.1f}% of observed loss')
-effect_bars(shares, 'Share of observed mass loss (%)', 'familiar_units.png')
+    print(f'{glacier:<12} total {totals[glacier]["Base"]:.2f} m w.e., ' +
+          ', '.join(f'{name.lower()} {shares[name][glacier]:.1f}%' for name in names))
+for name in names:
+    print(f'{name:<12} {min(shares[name].values()):.1f}-{max(shares[name].values()):.1f}% of modeled mass balance')
 
 # Elevation profile of each effect, with hypsometry and the Base vs Neither ELAs
 bin_width = 100

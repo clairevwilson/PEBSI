@@ -158,7 +158,7 @@ height = np.ceil((3.6 * (ymax - ymin) / (xmax - xmin) + 0.48) * 4) / 4
 fig, axes = plt.subplots(1, 2, figsize=(8, height), dpi=100,
                          sharex=True, sharey=True, layout='compressed')
 cells = []
-name = {'albedo': 'Albedo', 'wet': 'Water extent'}[VARIABLE]
+name = {'albedo': 'albedo', 'wet': 'water extent'}[VARIABLE]
 for ax, data, source in zip(axes, [meas, mod_daily], ['Measured', 'Modeled']):
     cell = PathCollection(paths, cmap=cmap, edgecolors='none')
     cell.set_clim(vmin, vmax)
@@ -191,7 +191,7 @@ def update(t):
 anim = FuncAnimation(fig, update, frames=len(days), interval=125)
 suffix = '_raw' if VARIABLE == 'albedo' and not DELTAS else ''
 out_fn = RUN_DIR + f'comparison_{GLACIER}_{VARIABLE}{suffix}_{YEAR or "all"}.gif'
-anim.save(out_fn, writer='pillow', fps=16)
+anim.save(out_fn, writer='pillow', fps=16, dpi=300)
 
 # matplotlib always writes the gif to loop forever; resave it without the
 # loop flag so it plays once and holds on the last frame (e.g. in Google Slides)
