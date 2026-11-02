@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 from pyproj import CRS, Transformer
 
-output_fp = '/ocean/projects/ees260009p/cwilson4/Output/dynamics_demo/'
+output_fp = '/ocean/projects/ees260009p/cwilson4/Output/dynamics_demo_2/'
 rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 rgi_id = '01.00570'
 n_years = 5
@@ -61,9 +61,9 @@ for ax, (var, title) in zip(axes, panels):
     #         ha='left', va='top', color='0.35')
     ax.set_aspect('equal')
 
-cax = fig.add_axes([0.37, 0.1, 0.26, 0.03])
+cax = fig.add_axes([0.37, 0.02, 0.26, 0.03])
 cbar = fig.colorbar(axes[0].collections[0], cax=cax, orientation='horizontal', extend='both')
-cbar.set_label('m w.e. yr$^{-1}$')
+cbar.set_label('Mass balance (m w.e. yr$^{-1}$)')
 cbar.ax.tick_params(length=2)
 
 plt.savefig(f'{output_fp}dynamics_demo_map.png', dpi=300, bbox_inches='tight')

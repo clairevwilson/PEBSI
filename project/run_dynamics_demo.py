@@ -2,7 +2,8 @@
 Sample 2010-2025 Gulkana simulation with GLIDE ice dynamics coupled
 every year. Records each coupling year's surface mass balance and
 dynamics-only mass change per point, plus GLIDE's own thickness and SMB
-grids, to dynamics_demo.npz in the output folder for plot_dynamics_demo.py.
+grids, to dynamics_demo.npz in the run's output folder (next to
+output.zarr) for plot_dynamics_demo.py.
 """
 import os
 import sys
@@ -35,7 +36,9 @@ configs['end_date'] = '2025-03-31 23:00'
 configs['temporal_chunk_years'] = 1
 configs['option_dynamics'] = True
 configs['dynamics_period_years'] = 1
-configs['dynamics_sliding_beta'] = 5.0
+configs['dynamics_sliding_beta'] = 3.5
+# temperate-ice Glen's A (2.4e-24 s-1 Pa-3 = 7.6e-17 yr-1 Pa-3), scaled the same way as defaults.py
+configs['dynamics_rheology_B'] = 7.6e-17 ** (-1.0 / 3.0) / (900 * 9.81)
 configs['dynamics_dx'] = 100.0
 configs['output_freq'] = 'daily'
 configs['store_vars'] = ['MB']
@@ -84,8 +87,7 @@ model.run()
 os.remove(config_fn)
 
 grid = record['grid']
-os.makedirs(output_fp, exist_ok=True)
-np.savez(os.path.join(output_fp, 'dynamics_demo.npz'),
+np.savez(os.path.join(model.output_fp, 'dynamics_demo.npz'),
          smb=np.array(record['smb']),
          dyn=np.array(record['dyn']),
          dt=np.array(record['dt']),
@@ -100,4 +102,4 @@ np.savez(os.path.join(output_fp, 'dynamics_demo.npz'),
          lon=np.array(model.terrain.lon_n),
          elev_initial=initial_elev,
          elev_final=np.array(model.terrain.elev_n))
-print(f'saved {len(record["smb"])} coupling years to {output_fp}dynamics_demo.npz')
+print(f'saved {len(record["smb"])} coupling years to {model.output_fp}dynamics_demo.npz')
