@@ -16,7 +16,7 @@ import pandas as pd
 import xarray as xr
 
 sys.path.append('/jet/home/cwilson4/PEBSI/')
-from glacierwide_loss import translate_rgi
+from glacierwide_loss import MassBalance, translate_rgi
 
 base_fp = '/ocean/projects/ees260009p/cwilson4/Output/controlled/'
 
@@ -100,19 +100,24 @@ stages = {'fires': ['Wildfires'],
 bar_labels = {'Wildfires': 'No wildfires', 'Heatwaves': 'No heatwaves', 'Both': 'Neither',
               'Interaction': 'Interaction'}
 
-def effect_bars(values, ylabel, fn):
-    for stage, shown in stages.items():
+# sigma: optional {glacier: value} drawn as a black line spanning that glacier's bars,
+# only on the final stage with every effect shown
+def effect_bars(values, ylabel, fn, sigma=None):
+    for stage, shown in (stages if sigma is None else {'all': names}).items():
         fig, ax = plt.subplots(figsize=(7, 3.5), layout='constrained')
         for j, glacier in enumerate(glaciers):
             for k, name in enumerate(names):
                 ax.bar(j + (k - 1.5) * width, values[glacier][name], width, facecolor=effect_colors[name],
                        edgecolor='k', linewidth=0.5, visible=name in shown,
                        label=bar_labels[name] if j == 0 and name in shown else None)
+            if sigma is not None:
+                ax.hlines(-sigma[glacier], j - 2 * width, j + 2 * width, colors='k', linewidth=1.5,
+                          label='Hugonnet uncertainty' if j == 0 else None)
         ax.set_xticks(range(len(glaciers)))
         ax.set_xticklabels([fmt_name(g) for g in glaciers])
         ax.axhline(0, linewidth=0.5, c='k')
         ax.set_ylabel(ylabel)
-        fig.legend(loc='outside upper center', ncol=len(names), fontsize=11, frameon=False)
+        fig.legend(loc='outside upper center', ncol=len(names) + (sigma is not None), fontsize=11, frameon=False)
         plt.savefig(base_fp + fn.replace('.png', f'_{stage}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
@@ -123,6 +128,10 @@ for glacier, r in rates.items():
           f'both {r["Both"]:.2f}, interaction {r["Interaction"]:.2f} cm w.e. a-1 '
           f'({r["Interaction"] / r["Both"] * 100:.0f}% of both)')
 effect_bars(rates, r'Change in mass balance (cm w.e. a$^{-1}$)', 'synergy.png')
+
+# same bars against the 2000-2020 Hugonnet uncertainty in the glacier-wide rate
+hugonnet_sigma = {glacier: MassBalance(glacier).sigma * 100 for glacier in glaciers}
+effect_bars(rates, r'Change in mass balance (cm w.e. a$^{-1}$)', 'synergy_hugonnet.png', sigma=hugonnet_sigma)
 
 # Total modeled mass balance over the whole run, stacked into the part each extreme caused
 # and the rest; each stage splits off the effects shown so the full bar is always Base
