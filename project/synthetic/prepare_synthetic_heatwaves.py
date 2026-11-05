@@ -96,20 +96,21 @@ def heatwave_days(exceeds):
     return binary_dilation(binary_erosion(exceeds, structure=struct), structure=struct) & exceeds
 
 
-def write_run(run, forcing, attrs):
-    """Writes each output variable as a (time, 1, 1) zarr in UTC."""
+def write_run(run, forcing, attrs, run_fp):
+    """Writes each output variable as a (time, 1, 1) zarr in UTC, at run_fp formatted with run and var."""
     times = (forcing.index + UTC_OFFSET).values
     for var in OUT_VARS:
         da = xr.DataArray(forcing[var].values.astype(np.float32)[:, None, None],
                           dims=('time', 'lat', 'lon'),
                           coords={'time': times, 'lat': [LAT], 'lon': [LON]},
                           attrs=attrs[var], name=var)
-        fn = out_fp.format(run=run, v=var)
+        fn = run_fp.format(run=run, v=var)
         os.makedirs(os.path.dirname(fn), exist_ok=True)
         da.to_dataset().to_zarr(fn, mode='w', zarr_format=2)
 
 
-def main():
+def main(design, run_fp, design_fn):
+    """Writes the forcing of every run in design to run_fp and the design table to design_fn."""
     print("Loading Kennicott cell...")
     orig = pd.DataFrame({v: load_cell(base_fp, v) for v in PERTURB_VARS + ['PS', 'PRECTOTCORR']})
     nohw = pd.DataFrame({v: load_cell(nohw_fp, v) for v in PERTURB_VARS})
@@ -142,7 +143,6 @@ def main():
     season = pd.date_range(f'{YEAR}-05-01', f'{YEAR}-09-30', freq='D')
     season_thresh = temp_thresh[season.dayofyear - 1]
 
-    design = sample_design()
     stats = []
     for run, (start, duration, intensity) in design.iterrows():
         forcing = base.copy()
@@ -154,7 +154,7 @@ def main():
             forcing.loc[event, 'SWGDN'] = np.clip(forcing.loc[event, 'SWGDN'], 0, cap)
             forcing.loc[event, 'PRECTOTCORR'] = 0
         forcing['RH2M'] = relative_humidity(forcing['T2M'], forcing['QV2M'], forcing['PS'])
-        write_run(run, forcing, attrs)
+        write_run(run, forcing, attrs, run_fp)
 
         # event intensity in the detect_events.py sense, over the 2006 season
         exceedance = forcing['T2M'].resample('1D').max().loc[season].values - season_thresh
@@ -171,9 +171,9 @@ def main():
               f"{stats[-1]['heatwave_days']} heatwave days", flush=True)
 
     design = design.join(pd.DataFrame(stats, index=design.index))
-    design.to_csv(DESIGN_FN)
-    print(f"Saved {DESIGN_FN}")
+    design.to_csv(design_fn)
+    print(f"Saved {design_fn}")
 
 
 if __name__ == '__main__':
-    main()
+    main(sample_design(), out_fp, DESIGN_FN)

@@ -76,7 +76,8 @@ def sample_design():
     return design
 
 
-def main():
+def main(design, run_fp, design_fn):
+    """Writes the deposition of every run in design to run_fp and the design table to design_fn."""
     fire_days = xr.open_dataset(EVENTS_FN)['wildfire'].sel(y=LAT, x=LON, method='nearest').to_series()
     fire_days = fire_days.index[fire_days.values.astype(bool)]
     print(f"{len(fire_days)} wildfire days at Kennicott")
@@ -114,7 +115,6 @@ def main():
     times = base[COMPONENTS[0]].time.values
     days = pd.DatetimeIndex(times) - pd.Timedelta(hours=12)
 
-    design = sample_design()
     totals = []
     for run, (start, duration, intensity) in design.iterrows():
         # run 0's start is NaT, so no day falls in its event
@@ -128,7 +128,7 @@ def main():
             total += float(centre_added.sum()) * ratio[(sp, t)] * 86400 * 1e6
 
             da.attrs = attrs[(sp, t)]
-            fn = out_fp.format(run=run, sp=sp, t=t)
+            fn = run_fp.format(run=run, sp=sp, t=t)
             os.makedirs(os.path.dirname(fn), exist_ok=True)
             da.to_dataset().to_netcdf(fn)
         totals.append(total)
@@ -136,9 +136,9 @@ def main():
               f"intensity {intensity:.2f}, {total:.1f} mg m-2", flush=True)
 
     design['total_deposition'] = totals
-    design.to_csv(DESIGN_FN)
-    print(f"Saved {DESIGN_FN}")
+    design.to_csv(design_fn)
+    print(f"Saved {design_fn}")
 
 
 if __name__ == '__main__':
-    main()
+    main(sample_design(), out_fp, DESIGN_FN)
