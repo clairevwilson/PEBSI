@@ -156,6 +156,7 @@ method_distribute = 'grid'              # 'sites', 'grid', 'adaptive', 'mesh'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 method_scalar_roughness = 'Andreas'     # 'Andreas', 'ratio'
+method_stability = 'Braithwaite'        # 'Braithwaite' (critical Ri of 0.2) or 'Gryanik' (no critical Ri)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?

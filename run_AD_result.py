@@ -9,14 +9,17 @@ import AD_optimize as ad
 import simulation as sim
 from pebsi.io.terrain import Terrain
 
+METHOD_STABILITY = 'Braithwaite'
+
 RESULT_FN = ad.HOST_PATHS[ad.host]['output_fp'] + 'AD_optimize_result.yaml'
-OUTPUT_FP = ad.HOST_PATHS[ad.host]['output_fp'].replace('AD_optimize', 'AD_result')
+OUTPUT_FP = ad.HOST_PATHS[ad.host]['output_fp'].replace('AD_optimize', f'AD_result_{METHOD_STABILITY}')
 
 
 def config_with(**overrides):
     return ad.build_config(dict(store_data=True, store_vars=['MB', 'EB', 'climate'],
                                 output_freq='hourly', debug=True, output_fp=OUTPUT_FP,
-                                **overrides), tag='AD_result')
+                                method_stability=METHOD_STABILITY,
+                                **overrides), tag=f'AD_result_{METHOD_STABILITY}')
 
 
 def model_for(config_fn):

@@ -305,13 +305,18 @@ class EnergyBalanceDriver():
         csT = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0t))
         csQ = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0q))
 
-        # Psi stability factor: stable (1-5Ri)^2 shuts off turbulence at the critical Ri of 0.2 (Braithwaite 1995)
+        # Psi stability factor
         ri_unstable = jnp.minimum(RICHARDSON, 0.0)
-        ri_stable = jnp.minimum(jnp.maximum(RICHARDSON, 0.0), 0.2)
+        if params.method_stability == 'Gryanik':
+            psi_stable = self.stability_gryanik(jnp.maximum(RICHARDSON, 0.0), z / z0, z / z0t)
+        else:
+            # stable (1-5Ri)^2 shuts off turbulence at the critical Ri of 0.2 (Braithwaite 1995)
+            ri_stable = jnp.minimum(jnp.maximum(RICHARDSON, 0.0), 0.2)
+            psi_stable = (1.0 - 5.0 * ri_stable) ** 2
         psi = jnp.where(
             RICHARDSON <= 0.0,
             jnp.sqrt(1.0 - 15.0 * ri_unstable),
-            (1.0 - 5.0 * ri_stable) ** 2
+            psi_stable
         )
         
         # final flux calculation
@@ -320,6 +325,28 @@ class EnergyBalanceDriver():
 
         return Qs, Ql
     
+    def stability_gryanik(self, ri, eps_m, eps_t):
+        """
+        Normalized heat transfer coefficient f_h for stable conditions from
+        the noniterative parameterization of Gryanik et al. (2020, JAS,
+        Eqs. 50, 54-56), fit to SHEBA measurements over sea ice. Unlike
+        the Businger-Dyer form it has no critical Richardson number.
+        """
+        PR0 = 0.98  # neutral-limit turbulent Prandtl number (Eq. 38)
+        ln_m = jnp.log(eps_m)
+        ln_t = jnp.log(eps_t)
+        ri_hat = ri / PR0
+
+        # stability parameter zeta (Eqs. 50, 54)
+        A = (ln_m + 23.50) ** 5.25 / (181.3 * (ln_t + 16.67) ** 2.625) \
+            * ((ln_m + 23.50) ** 2 / (ln_t + 16.67) - ln_m ** 2 / ln_t)
+        zeta = ln_m ** 2 / ln_t * ri_hat + A * ri_hat ** 3.625
+
+        # normalized transfer coefficients for momentum and heat (Eqs. 55, 56)
+        f_m = (1.0 + 50.0 / ln_m * ((1.0 + 0.3 * zeta) ** (1 / 3) - 1.0)) ** -2
+        f_h = jnp.sqrt(f_m) / (1.0 + 12.5 / ln_t * jnp.log(1.0 + 0.40 * zeta))
+        return f_h
+
     def scalar_roughness_andreas(self, z0, wind, z):
         """
         Calculates roughness lengths for heat and moisture
