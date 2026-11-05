@@ -20,7 +20,7 @@ from pebsi.io.terrain import Terrain
 from project.parameters import (host, HOST_PATHS, BASE_CONFIG, GLACIERS,
                                 translate_rgi, baseline)
 
-# one of 'base', 'no_fires', 'no_heatwaves', 'no_either'
+# one of 'base', 'no_fires', 'no_heatwaves', 'no_either', 'ssp245_mpi', 'ssp245_gfdl'
 sim_type = os.environ['SIM_TYPE']
 
 START_DATE = '1997-04-01'
@@ -84,6 +84,15 @@ def build_config(kp=None, wind_factor=None):
         configs['ukesm_fp'] = '../UKESM/dw068_nofires/'
         configs['secondary_climate_string'] = '_no_heatwaves'
         configs['secondary_vars'] = ['temp', 'SWin', 'LWin', 'rh']
+
+    # future fire deposition; these files end 2014-11-30
+    elif sim_type == 'ssp245_mpi':
+        configs['ukesm_fp'] = '../UKESM/dt397_SSP245_MPI/'
+        configs['end_date'] = '2014-09-01'
+
+    elif sim_type == 'ssp245_gfdl':
+        configs['ukesm_fp'] = '../UKESM/dt398_SSP245_GFDL/'
+        configs['end_date'] = '2014-09-01'
 
     else:
         raise ValueError(f'unknown sim_type {sim_type!r}')
