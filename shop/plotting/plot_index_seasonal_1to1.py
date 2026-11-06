@@ -20,7 +20,8 @@ sys.path.insert(0, PEBSI_FP)
 
 from project.data_handling import MassBalance, translate_rgi
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_result_1/'
+CORE = '../../../'
+ROOT = CORE + 'Output/controlled/base_OG_0/'
 BEST_ZARR = ROOT + 'output.zarr'
 FIG_FN = ROOT + 'index_site_seasonal_1to1.png'
 

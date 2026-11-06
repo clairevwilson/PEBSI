@@ -26,12 +26,26 @@ sim_type = os.environ['SIM_TYPE']
 # non-default schemes get their own output folder so they don't mix with the bulk runs
 turb_method = os.environ.get('TURB_METHOD', 'bulk')
 run_name = sim_type if turb_method == 'bulk' else f'{sim_type}_{turb_method}'
+# optional override of the OG katabatic constant (default in pebsi/defaults.py)
+og_kappa = os.environ.get('OG_KAPPA')
+if og_kappa is not None:
+    run_name += f'_k{og_kappa}'
+# optional multiplier on the calibrated per-glacier wind factors (e.g. to offset
+# the katabatic add-on in 'OG_hybrid' without recalibrating)
+wind_scale = os.environ.get('WIND_SCALE')
+if wind_scale is not None:
+    run_name += f'_ws{wind_scale}'
 
 START_DATE = '1997-04-01'
 END_DATE = '2015-09-01'
 STORE_VARS = ['MB', 'EB', 'climate']
-RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result.yaml'
-output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{run_name}/'
+if host == 'forge':
+    # calibration the bridges controlled runs (base_0 etc.) used, recovered from their configs
+    RESULT_FN = '/home/claire/Research/Output/controlled/AD_optimize_result_used_by_base_0.yaml'
+    output_fp = f'/home/claire/Research/Output/controlled/{run_name}/'
+else:
+    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result.yaml'
+    output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{run_name}/'
 out_config_fn = f'controlled_{run_name}.yaml'
 
 rgi_ids = [translate_rgi[g]['6'] for g in GLACIERS]
@@ -70,6 +84,7 @@ def build_config(kp=None, wind_factor=None):
         wind_factor=baseline['wind_factor'],
         deposition_data='UKESM',
         method_turbulent=turb_method,
+        **({'og_kappa': float(og_kappa)} if og_kappa is not None else {}),
         output_fp=output_fp,
         **{k: v for k, v in HOST_PATHS[host].items() if k != 'output_fp'},
     )
@@ -124,9 +139,12 @@ def main():
     rgiid_n = np.asarray(terrain.rgiid_n, dtype=str)
     kp = np.array([best[gid][0] for gid in rgiid_n])
     wind_factor = np.array([best[gid][1] for gid in rgiid_n])
+    if wind_scale is not None:
+        wind_factor = wind_factor * float(wind_scale)
 
     print(f'sim_type  {sim_type}', flush=True)
     print(f'turbulent {turb_method}', flush=True)
+    print(f'wind_scale {wind_scale or 1}', flush=True)
     print(f'{terrain.N_POINTS} adaptive points across '
           f'{len(GLACIERS)} glaciers', flush=True)
     for g in GLACIERS:

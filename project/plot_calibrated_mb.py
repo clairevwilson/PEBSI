@@ -16,7 +16,7 @@ for glacier, numbers in translate_rgi.items():
     rgi_map[numbers['6']] = glacier
 
 CORE = '../../' # '/ocean/projects/ees260009p/cwilson4/'
-ROOT = CORE + 'Output/bridges_backup/controlled/base_0/'
+ROOT = CORE + 'Output/controlled/base_OG_0/'
 ds_all = xr.open_zarr(ROOT + 'output.zarr', consolidated=False)
 
 site_meta = pd.read_csv('../data/glacier_metadata.csv', dtype=str)
