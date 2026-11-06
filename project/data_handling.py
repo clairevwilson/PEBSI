@@ -22,6 +22,9 @@ elif 'lantern' in socket.gethostname():
 elif 'campfire' in socket.gethostname():
     base_fp = '/home/claire/Local/Output/'
     home_fp = '/home/claire/Local/'
+elif 'forge' in socket.gethostname():
+    base_fp = '/home/claire/Research/'
+    home_fp = '/home/claire/Research/'
 else:
     base_fp = 'C:/Users/cvw30/Research/Output/ddf/'
     home_fp = 'C:/Users/cvw30/Research/'

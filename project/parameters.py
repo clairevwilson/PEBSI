@@ -12,6 +12,8 @@ import socket
 
 if 'trace' in socket.gethostname():
     host = 'trace'
+elif 'forge' in socket.gethostname():
+    host = 'forge'
 else:
     host = 'bridges'
 
@@ -33,6 +35,17 @@ HOST_PATHS = {
         ice_albedo_fn='/ocean/projects/ees260009p/cwilson4/data/ice_albedo/{gid}_albedo.tif',
         thickness_fn='/ocean/projects/ees260009p/cwilson4/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif',
         windmap_fn='/ocean/projects/ees260009p/cwilson4/data/windmapper/{gid}.nc',
+    ),
+
+    'forge': dict(
+        climate_fp='/home/claire/Research/climate_data/',
+        rgi_fp='/home/claire/Research/RGI/rgi60/00_rgi60_attribs/',
+        output_fp='/home/claire/Research/Output/AD_optimize/',
+        cop30_vrt_path='/home/claire/Research/data/dems/COP30/COP30_reg01.vrt',
+        shading_fp='/home/claire/Research/data/shading/',
+        ice_albedo_fn='/home/claire/Research/data/ice_albedo/{gid}_albedo.tif',
+        thickness_fn='/home/claire/Research/data/ice_thickness/RGI60-01/RGI60-{gid}_thickness.tif',
+        windmap_fn='/home/claire/Research/data/windmapper/{gid}.nc',
     ),
 }
 
