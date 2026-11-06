@@ -22,13 +22,17 @@ from project.parameters import (host, HOST_PATHS, BASE_CONFIG, GLACIERS,
 
 # one of 'base', 'no_fires', 'no_heatwaves', 'no_either', 'ssp245_mpi', 'ssp245_gfdl'
 sim_type = os.environ['SIM_TYPE']
+# turbulent flux scheme: 'bulk' (default) or 'OG' (katabatic, see pebsi/defaults.py);
+# non-default schemes get their own output folder so they don't mix with the bulk runs
+turb_method = os.environ.get('TURB_METHOD', 'bulk')
+run_name = sim_type if turb_method == 'bulk' else f'{sim_type}_{turb_method}'
 
 START_DATE = '1997-04-01'
 END_DATE = '2015-09-01'
 STORE_VARS = ['MB', 'EB', 'climate']
 RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result.yaml'
-output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{sim_type}/'
-out_config_fn = f'controlled_{sim_type}.yaml'
+output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{run_name}/'
+out_config_fn = f'controlled_{run_name}.yaml'
 
 rgi_ids = [translate_rgi[g]['6'] for g in GLACIERS]
 
@@ -65,6 +69,7 @@ def build_config(kp=None, wind_factor=None):
         kp=baseline['kp'],
         wind_factor=baseline['wind_factor'],
         deposition_data='UKESM',
+        method_turbulent=turb_method,
         output_fp=output_fp,
         **{k: v for k, v in HOST_PATHS[host].items() if k != 'output_fp'},
     )
@@ -121,6 +126,7 @@ def main():
     wind_factor = np.array([best[gid][1] for gid in rgiid_n])
 
     print(f'sim_type  {sim_type}', flush=True)
+    print(f'turbulent {turb_method}', flush=True)
     print(f'{terrain.N_POINTS} adaptive points across '
           f'{len(GLACIERS)} glaciers', flush=True)
     for g in GLACIERS:
