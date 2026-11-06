@@ -156,7 +156,7 @@ method_distribute = 'grid'              # 'sites', 'grid', 'adaptive', 'mesh'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 method_scalar_roughness = 'Andreas'     # 'Andreas', 'ratio'
-method_stability = 'Braithwaite'        # 'Braithwaite' (critical Ri of 0.2) or 'Gryanik' (no critical Ri)
+method_turbulent = 'bulk'               # 'bulk' (Richardson-corrected bulk transfer) or 'OG' (Oerlemans & Grisogono 2002 katabatic, Klok & Oerlemans 2002 form)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
@@ -277,6 +277,11 @@ roughness_firn = 4          #* Surface roughness length for firn [mm] (Moelg et 
 roughness_ice = 1.7         #* Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
 roughness_aging_rate = 0.06267 #* Rate from fresh --> aged snow (60 days from 0.24 to 4.0) [mm day-1]
 kinematic_viscosity_air = 1.4e-5 # Kinematic viscosity of air near 0 C [m2 s-1]
+# Katabatic turbulent exchange, only used if method_turbulent='OG' (Oerlemans & Grisogono 2002; Klok & Oerlemans 2002; Munro 2004 eqs. 1, 8-10)
+og_kappa = 0.0004           # Empirical katabatic scaling constant [-] (Oerlemans & Grisogono 2002, Pasterzenkees)
+og_lapse_rate = 0.005       # Ambient potential temperature lapse rate gamma [K m-1] (Oerlemans & Grisogono 2002)
+og_prandtl = 5              # Turbulent Prandtl number [-] (Oerlemans & Grisogono 2002)
+og_Kb = 0.002               # Background (synoptic) exchange parameter [m s-1]; placeholder, ~1.6-2.1e-3 reproduces mean JJA sensible heat at Gulkana B in base_0/AD_result_1
 wet_grain_C = 4.22e-13      # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.05                   # Fraction of irreducible water content for percolation [-]
 Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3)

@@ -248,8 +248,16 @@ class EnergyBalanceDriver():
     
     def get_turbulent(self, state, forcings, point_attrs):
         """
-        Calculates turbulent (sensible and latent heat)
-        fluxes using the Bulk Richardson stability correction.
+        Calculates turbulent (sensible and latent heat) fluxes.
+
+        method_turbulent = 'bulk': bulk transfer with the Bulk
+            Richardson stability correction.
+        method_turbulent = 'OG': katabatic exchange of Oerlemans &
+            Grisogono (2002) in the form of Klok & Oerlemans (2002),
+            see Munro (2004) eqs. 1, 8-10. The wind speed does not
+            enter: C*u = (Kb + Kkat) / 2 with
+            Kkat = kappa * (Ta - Ts) * sqrt(g / (T0 * gamma * Pr)),
+            where Kb is a constant background exchange parameter.
         """
         params = self.params 
 
@@ -293,6 +301,19 @@ class EnergyBalanceDriver():
         # latent heat term depends on direction of heat exchange
         is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
         Lv = jnp.where(is_evaporating, params.Lv_evap, params.Lv_sub)
+
+        if params.method_turbulent == 'OG':
+            # katabatic forcing only exists when air is warmer than the surface;
+            # otherwise exchange falls back to the background term alone
+            temp_diff = forcings.temp - surftemp
+            surftempK = surftemp + params.celsius_to_kelvin
+            K_kat = params.og_kappa * jnp.maximum(temp_diff, 0.0) * jnp.sqrt(
+                GRAVITY / (surftempK * params.og_lapse_rate * params.og_prandtl))
+            exchange = (params.og_Kb + K_kat) / 2  # replaces C * u [m s-1]
+
+            Qs = density_air * CP_AIR * exchange * temp_diff * jnp.cos(slope)
+            Ql = density_air * Lv * exchange * (qz - q0) * jnp.cos(slope)
+            return Qs, Ql
 
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)

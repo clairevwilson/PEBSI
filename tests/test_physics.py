@@ -174,3 +174,60 @@ def test_no_water_in_cold_layers_after_refreezing(mb, params):
     still_cold = state_out.ltemp < -1e-3
     residual_water = jnp.where(still_cold, state_out.lwater, 0.0)
     np.testing.assert_allclose(residual_water, 0.0, atol=1e-6)
+
+
+# ------------------------------------------------------------------ #
+#  turbulent fluxes — OG katabatic parameterization                   #
+# ------------------------------------------------------------------ #
+
+@pytest.fixture
+def eb_og(params):
+    from types import SimpleNamespace
+    from conftest import EnergyBalanceDriver
+    p = SimpleNamespace(**vars(params))
+    p.method_turbulent = 'OG'
+    return EnergyBalanceDriver(p), p
+
+
+def test_og_independent_of_wind(eb_og, point_attrs):
+    """OG exchange does not use the wind speed at all."""
+    eb, p = eb_og
+    state = _make_state(p, surftemp=0.0)
+    Qs_calm, Ql_calm = eb.get_turbulent(state, _make_forcings(tempC=8.0, wind=0.5), point_attrs)
+    Qs_wind, Ql_wind = eb.get_turbulent(state, _make_forcings(tempC=8.0, wind=8.0), point_attrs)
+    np.testing.assert_allclose(Qs_calm, Qs_wind)
+    np.testing.assert_allclose(Ql_calm, Ql_wind)
+
+
+def test_og_matches_klok_oerlemans(eb_og, point_attrs):
+    """Qs = rho cp (Kb + Kkat)/2 (Ta - Ts), Kkat = kappa dT sqrt(g / (T0 gamma Pr))."""
+    eb, p = eb_og
+    state = _make_state(p, surftemp=0.0)
+    forcings = _make_forcings(tempC=8.0)
+    Qs, _ = eb.get_turbulent(state, forcings, point_attrs)
+    dT = 8.0
+    rho = forcings.sp / p.R_gas / (8.0 + 273.15) * p.molarmass_air
+    K_kat = p.og_kappa * dT * np.sqrt(p.gravity / (273.15 * p.og_lapse_rate * p.og_prandtl))
+    slope = np.deg2rad(point_attrs.slope)
+    expected = rho * p.Cp_air * (p.og_Kb + K_kat) / 2 * dT * np.cos(slope)
+    np.testing.assert_allclose(Qs, expected, rtol=1e-10)
+
+
+def test_og_grows_faster_than_linear_in_temp_diff(eb_og, point_attrs):
+    """Katabatic term makes Qs superlinear in Ta - Ts (quadratic + linear)."""
+    eb, p = eb_og
+    state = _make_state(p, surftemp=0.0)
+    Qs4, _ = eb.get_turbulent(state, _make_forcings(tempC=4.0), point_attrs)
+    Qs8, _ = eb.get_turbulent(state, _make_forcings(tempC=8.0), point_attrs)
+    assert jnp.all(Qs8 > 2 * Qs4)
+
+
+def test_og_background_only_when_surface_warmer(eb_og, point_attrs):
+    """With Ta < Ts there is no katabatic forcing; Qs uses Kb alone and is negative."""
+    eb, p = eb_og
+    state = _make_state(p, surftemp=0.0)
+    forcings = _make_forcings(tempC=-10.0)
+    Qs, _ = eb.get_turbulent(state, forcings, point_attrs)
+    rho = forcings.sp / p.R_gas / (-10.0 + 273.15) * p.molarmass_air
+    slope = np.deg2rad(point_attrs.slope)
+    np.testing.assert_allclose(Qs, rho * p.Cp_air * p.og_Kb / 2 * -10.0 * np.cos(slope), rtol=1e-10)
