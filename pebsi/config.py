@@ -304,8 +304,8 @@ class Config():
 
         # TURBULENT FLUXES
         method_turbulent = getattr(self.args, 'method_turbulent')
-        assert method_turbulent in ('bulk', 'OG'), \
-            f"method_turbulent must be 'bulk' or 'OG', got {method_turbulent!r}"
+        assert method_turbulent in ('bulk', 'OG', 'OG_hybrid'), \
+            f"method_turbulent must be 'bulk', 'OG' or 'OG_hybrid', got {method_turbulent!r}"
 
         # PHYSICAL CONSTANTS
         # parameters that must be positive
@@ -313,6 +313,8 @@ class Config():
                             'initial_snow_depth','roughness_aging_rate']
         if method_turbulent == 'OG':
             must_be_positive += ['og_kappa', 'og_lapse_rate', 'og_prandtl', 'og_Kb']
+        elif method_turbulent == 'OG_hybrid':
+            must_be_positive += ['og_kappa', 'og_lapse_rate', 'og_prandtl']
         for var in must_be_positive:
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data > 0), f'{var} must be positive'

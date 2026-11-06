@@ -258,6 +258,10 @@ class EnergyBalanceDriver():
             enter: C*u = (Kb + Kkat) / 2 with
             Kkat = kappa * (Ta - Ts) * sqrt(g / (T0 * gamma * Pr)),
             where Kb is a constant background exchange parameter.
+        method_turbulent = 'OG_hybrid': as 'OG' but the background term
+            is the stability-corrected bulk exchange, Kb = 2 * C * psi * u,
+            so C*u = C * psi * u + Kkat / 2. Keeps the synoptic wind and
+            reduces exactly to 'bulk' when og_kappa = 0.
         """
         params = self.params 
 
@@ -302,13 +306,17 @@ class EnergyBalanceDriver():
         is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
         Lv = jnp.where(is_evaporating, params.Lv_evap, params.Lv_sub)
 
-        if params.method_turbulent == 'OG':
+        if params.method_turbulent in ('OG', 'OG_hybrid'):
             # katabatic forcing only exists when air is warmer than the surface;
             # otherwise exchange falls back to the background term alone
             temp_diff = forcings.temp - surftemp
             surftempK = surftemp + params.celsius_to_kelvin
             K_kat = params.og_kappa * jnp.maximum(temp_diff, 0.0) * jnp.sqrt(
                 GRAVITY / (surftempK * params.og_lapse_rate * params.og_prandtl))
+        else:
+            K_kat = 0.0
+
+        if params.method_turbulent == 'OG':
             exchange = (params.og_Kb + K_kat) / 2  # replaces C * u [m s-1]
 
             Qs = density_air * CP_AIR * exchange * temp_diff * jnp.cos(slope)
@@ -340,9 +348,11 @@ class EnergyBalanceDriver():
             psi_stable
         )
         
-        # final flux calculation
-        Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.temp - surftemp) * jnp.cos(slope)
-        Ql = density_air * Lv * csQ * psi * wind_2m * (qz - q0) * jnp.cos(slope)
+        # final flux calculation ('OG_hybrid' adds the katabatic exchange; K_kat = 0 for 'bulk')
+        exchange_T = csT * psi * wind_2m + K_kat / 2
+        exchange_Q = csQ * psi * wind_2m + K_kat / 2
+        Qs = density_air * CP_AIR * exchange_T * (forcings.temp - surftemp) * jnp.cos(slope)
+        Ql = density_air * Lv * exchange_Q * (qz - q0) * jnp.cos(slope)
 
         return Qs, Ql
     

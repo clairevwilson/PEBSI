@@ -231,3 +231,44 @@ def test_og_background_only_when_surface_warmer(eb_og, point_attrs):
     rho = forcings.sp / p.R_gas / (-10.0 + 273.15) * p.molarmass_air
     slope = np.deg2rad(point_attrs.slope)
     np.testing.assert_allclose(Qs, rho * p.Cp_air * p.og_Kb / 2 * -10.0 * np.cos(slope), rtol=1e-10)
+
+
+def _eb_with(params, **kw):
+    from types import SimpleNamespace
+    from conftest import EnergyBalanceDriver
+    p = SimpleNamespace(**vars(params))
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return EnergyBalanceDriver(p), p
+
+
+def test_og_hybrid_reduces_to_bulk_when_kappa_zero(params, point_attrs):
+    """OG_hybrid with og_kappa = 0 is exactly the bulk scheme."""
+    eb_bulk, _ = _eb_with(params, method_turbulent='bulk')
+    eb_hyb, _ = _eb_with(params, method_turbulent='OG_hybrid', og_kappa=0.0)
+    state = _make_state(params, surftemp=-1.0)
+    forcings = _make_forcings(tempC=6.0, wind=3.0)
+    np.testing.assert_allclose(eb_hyb.get_turbulent(state, forcings, point_attrs),
+                               eb_bulk.get_turbulent(state, forcings, point_attrs))
+
+
+def test_og_hybrid_is_bulk_plus_katabatic(params, point_attrs):
+    """OG_hybrid sensible heat = bulk + rho cp Kkat/2 (Ta - Ts)."""
+    eb_bulk, _ = _eb_with(params, method_turbulent='bulk')
+    eb_hyb, p = _eb_with(params, method_turbulent='OG_hybrid')
+    state = _make_state(params, surftemp=0.0)
+    forcings = _make_forcings(tempC=8.0, wind=3.0)
+    Qs_bulk, _ = eb_bulk.get_turbulent(state, forcings, point_attrs)
+    Qs_hyb, _ = eb_hyb.get_turbulent(state, forcings, point_attrs)
+    rho = forcings.sp / p.R_gas / (8.0 + 273.15) * p.molarmass_air
+    K_kat = p.og_kappa * 8.0 * np.sqrt(p.gravity / (273.15 * p.og_lapse_rate * p.og_prandtl))
+    slope = np.deg2rad(point_attrs.slope)
+    np.testing.assert_allclose(Qs_hyb - Qs_bulk, rho * p.Cp_air * K_kat / 2 * 8.0 * np.cos(slope), rtol=1e-8)
+
+
+def test_og_hybrid_nonzero_in_calm(params, point_attrs):
+    """With zero wind the bulk part vanishes but katabatic exchange remains."""
+    eb_hyb, _ = _eb_with(params, method_turbulent='OG_hybrid')
+    state = _make_state(params, surftemp=0.0)
+    Qs, _ = eb_hyb.get_turbulent(state, _make_forcings(tempC=8.0, wind=0.0), point_attrs)
+    assert jnp.all(Qs > 0)
