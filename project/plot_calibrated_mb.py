@@ -15,10 +15,11 @@ rgi_map = {}
 for glacier, numbers in translate_rgi.items():
     rgi_map[numbers['6']] = glacier
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize_2/'
-ds_all = xr.open_zarr(ROOT + 'best.zarr', consolidated=False)
+CORE = '../../' # '/ocean/projects/ees260009p/cwilson4/'
+ROOT = CORE + 'Output/bridges_backup/controlled/base_0/'
+ds_all = xr.open_zarr(ROOT + 'output.zarr', consolidated=False)
 
-site_meta = pd.read_csv('/jet/home/cwilson4/PEBSI/data/glacier_metadata.csv', dtype=str)
+site_meta = pd.read_csv('../data/glacier_metadata.csv', dtype=str)
 site_meta['lat'] = site_meta['lat'].astype(float)
 site_meta['lon'] = site_meta['lon'].astype(float)
 
@@ -48,7 +49,10 @@ for rgiid, sites in sites_by_rgiid.items():
 
         mb = MassBalance(rgi_map[rgiid], site)
         ds = ds_all.isel(point=idx)[['mass_balance']]
-        mb.get_model_mb(ds)
+        try:
+            mb.get_model_mb(ds)
 
-        fig, ax = mb.plot_mb(savefig=f'{plot_fp}{rgiid}_{site}.png')
-        plt.close(fig)
+            fig, ax = mb.plot_mb(savefig=f'{plot_fp}{rgiid}_{site}.png')
+            plt.close(fig)
+        except:
+            print(rgi_map[rgiid], site, 'has no overlap')
