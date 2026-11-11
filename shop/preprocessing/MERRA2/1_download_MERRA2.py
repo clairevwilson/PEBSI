@@ -23,37 +23,33 @@ from urllib.parse import urlparse, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ============================== USER CONFIG ==============================
-# data_fp = '/run/media/claire/TOSHIBA EXT/MERRA2/'
-data_fp = '/home/claire/Research/climate_data/MERRA2/'  # TEST
+data_fp = '/run/media/claire/TOSHIBA EXT/MERRA2/'
 fn_gp = data_fp + 'MERRA2_constants.nc'
 
 # bounding box in degrees (negatives for west longitudes / south latitudes)
 lat_min, lat_max = 50, 72           # ALASKA
 lon_min, lon_max = -180, -133.25
 
-start_time = '2019-06-01'  # TEST; was '1980-01-01'          # defaults to 00:00 hrs
-end_time = '2019-09-01'    # TEST; was '2026-05-01'          # data downloaded up to and not including this date
+start_time = '1980-01-01'           # defaults to 00:00 hrs
+end_time = '2026-05-01'             # data downloaded up to and not including this date
 
 workers = 4                         # parallel download threads
 
 all_LAPs = False                    # True: adg download includes all LAP species/bins
                                     # False: only bc/oc wet+dry bin 2 and dust wet+dry bin 3
 
-# token = os.environ.get('EARTHDATA_TOKEN')
-token = 'eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImN2d2lsc29uIiwic3ViIjoiY3Z3aWxzb24iLCJleHAiOjE3OTk0MTg2ODEsImlhdCI6MTc5NDIzNDY4MSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.XVT2AN2QKNoDQ7GD3YMjIKNNL3PKOC3t2QOcytsy_lSZrgpAuRHkHLBCSAa949_A0waa2F5F82LHogv7VCRNv8eYnkSed5_TAdJsTUe9kKiCq6Y1x1mu_TMkS9Ep0P1Ck-r8mOWz86kxBRLXzvItoIQ0YrWdHcbuF-V8Zm1r03JPtL6rQaTBn15-t70xkIGrGlrsP-f75m-qvIGuxswq10Sh2WmCoGy4AeuFbjVDPQxJ8L6sGwi27d2jEq00wmJVRvoHquoVZfDrKN7rjESSlVgEbEzfjtzYfPj8iIvzVDKQaLcZ-usPIah5DiRGlymPUaWABkh3ikL1JzwWsgaXTg'
+token = os.environ.get('EARTHDATA_TOKEN')
 if not token:
     raise SystemExit('NASA Earthdata token required: set the EARTHDATA_TOKEN env var.\n'
                       'Generate one at https://urs.earthdata.nasa.gov/profile -> "Generate Token".')
 
 # ===========================================================================
 
-# datasets = ['slv', 'rad', 'flx', 'adg']
-datasets = ['slv']  # TEST: 10 m wind only
+datasets = ['slv', 'rad', 'flx', 'adg']
 filename_template = 'MERRA2_VERSION.tavg1_2d_DATASET_Nx.DATE.nc4.nc4'
 
 url_templates = {
-    # 'slv': 'https://opendap.earthdata.nasa.gov/collections/C1276812863-GES_DISC/granules/M2T1NXSLV.5.12.4%3AMERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.dap.nc4?dap4.ce=/PS%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/QV2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/T2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/U2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/V2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
-    'slv': 'https://opendap.earthdata.nasa.gov/collections/C1276812863-GES_DISC/granules/M2T1NXSLV.5.12.4%3AMERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.dap.nc4?dap4.ce=/U10M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/V10M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
+    'slv': 'https://opendap.earthdata.nasa.gov/collections/C1276812863-GES_DISC/granules/M2T1NXSLV.5.12.4%3AMERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.dap.nc4?dap4.ce=/PS%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/QV2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/T2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/U2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/V2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
     'rad': 'https://opendap.earthdata.nasa.gov/collections/C1276812851-GES_DISC/granules/M2T1NXRAD.5.12.4%3AMERRA2_VERSION.tavg1_2d_rad_Nx.DATE.nc4.dap.nc4?dap4.ce=/CLDTOT%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/LWGAB%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/SWGDN%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
     'flx': 'https://opendap.earthdata.nasa.gov/collections/C1276812838-GES_DISC/granules/M2T1NXFLX.5.12.4%3AMERRA2_VERSION.tavg1_2d_flx_Nx.DATE.nc4.dap.nc4?dap4.ce=/PRECTOTCORR%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
 }

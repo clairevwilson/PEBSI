@@ -28,11 +28,10 @@ lon_min, lon_max = -180, -133.25
 # ===========================================================================
 
 dataset_variables = {
-    'slv': ['U10M', 'V10M']
-    # 'slv': ['T2M', 'U2M', 'V2M', 'QV2M', 'PS'],
-    # 'adg': ['BCDP002', 'BCWT002', 'OCDP002', 'OCWT002', 'DUDP003', 'DUWT003'],
-    # 'rad': ['SWGDN', 'LWGAB', 'CLDTOT'],
-    # 'flx': ['PRECTOTCORR'],
+    'slv': ['T2M', 'U2M', 'V2M', 'QV2M', 'PS'],
+    'adg': ['BCDP002', 'BCWT002', 'OCDP002', 'OCWT002', 'DUDP003', 'DUWT003'],
+    'rad': ['SWGDN', 'LWGAB', 'CLDTOT'],
+    'flx': ['PRECTOTCORR'],
 }
 
 # target on-disk zarr chunking, set explicitly on first write so appends land pre-chunked
