@@ -242,18 +242,18 @@ def _eb_with(params, **kw):
     return EnergyBalanceDriver(p), p
 
 
-def test_og_hybrid_reduces_to_bulk_when_kappa_zero(params, point_attrs):
-    """OG_hybrid with og_kappa = 0 is exactly the bulk scheme."""
+def test_og_hybrid_is_half_bulk_when_kappa_zero(params, point_attrs):
+    """OG_hybrid with og_kappa = 0 is half the bulk flux (Kb = bulk exchange, C*u = Kb/2)."""
     eb_bulk, _ = _eb_with(params, method_turbulent='bulk')
     eb_hyb, _ = _eb_with(params, method_turbulent='OG_hybrid', og_kappa=0.0)
     state = _make_state(params, surftemp=-1.0)
     forcings = _make_forcings(tempC=6.0, wind=3.0)
-    np.testing.assert_allclose(eb_hyb.get_turbulent(state, forcings, point_attrs),
-                               eb_bulk.get_turbulent(state, forcings, point_attrs))
+    np.testing.assert_allclose(np.asarray(eb_hyb.get_turbulent(state, forcings, point_attrs)),
+                               np.asarray(eb_bulk.get_turbulent(state, forcings, point_attrs)) / 2)
 
 
 def test_og_hybrid_is_bulk_plus_katabatic(params, point_attrs):
-    """OG_hybrid sensible heat = bulk + rho cp Kkat/2 (Ta - Ts)."""
+    """OG_hybrid sensible heat = bulk/2 + rho cp Kkat/2 (Ta - Ts)."""
     eb_bulk, _ = _eb_with(params, method_turbulent='bulk')
     eb_hyb, p = _eb_with(params, method_turbulent='OG_hybrid')
     state = _make_state(params, surftemp=0.0)
@@ -263,7 +263,7 @@ def test_og_hybrid_is_bulk_plus_katabatic(params, point_attrs):
     rho = forcings.sp / p.R_gas / (8.0 + 273.15) * p.molarmass_air
     K_kat = p.og_kappa * 8.0 * np.sqrt(p.gravity / (273.15 * p.og_lapse_rate * p.og_prandtl))
     slope = np.deg2rad(point_attrs.slope)
-    np.testing.assert_allclose(Qs_hyb - Qs_bulk, rho * p.Cp_air * K_kat / 2 * 8.0 * np.cos(slope), rtol=1e-8)
+    np.testing.assert_allclose(Qs_hyb - Qs_bulk / 2, rho * p.Cp_air * K_kat / 2 * 8.0 * np.cos(slope), rtol=1e-8)
 
 
 def test_og_hybrid_nonzero_in_calm(params, point_attrs):

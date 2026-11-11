@@ -259,9 +259,9 @@ class EnergyBalanceDriver():
             Kkat = kappa * (Ta - Ts) * sqrt(g / (T0 * gamma * Pr)),
             where Kb is a constant background exchange parameter.
         method_turbulent = 'OG_hybrid': as 'OG' but the background term
-            is the stability-corrected bulk exchange, Kb = 2 * C * psi * u,
-            so C*u = C * psi * u + Kkat / 2. Keeps the synoptic wind and
-            reduces exactly to 'bulk' when og_kappa = 0.
+            is the stability-corrected bulk exchange, Kb = C * psi * u,
+            so C*u = (C * psi * u + Kkat) / 2. Keeps the synoptic wind;
+            with og_kappa = 0 it is half the 'bulk' flux.
         """
         params = self.params 
 
@@ -348,9 +348,14 @@ class EnergyBalanceDriver():
             psi_stable
         )
         
-        # final flux calculation ('OG_hybrid' adds the katabatic exchange; K_kat = 0 for 'bulk')
-        exchange_T = csT * psi * wind_2m + K_kat / 2
-        exchange_Q = csQ * psi * wind_2m + K_kat / 2
+        # final flux calculation
+        if params.method_turbulent == 'OG_hybrid':
+            # Klok & Oerlemans (2002) C*u = (Kb + Kkat) / 2 with Kb = bulk exchange
+            exchange_T = (csT * psi * wind_2m + K_kat) / 2
+            exchange_Q = (csQ * psi * wind_2m + K_kat) / 2
+        else:
+            exchange_T = csT * psi * wind_2m
+            exchange_Q = csQ * psi * wind_2m
         Qs = density_air * CP_AIR * exchange_T * (forcings.temp - surftemp) * jnp.cos(slope)
         Ql = density_air * Lv * exchange_Q * (qz - q0) * jnp.cos(slope)
 

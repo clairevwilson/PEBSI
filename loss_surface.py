@@ -64,7 +64,8 @@ def run_filenames(tag):
 
 
 def build_config(start_date, end_date, glaciers, preclimit, out_config_fn,
-                 output_fp, kp=None, wind_factor=None, lapse_rate=None, overrides=None):
+                 output_fp, kp=None, wind_factor=None, lapse_rate=None, og_kappa=None,
+                 overrides=None):
     config = dict(BASE_CONFIG)
     config.update(
         rgi_ids=[translate_rgi[g]['6'] for g in glaciers],
@@ -90,6 +91,8 @@ def build_config(start_date, end_date, glaciers, preclimit, out_config_fn,
         config['wind_factor'] = [float(v) for v in wind_factor]
     if lapse_rate is not None:
         config['lapse_rate'] = [float(v) for v in lapse_rate]
+    if og_kappa is not None:
+        config['og_kappa'] = [float(v) for v in og_kappa]
     with open(out_config_fn, 'w') as f:
         yaml.dump(config, f, sort_keys=False)
     return config
@@ -109,6 +112,14 @@ def parse_args():
     p.add_argument('--lapse-rate-values', type=float, nargs='+', default=None,
                    help='lapse_rate grid values [K km-1]; adds a third grid '
                         'axis after wind_factor (default: none, config value)')
+    p.add_argument('--og-kappa-values', type=float, nargs='+', default=None,
+                   help='og_kappa grid values (katabatic constant, used with '
+                        '--set method_turbulent=OG or OG_hybrid); adds a grid '
+                        'axis after lapse_rate (default: none, config value)')
+    p.add_argument('--kp-by-glacier', default=None, metavar='RESULT_YAML',
+                   help='take each glacier\'s kp from an AD_optimize-style result '
+                        'yaml (glaciers, kp), so the kp grid values act as '
+                        'multipliers of it (e.g. --kp-values 1.0 keeps it fixed)')
     p.add_argument('--glaciers', nargs='+', default=None,
                    help=f'glaciers to map (default all of {GLACIERS})')
     p.add_argument('--preclimit', action='store_true',
@@ -125,6 +136,10 @@ def parse_args():
     p.add_argument('--set', nargs='+', default=[], metavar='KEY=VALUE',
                    help='config overrides, values parsed as YAML '
                         '(e.g. roughness_ice=20 bias_vars=[])')
+    p.add_argument('--resume-from', default=None, metavar='RUN_DIR',
+                   help='continue an interrupted run from RUN_DIR/checkpoint.npz, '
+                        'appending to its output.zarr; pass the same grid arguments '
+                        'as the original run so the tiled mesh is rebuilt identically')
     p.add_argument('--tag', default='',
                    help='suffix for the grid/config filenames, so a rerun '
                         "does not overwrite an earlier run's grid .npz")
@@ -139,8 +154,11 @@ def main():
                 if args.wind_factor_values is not None else WIND_FACTOR_VALUES)
     lr_values = (np.asarray(args.lapse_rate_values)
                 if args.lapse_rate_values is not None else None)
-    combos = [(kp, wf, lr) for kp in kp_values for wf in wf_values
-              for lr in (lr_values if lr_values is not None else [None])]
+    og_values = (np.asarray(args.og_kappa_values)
+                if args.og_kappa_values is not None else None)
+    combos = [(kp, wf, lr, ok) for kp in kp_values for wf in wf_values
+              for lr in (lr_values if lr_values is not None else [None])
+              for ok in (og_values if og_values is not None else [None])]
     n_combos = len(combos)
 
     glaciers = args.glaciers if args.glaciers is not None else GLACIERS
@@ -170,6 +188,8 @@ def main():
     print(f'kp           {kp_values}', flush=True)
     print(f'wind_factor  {wf_values}', flush=True)
     print(f'lapse_rate   {lr_values}', flush=True)
+    print(f'og_kappa     {og_values}', flush=True)
+    print(f'kp by glacier  {args.kp_by_glacier}', flush=True)
     print(f'{args.start_date} to {args.end_date}', flush=True)
     print(f'option_preclimit  {args.preclimit}', flush=True)
     print(f'wind factor by glacier  {args.wind_factor_by_glacier}', flush=True)
@@ -239,14 +259,27 @@ def main():
             base_wf[terrain.rgiid_n[:n_base] == translate_rgi[g]['6']] = wind_factor_aws[g]
         wind_factor = wind_factor * np.tile(base_wf, n_combos)
 
+    if args.kp_by_glacier:
+        with open(args.kp_by_glacier) as f:
+            result = yaml.safe_load(f)
+        kp_of = dict(zip(result['glaciers'], result['kp']))
+        base_kp = np.ones(n_base)
+        for g in glaciers:
+            base_kp[terrain.rgiid_n[:n_base] == translate_rgi[g]['6']] = kp_of[g]
+        kp = kp * np.tile(base_kp, n_combos)
+
     lapse_rate = (np.repeat([c[2] for c in combos], n_base)
                   if lr_values is not None else None)
+    og_kappa = (np.repeat([c[3] for c in combos], n_base)
+                if og_values is not None else None)
 
     build_config(args.start_date, args.end_date, glaciers, args.preclimit,
                  out_config_fn, output_fp, kp=kp, wind_factor=wind_factor,
-                 lapse_rate=lapse_rate, overrides=overrides)
+                 lapse_rate=lapse_rate, og_kappa=og_kappa, overrides=overrides)
     sim_args = sim.get_args(parse=False).parse_args([])
     sim_args.config_fn = out_config_fn
+    if args.resume_from:
+        sim_args.resume_from = args.resume_from
 
     model = sim.PEBSI(sim_args)
     model.run()
@@ -255,6 +288,8 @@ def main():
     # which Output only names once the run is under way
     grid_fn = os.path.join(model.output_fp, f'loss_surface_grid{suffix}.npz')
     lapse_kw = {} if lr_values is None else dict(lapse_rate=lr_values, lapse_rate_of_point=lapse_rate)
+    if og_values is not None:
+        lapse_kw.update(og_kappa=og_values, og_kappa_of_point=og_kappa)
     np.savez(grid_fn, kp=kp_values, wind_factor=wf_values,
              kp_of_point=kp, wind_factor_of_point=wind_factor, **lapse_kw,
              n_base=n_base, n_combos=n_combos,

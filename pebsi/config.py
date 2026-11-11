@@ -69,7 +69,8 @@ dynamic_fields = ['kp','wind_factor','precgrad',
                 'ksp_BC', 'ksp_OC', 'ksp_dust',
                 'initial_snow_depth', 'initial_firn_depth', 'initial_ice_depth',
                 'Sr','Boone_c1','Boone_c2','Boone_c3','Boone_c4','Boone_c5',
-                'grainsize_rfz','snow_threshold_low','snow_threshold_high']
+                'grainsize_rfz','snow_threshold_low','snow_threshold_high',
+                'og_kappa','og_lapse_rate','og_prandtl','og_Kb']
 
 # External args are those which are only needed in the
 # CPU intiialization / output functions but are not used 
@@ -314,7 +315,9 @@ class Config():
         if method_turbulent == 'OG':
             must_be_positive += ['og_kappa', 'og_lapse_rate', 'og_prandtl', 'og_Kb']
         elif method_turbulent == 'OG_hybrid':
-            must_be_positive += ['og_kappa', 'og_lapse_rate', 'og_prandtl']
+            # og_kappa = 0 is allowed here: it reduces OG_hybrid to half the 'bulk' flux
+            must_be_positive += ['og_lapse_rate', 'og_prandtl']
+            assert np.all(np.array(getattr(self.args, 'og_kappa')) >= 0), 'og_kappa must be 0 or positive'
         for var in must_be_positive:
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data > 0), f'{var} must be positive'

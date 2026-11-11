@@ -157,7 +157,7 @@ method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
 method_scalar_roughness = 'Andreas'     # 'Andreas', 'ratio'
 method_stability = 'Braithwaite'        # 'Braithwaite' (critical Ri of 0.2) or 'Gryanik' (no critical Ri)
-method_turbulent = 'bulk'               # 'bulk' (Richardson-corrected bulk transfer), 'OG' (Oerlemans & Grisogono 2002 katabatic, Klok & Oerlemans 2002 form) or 'OG_hybrid' (bulk + katabatic term)
+method_turbulent = 'bulk'               # 'bulk' (Richardson-corrected bulk transfer), 'OG' (Oerlemans & Grisogono 2002 katabatic, Klok & Oerlemans 2002 form) or 'OG_hybrid' (OG with the bulk exchange as background: (C psi u + Kkat)/2)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
