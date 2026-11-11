@@ -18,8 +18,8 @@ from tqdm import tqdm
 # name for the RGI region downloaded
 roi = 'reg01'
 
-data_fp = '/Volumes/TOSHIBA EXT/MERRA2/'
-fp_zarr_store = f'/Users/cvw/local/climate_data/{roi}/'
+data_fp = '/home/claire/Research/climate_data/MERRA2/'
+fp_zarr_store = f'/home/claire/Research/climate_data/MERRA2/{roi}/'
 fp_figs = data_fp + 'Figs/'
 
 # bounding box, copied from 1_download_MERRA2.py, used to trim files to a common grid
@@ -28,10 +28,11 @@ lon_min, lon_max = -180, -133.25
 # ===========================================================================
 
 dataset_variables = {
-    'slv': ['T2M', 'U2M', 'V2M', 'QV2M', 'PS'],
-    'adg': ['BCDP002', 'BCWT002', 'OCDP002', 'OCWT002', 'DUDP003', 'DUWT003'],
-    'rad': ['SWGDN', 'LWGAB', 'CLDTOT'],
-    'flx': ['PRECTOTCORR'],
+    'slv': ['U10M', 'V10M']
+    # 'slv': ['T2M', 'U2M', 'V2M', 'QV2M', 'PS'],
+    # 'adg': ['BCDP002', 'BCWT002', 'OCDP002', 'OCWT002', 'DUDP003', 'DUWT003'],
+    # 'rad': ['SWGDN', 'LWGAB', 'CLDTOT'],
+    # 'flx': ['PRECTOTCORR'],
 }
 
 # target on-disk zarr chunking, set explicitly on first write so appends land pre-chunked

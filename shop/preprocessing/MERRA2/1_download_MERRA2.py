@@ -23,15 +23,16 @@ from urllib.parse import urlparse, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ============================== USER CONFIG ==============================
-data_fp = '/run/media/claire/TOSHIBA EXT/MERRA2/'
+# data_fp = '/run/media/claire/TOSHIBA EXT/MERRA2/'
+data_fp = '/home/claire/Research/climate_data/MERRA2/'  # TEST
 fn_gp = data_fp + 'MERRA2_constants.nc'
 
 # bounding box in degrees (negatives for west longitudes / south latitudes)
 lat_min, lat_max = 50, 72           # ALASKA
 lon_min, lon_max = -180, -133.25
 
-start_time = '1980-01-01'           # defaults to 00:00 hrs
-end_time = '2026-05-01'             # data downloaded up to and not including this date
+start_time = '2019-06-01'  # TEST; was '1980-01-01'          # defaults to 00:00 hrs
+end_time = '2019-09-01'    # TEST; was '2026-05-01'          # data downloaded up to and not including this date
 
 workers = 4                         # parallel download threads
 
@@ -39,30 +40,32 @@ all_LAPs = False                    # True: adg download includes all LAP specie
                                     # False: only bc/oc wet+dry bin 2 and dust wet+dry bin 3
 
 # token = os.environ.get('EARTHDATA_TOKEN')
-token = 'eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImN2d2lsc29uIiwiZXhwIjoxNzg4MTI4Nzk0LCJpYXQiOjE3ODI5NDQ3OTQsImlzcyI6Imh0dHBzOi8vdXJzLmVhcnRoZGF0YS5uYXNhLmdvdiIsImlkZW50aXR5X3Byb3ZpZGVyIjoiZWRsX29wcyIsImFjciI6ImVkbCIsImFzc3VyYW5jZV9sZXZlbCI6M30.Foe0bx39FdK5LQctmgAK2fRli9ZTNI_i90fvzdBCbzx8nA8fJDLZpfvptnoK3ZuYOrvehE3pSNrunOKX-jz1lV5xpYjUaqgteWzx5JKM53J9T5uMPmE36TxMlktX8a2RrAbras_LJUQzqbQJFCa2rDZffbKWoG3wxnwKMkN8W9NQ4GzJ4b22Cx2isSSIkuQgLxX9NVB8SHPsh80LA6e4ig08j-5XFoz_Myeb6oTC0-cgqmt9-gAtpCxX7CkfrOUluY0QeDz_pelvF83q2EaeRUmOkSDe4Ya7kJdCR9JdYOGAuDP6nmA4KG_In-Qz4twziW9Qat9kL77CAH9tyC4SBw'
+token = 'eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImN2d2lsc29uIiwic3ViIjoiY3Z3aWxzb24iLCJleHAiOjE3OTk0MTg2ODEsImlhdCI6MTc5NDIzNDY4MSwiaXNzIjoiaHR0cHM6Ly91cnMuZWFydGhkYXRhLm5hc2EuZ292IiwiaWRlbnRpdHlfcHJvdmlkZXIiOiJlZGxfb3BzIiwiYWNyIjoiZWRsIiwiYXNzdXJhbmNlX2xldmVsIjozfQ.XVT2AN2QKNoDQ7GD3YMjIKNNL3PKOC3t2QOcytsy_lSZrgpAuRHkHLBCSAa949_A0waa2F5F82LHogv7VCRNv8eYnkSed5_TAdJsTUe9kKiCq6Y1x1mu_TMkS9Ep0P1Ck-r8mOWz86kxBRLXzvItoIQ0YrWdHcbuF-V8Zm1r03JPtL6rQaTBn15-t70xkIGrGlrsP-f75m-qvIGuxswq10Sh2WmCoGy4AeuFbjVDPQxJ8L6sGwi27d2jEq00wmJVRvoHquoVZfDrKN7rjESSlVgEbEzfjtzYfPj8iIvzVDKQaLcZ-usPIah5DiRGlymPUaWABkh3ikL1JzwWsgaXTg'
 if not token:
     raise SystemExit('NASA Earthdata token required: set the EARTHDATA_TOKEN env var.\n'
                       'Generate one at https://urs.earthdata.nasa.gov/profile -> "Generate Token".')
 
 # ===========================================================================
 
-datasets = ['slv', 'rad', 'flx', 'adg']
+# datasets = ['slv', 'rad', 'flx', 'adg']
+datasets = ['slv']  # TEST: 10 m wind only
 filename_template = 'MERRA2_VERSION.tavg1_2d_DATASET_Nx.DATE.nc4.nc4'
 
 url_templates = {
-    'slv': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXSLV.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.nc4?PS[0:23][Y1:Y2][X1:X2],QV2M[0:23][Y1:Y2][X1:X2],T2M[0:23][Y1:Y2][X1:X2],U2M[0:23][Y1:Y2][X1:X2],V2M[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
-    'rad': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXRAD.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_rad_Nx.DATE.nc4.nc4?CLDTOT[0:23][Y1:Y2][X1:X2],LWGAB[0:23][Y1:Y2][X1:X2],SWGDN[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
-    'flx': 'https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXFLX.5.12.4/YEAR/MONTH/MERRA2_VERSION.tavg1_2d_flx_Nx.DATE.nc4.nc4?PRECTOTCORR[0:23][Y1:Y2][X1:X2],time,lat[Y1:Y2],lon[X1:X2]',
+    # 'slv': 'https://opendap.earthdata.nasa.gov/collections/C1276812863-GES_DISC/granules/M2T1NXSLV.5.12.4%3AMERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.dap.nc4?dap4.ce=/PS%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/QV2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/T2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/U2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/V2M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
+    'slv': 'https://opendap.earthdata.nasa.gov/collections/C1276812863-GES_DISC/granules/M2T1NXSLV.5.12.4%3AMERRA2_VERSION.tavg1_2d_slv_Nx.DATE.nc4.dap.nc4?dap4.ce=/U10M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/V10M%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
+    'rad': 'https://opendap.earthdata.nasa.gov/collections/C1276812851-GES_DISC/granules/M2T1NXRAD.5.12.4%3AMERRA2_VERSION.tavg1_2d_rad_Nx.DATE.nc4.dap.nc4?dap4.ce=/CLDTOT%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/LWGAB%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/SWGDN%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
+    'flx': 'https://opendap.earthdata.nasa.gov/collections/C1276812838-GES_DISC/granules/M2T1NXFLX.5.12.4%3AMERRA2_VERSION.tavg1_2d_flx_Nx.DATE.nc4.dap.nc4?dap4.ce=/PRECTOTCORR%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D;/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D',
 }
 
 adg_vars = ['OCDP002', 'OCWT002', 'BCDP002', 'BCWT002', 'DUDP003', 'DUWT003']
 if all_LAPs:
     adg_vars += ['BCDP001', 'OCDP001',
-                 'DUDP001', 'DUWT001', 'DUDP002', 'DUWT002', 
+                 'DUDP001', 'DUWT001', 'DUDP002', 'DUWT002',
                  'DUDP004', 'DUWT004', 'DUDP005', 'DUWT005']
-adg_query = ','.join(f'{v}[0:23][Y1:Y2][X1:X2]' for v in adg_vars) + ',time,lat[Y1:Y2],lon[X1:X2]'
-url_templates['adg'] = ('https://goldsmr4.gesdisc.eosdis.nasa.gov/opendap/MERRA2/M2T1NXADG.5.12.4/YEAR/MONTH/'
-                         f'MERRA2_VERSION.tavg1_2d_adg_Nx.DATE.nc4.nc4?{adg_query}')
+adg_query = ';'.join(f'/{v}%5B0:1:23%5D%5BY1:1:Y2%5D%5BX1:1:X2%5D' for v in adg_vars) + ';/time;/lat%5BY1:1:Y2%5D;/lon%5BX1:1:X2%5D'
+url_templates['adg'] = ('https://opendap.earthdata.nasa.gov/collections/C1276812829-GES_DISC/granules/'
+                         f'M2T1NXADG.5.12.4%3AMERRA2_VERSION.tavg1_2d_adg_Nx.DATE.nc4.dap.nc4?dap4.ce={adg_query}')
 
 
 def version(year, new_version=False):
@@ -81,7 +84,8 @@ def version(year, new_version=False):
 
 def safe_filename(url):
     base = urlparse(url).path
-    return os.path.basename(unquote(base))
+    # new server names files 'M2T1NXSLV.5.12.4:MERRA2_400...nc4.dap.nc4'; keep the old naming
+    return os.path.basename(unquote(base)).split(':')[-1].replace('.dap.nc4', '.nc4')
 
 
 # ------------------------------- build download list -------------------------------
