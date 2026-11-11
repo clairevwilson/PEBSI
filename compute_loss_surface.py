@@ -9,7 +9,7 @@ combination, so combination c occupies points [c*n_base:(c+1)*n_base];
 each block still holds every glacier's points together, told apart by
 the 'rgiid' field the output carries. Each glacier's slice is scored
 against its own observations the way AD_optimize scores it --
-March-referenced albedo deltas, and mass balance compared only over the
+raw albedo (March-referenced deltas only with --albedo-deltas), and mass balance compared only over the
 period the Hugonnet data actually covers, area-weighted by ds.weight
 rather than a flat mean across points -- and the per-glacier losses are
 summed into that combination's total.
@@ -69,6 +69,9 @@ def parse_args():
     p.add_argument('--grid-fn', default=None,
                    help='override the grid .npz taken from --run-dir; its '
                         'glacier list drives which glaciers are scored')
+    p.add_argument('--albedo-deltas', action='store_true',
+                   help='score March-referenced albedo deltas instead of raw '
+                        'albedo (the older loss_surface convention; AD_optimize uses raw)')
     p.add_argument('--loss-fn', default=None,
                    help='override where the per-metric loss surfaces are written')
     args = p.parse_args()
@@ -93,6 +96,7 @@ def main():
     kp_values = grid['kp']
     wf_values = grid['wind_factor']
     lr_values = grid['lapse_rate'] if 'lapse_rate' in grid else None
+    og_values = grid['og_kappa'] if 'og_kappa' in grid else None
     n_base = int(grid['n_base'])
     n_combos = int(grid['n_combos'])
     glaciers = [str(g) for g in grid['glaciers']]
@@ -189,7 +193,8 @@ def main():
             o = obs[g]
 
             o['albedo'].get_model_albedo(sub)
-            o['albedo'].get_deltas(method='march_mean')
+            if args.albedo_deltas:
+                o['albedo'].get_deltas(method='march_mean')
             a_loss = o['albedo'].crps_loss(sigma=ALBEDO_SIGMA)
 
             o['wet'].get_model_wet(sub)
@@ -225,8 +230,9 @@ def main():
                   + (f'lr={grid["lapse_rate_of_point"][c * n_base]:.1f} ' if lr_values is not None else '') +
                   f'total={losses["total"][c]:.3f}', flush=True)
 
-    # combos were built kp-major, then wind_factor, then lapse_rate (if gridded)
-    shape = (len(kp_values), len(wf_values)) + ((len(lr_values),) if lr_values is not None else ())
+    # combos were built kp-major, then wind_factor, then lapse_rate, then og_kappa (each if gridded)
+    shape = (len(kp_values), len(wf_values)) + ((len(lr_values),) if lr_values is not None else ()) \
+        + ((len(og_values),) if og_values is not None else ())
     grids = {k: v.reshape(shape) for k, v in losses.items()}
     per_glacier_grids = {f'{g}_{k}': v.reshape(shape)
                          for g, kv in per_glacier.items() for k, v in kv.items()}
@@ -234,6 +240,8 @@ def main():
                               for g, kv in per_glacier_stats.items() for k, v in kv.items()})
 
     lapse_kw = {} if lr_values is None else dict(lapse_rate=lr_values)
+    if og_values is not None:
+        lapse_kw['og_kappa'] = og_values
     np.savez(args.loss_fn, kp=kp_values, wind_factor=wf_values, **lapse_kw,
              glaciers=np.array(glaciers), start=np.array(start),
              end=np.array(end), n_base=n_base, **grids, **per_glacier_grids)
@@ -242,7 +250,8 @@ def main():
     best = np.unravel_index(np.nanargmin(grids['total']), shape)
     print(f'Best total {grids["total"][best]:.3f} at '
           f'kp={kp_values[best[0]]:.1f}, wind_factor={wf_values[best[1]]:.1f}'
-          + (f', lapse_rate={lr_values[best[2]]:.1f}' if lr_values is not None else ''),
+          + (f', lapse_rate={lr_values[best[2]]:.1f}' if lr_values is not None else '')
+          + (f', og_kappa={og_values[best[-1]]:g}' if og_values is not None else ''),
           flush=True)
 
 

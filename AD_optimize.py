@@ -14,6 +14,24 @@ project/glacierwide_loss.py:
   - SAR wet extent                 (Brier score)
   - Hugonnet glacier-wide balance  (Gaussian CRPS / sigma on the run's cumulative total)
 
+and optionally (--index_mb) two more, from the USGS index sites, each
+read at the nearest mesh point:
+
+  - winter point balance           (Gaussian CRPS / sigma, absolute; --sigma_winter)
+  - summer point balance anomaly   (Gaussian CRPS / sigma after removing each
+                                    site's mean model-minus-measured summer
+                                    offset; --sigma_summer)
+
+Summer is scored as an anomaly because the index sites under-represent
+glacier-wide loss (USGS subtracts a geodetic calibration of 0.3-0.8 m w.e.
+yr-1 from their own index-based glacier-wide balance), so their mean level
+is left to the Hugonnet term and they constrain the year-to-year variability.
+
+Extra per-glacier parameters can be switched on alongside kp and
+wind_factor: --fit_kappa switches the turbulent scheme to 'OG_hybrid' and
+optimizes the katabatic constant og_kappa; --fit_precgrad optimizes the
+precipitation gradient precgrad. Both are kept linear and bounded at 0.
+
 Every glacier keeps its own (kp, wind_factor) pair and its own losses;
 the objective is their sum, so a glacier's gradient never depends on
 another glacier's parameters. Pooling them into one forward pass is
@@ -60,7 +78,7 @@ from jax.scipy.special import ndtr
 import optax
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize, BFGS, SR1
+from scipy.optimize import minimize, BFGS, SR1, Bounds
 import xarray as xr
 import yaml
 from pyproj import Transformer
@@ -91,6 +109,12 @@ WET_WATER_WIDTH = 0.001
 
 # months of the year the albedo product is scored over
 ALBEDO_MONTHS = list(range(3, 10))
+
+# optional extra per-glacier parameters (PEBSI dynamic fields, all >= 0),
+# optimized linearly as value / scale so a unit step is the same order as
+# the ~20% steps taken in log(kp)/log(wind_factor):
+# og_kappa ~ 0-1.2e-3 [-]; precgrad ~ 1e-4 [fraction per m] (1% per 100 m)
+EXTRA_SCALE = {'og_kappa': 1e-3, 'precgrad': 1e-4}
 
 
 def build_config(overrides=None, tag='AD_optimize'):
@@ -206,6 +230,8 @@ def load_albedo_obs(name, lon, lat, point_idx, model_days, n_points, use='s2'):
 
     day_idx, keep = _match_times(measured.time.values, model_days)
     values = measured['albedo'].transpose('time', 'point').values[keep]
+    # drop implausible retrievals (cloud, shadow, artefacts)
+    values = np.where((values >= 0.1) & (values <= 0.9), values, np.nan)
     return day_idx, _scatter_to_points(values.astype(np.float32), point_idx, n_points)
 
 
@@ -233,7 +259,94 @@ def load_wet_obs(name, lon, lat, point_idx, model_days, n_points, direction=None
     return day_idx, _scatter_to_points(values, point_idx, n_points)
 
 
-def build_observations(model, model_days):
+def load_index_obs(model, model_days):
+    """
+    Index-site seasonal point mass balance from every site in the USGS
+    benchmark glaciological files with data in the simulated period and
+    enough winter records for project.data_handling.MassBalance to split
+    seasons (annual-only sites are left out, as are annual balances, which
+    repeat the seasonal information), each site matched to the nearest mesh
+    point of its glacier. Site coordinates come from
+    data/glacier_metadata.csv, falling back to the benchmark site table;
+    sites with neither, and periods with implausible dates, are dropped.
+    Only periods lying wholly inside the simulated days are kept, and a
+    site's summers only if it has at least two (they are scored as
+    anomalies). Returns flat per-period arrays: glacier index, site index,
+    summer flag, point index, first and last model day (inclusive, matching
+    get_model_mb's time slice), measurement.
+    """
+    from project.data_handling import MassBalance as IndexMassBalance, base_fp
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    meta = pd.read_csv(os.path.join(here, 'data', 'glacier_metadata.csv'),
+                       dtype={'rgiid': str})
+    site_table = pd.read_csv(os.path.join(base_fp, 'MB_data',
+                                          'Glacier_Mass_Balance_Data_Sites.csv'))
+    lon = np.asarray(model.terrain.lon_n)
+    lat = np.asarray(model.terrain.lat_n)
+    rgiid = np.asarray(model.terrain.rgiid_n)
+
+    out = {k: [] for k in ('glacier', 'site', 'summer', 'point', 'start_day',
+                           'end_day', 'meas')}
+    n_sites = 0
+    for g, name in enumerate(GLACIERS):
+        rgi = translate_rgi[name]['6']
+        gp = np.where(rgiid == rgi)[0]
+        folder = ''.join(part.capitalize() for part in name.split('_'))
+        data = pd.read_csv(os.path.join(base_fp, 'data', 'mass_balance', 'point', folder,
+                                        f'Input_{folder}_Glaciological_Data.csv'))
+        in_period = data.Year.between(model_days[0].year, model_days[-1].year)
+        sites = sorted(data.loc[in_period & data.ba.notna(), 'site_name'].unique())
+        n_winter = n_summer = 0
+        for site in sites:
+            m = meta[(meta.rgiid == rgi) & (meta.site == site)]
+            if m.empty:
+                m = site_table[(site_table.Glacier.str.replace(' ', '') == folder)
+                               & (site_table.site_name == site)].rename(
+                    columns={'latitude': 'lat', 'longitude': 'lon'})
+            if m.empty:
+                continue
+            slat, slon = m.lat.iloc[0], m.lon.iloc[0]
+            p = gp[np.argmin(np.hypot(lat[gp] - slat,
+                                      (lon[gp] - slon) * np.cos(np.deg2rad(slat))))]
+            try:
+                mb = IndexMassBalance(name, site)
+            except Exception:  # e.g. a site with a single record
+                continue
+            # seasonal sites only: annual balances repeat the seasonal information
+            if mb.dataset != 'seasonal':
+                continue
+            starts = pd.to_datetime(mb.period_starts).normalize()
+            ends = pd.to_datetime(mb.period_ends).normalize()
+            # MassBalance lists the summer periods first, then the winter ones
+            summer = np.arange(len(starts)) < mb.n_summer
+            # a few records have dates out of order or a period spanning a
+            # missed year; keep only periods of a plausible length
+            length = (ends - starts).days
+            in_run = (np.minimum(starts, ends) >= model_days[0]) & \
+                     (np.maximum(starts, ends) <= model_days[-1]) & np.isfinite(mb.data)
+            inside = in_run & (length > 30) & (length <= 400)
+            # a summer anomaly needs at least two summers at the site
+            if (inside & summer).sum() < 2:
+                inside &= ~summer
+            for s, e, v, is_summer in zip(starts[inside], ends[inside],
+                                          mb.data[inside], summer[inside]):
+                out['glacier'].append(g)
+                out['site'].append(n_sites)
+                out['summer'].append(bool(is_summer))
+                out['point'].append(int(p))
+                out['start_day'].append(int(model_days.get_loc(s)))
+                out['end_day'].append(int(model_days.get_loc(e)))
+                out['meas'].append(float(v))
+            n_summer += int((inside & summer).sum())
+            n_winter += int((inside & ~summer).sum())
+            n_sites += 1
+        print(f'  {name:<12} {n_winter:>5} winter and {n_summer:>5} summer '
+              'index-site periods', flush=True)
+    return {k: np.asarray(v) for k, v in out.items()}
+
+
+def build_observations(model, model_days, index_mb=False):
     """
     Loads every glacier's observations and returns them keyed on the
     model's own point axis, ready to be sliced per adjoint chunk.
@@ -273,6 +386,7 @@ def build_observations(model, model_days):
               f'{n_alb:>5} albedo scenes  {n_sar:>5} SAR scenes  '
               f'MB {mb.meas:+.2f} +/- {mb.sigma:.2f} m w.e. yr-1{mb_note}', flush=True)
 
+    obs['index'] = load_index_obs(model, model_days) if index_mb else None
     return obs
 
 
@@ -351,6 +465,16 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
     mb_end_day = np.asarray(obs['mb_end_day'])
     mb_valid_full = np.arange(n_days)[None, :] <= mb_end_day[:, None]
 
+    # (n_index_periods, n_days) mask of the days each index-site period covers
+    # (inclusive at both ends); zero periods when the index term is off
+    index = obs['index']
+    if index is None:
+        index_days_full = np.zeros((0, n_days), dtype=np.float32)
+    else:
+        days = np.arange(n_days)[None, :]
+        index_days_full = ((days >= index['start_day'][:, None])
+                           & (days <= index['end_day'][:, None])).astype(np.float32)
+
     forcings, obs_chunks = [], []
     for c, (d0, d1) in enumerate(chunk_bounds):
         chunk_dates = model.dates[d0 * 24:d1 * 24]
@@ -359,6 +483,7 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
             alb=(alb[0][c], alb[1][c], alb[2][c]),
             wet=(wet[0][c], wet[1][c], wet[2][c]),
             mb_valid=mb_valid_full[:, d0:d1],
+            index_days=index_days_full[:, d0:d1],
         )
         obs_chunks.append(chunk_obs)
         print(f'\033[2K\r~ Packing forcings [{c + 1}/{len(chunk_bounds)}] ~',
@@ -382,7 +507,16 @@ def build_chunk_data(model, obs, model_days, chunk_bounds):
         nbytes = sum(x.nbytes for x in jax.tree.leaves(tree))
         print(f'  stacked {label}: {nbytes / 1e9:.2f} GB', flush=True)
 
-    counts = dict(albedo=alb[3], wet=wet[3])
+    n_glaciers = len(obs['point_idx'])
+
+    def per_glacier(sel):
+        if index is None:
+            return np.zeros(n_glaciers, dtype=np.int64)
+        return np.bincount(index['glacier'][sel], minlength=n_glaciers)
+
+    counts = dict(albedo=alb[3], wet=wet[3],
+                  index_winter=per_glacier(None if index is None else ~index['summer']),
+                  index_summer=per_glacier(None if index is None else index['summer']))
     return stacked, tail, counts
 
 
@@ -400,10 +534,13 @@ def _crps_gaussian(mod, meas, sigma):
     return sigma * (z * (2 * ndtr(z) - 1) + 2 * pdf - 1 / jnp.sqrt(jnp.pi))
 
 
-def make_loss_fn(model, obs, counts, stacked, tail):
+def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
+                 sigma_winter=0.3, sigma_summer=0.1, index_weight=1.0):
     """
     Builds the value-and-gradient of the whole run with respect to the
-    per-glacier log(kp) and log(wind_factor).
+    per-glacier log(kp), log(wind_factor) and an (len(extras), n_glaciers)
+    array of extra parameters, each stored as value / EXTRA_SCALE[name].
+    Fields not in extras keep their config values.
 
     The full-length temporal chunks are walked by one lax.scan, carrying
     the glacier state and a set of running sums the three metrics are built
@@ -468,6 +605,27 @@ def make_loss_fn(model, obs, counts, stacked, tail):
     mb_years = jnp.asarray(obs['mb_years'])
     count = {k: jnp.asarray(v, dtype=jnp.float64) for k, v in counts.items()}
 
+    # index-site periods: the mesh point each is read at, its measurement,
+    # whether it is a summer, one-hots for summing per glacier (winter and
+    # summer separately) and per site (for each site's mean summer offset)
+    index = obs['index']
+    if index is None:
+        index = dict(point=np.zeros(0, dtype=np.int32), meas=np.zeros(0),
+                     summer=np.zeros(0, dtype=bool), glacier=np.zeros(0, dtype=np.int32),
+                     site=np.zeros(0, dtype=np.int32))
+    index_point = jnp.asarray(index['point'], dtype=jnp.int32)
+    index_meas = jnp.asarray(index['meas'])
+    is_summer = np.asarray(index['summer'], dtype=bool)
+    glacier_hot = index['glacier'][None, :] == np.arange(n_glaciers)[:, None]
+    winter_member = jnp.asarray((glacier_hot & ~is_summer).astype(np.float64))
+    summer_member = jnp.asarray((glacier_hot & is_summer).astype(np.float64))
+    n_sites = int(index['site'].max()) + 1 if len(index['site']) else 0
+    site_summer = (index['site'][None, :] == np.arange(n_sites)[:, None]) & is_summer
+    site_summer_mean = jnp.asarray(  # (n_sites, n_periods): mean over that site's summers
+        site_summer / np.maximum(site_summer.sum(axis=1, keepdims=True), 1))
+    index_site = jnp.asarray(index['site'], dtype=jnp.int32)
+    is_summer = jnp.asarray(is_summer)
+
     # fields to be checked directly for non-finite values anywhere
     RAW_FIELDS = ('albedo', 'top_water', 'mass_balance')
 
@@ -476,6 +634,7 @@ def make_loss_fn(model, obs, counts, stacked, tail):
             albedo_crps=jnp.zeros(n_glaciers),
             wet_brier=jnp.zeros(n_glaciers),
             mb=jnp.zeros(n_points),
+            index_mb=jnp.zeros(index_point.shape[0]),
             raw_nonfinite={f: jnp.array(False) for f in RAW_FIELDS},
         )
 
@@ -522,6 +681,9 @@ def make_loss_fn(model, obs, counts, stacked, tail):
             mb=acc['mb'] + jnp.sum(
                 jnp.where(mb_valid[glacier_of_point].T, records.mass_balance, 0.0),
                 axis=0),
+            # each index-site period's running sum of its point's daily balance
+            index_mb=acc['index_mb'] + jnp.sum(
+                obs_chunk['index_days'].T * records.mass_balance[:, index_point], axis=0),
             raw_nonfinite=raw_nonfinite,
         )
 
@@ -544,9 +706,23 @@ def make_loss_fn(model, obs, counts, stacked, tail):
         mb_mod = member @ acc['mb'] / mb_years
         mb = _crps_gaussian(mb_mod, mb_meas, mb_sigma) / mb_sigma
 
-        total = jnp.sum(albedo + wet + mb)
-        return total, dict(albedo=albedo, wet=wet, mb=mb,
-                           mb_mod=mb_mod, acc=acc)
+        # index sites: winter scored absolutely; summer as an anomaly, by
+        # removing each site's mean model-minus-measured summer offset first
+        err = acc['index_mb'] - index_meas
+        site_offset = (site_summer_mean @ err)[index_site] if n_sites else jnp.zeros_like(err)
+        index_mod = acc['index_mb'] - jnp.where(is_summer, site_offset, 0.0)
+        sigma = jnp.where(is_summer, sigma_summer, sigma_winter)
+        index_crps = _crps_gaussian(index_mod, index_meas, sigma) / sigma
+        index_winter = per_obs(winter_member @ index_crps, count['index_winter'])
+        index_summer = per_obs(summer_member @ index_crps, count['index_summer'])
+
+        # index_weight multiplies both index terms (1 = one vote each, like
+        # the other per-glacier terms)
+        index_winter = index_weight * index_winter
+        index_summer = index_weight * index_summer
+        total = jnp.sum(albedo + wet + mb + index_winter + index_summer)
+        return total, dict(albedo=albedo, wet=wet, mb=mb, index_winter=index_winter,
+                           index_summer=index_summer, mb_mod=mb_mod, acc=acc)
 
     # static_args stays in the closure: jax.checkpoint only sees
     # JAX-traceable arguments
@@ -554,11 +730,14 @@ def make_loss_fn(model, obs, counts, stacked, tail):
         return pebsi_main(state, forcings, point_attrs, static_args,
                           new_dynamic_args)
 
-    def loss_fn(log_kp, log_wind_factor, initial_state, stacked, tail, point_attrs):
+    def loss_fn(log_kp, log_wind_factor, extra, initial_state, stacked, tail, point_attrs):
         stacked_forcings, stacked_obs = stacked
         kp = jnp.exp(log_kp)[glacier_of_point]
         wind_factor = jnp.exp(log_wind_factor)[glacier_of_point]
         new_dynamic_args = dynamic_args._replace(kp=kp, wind_factor=wind_factor)
+        for i, name in enumerate(extras):
+            new_dynamic_args = new_dynamic_args._replace(
+                **{name: (extra[i] * EXTRA_SCALE[name])[glacier_of_point]})
 
         def scan_chunk(carry, xs):
             state, acc = carry
@@ -575,18 +754,18 @@ def make_loss_fn(model, obs, counts, stacked, tail):
         return finalize(carry[1])
 
     initial_state = model.initial_state
-    jitted = jax.jit(jax.value_and_grad(loss_fn, argnums=(0, 1), has_aux=True))
+    jitted = jax.jit(jax.value_and_grad(loss_fn, argnums=(0, 1, 2), has_aux=True))
 
     # plain python wrapper, so the big arrays reach the jitted function as
     # arguments without the optimizer loop having to carry them around
-    def value_and_grad(log_kp, log_wind_factor):
-        return jitted(log_kp, log_wind_factor, initial_state, stacked, tail,
+    def value_and_grad(log_kp, log_wind_factor, extra):
+        return jitted(log_kp, log_wind_factor, extra, initial_state, stacked, tail,
                       point_attrs)
 
     # lets a caller compile ahead of time, to time compilation separately
     # and read XLA's memory analysis before anything runs
-    value_and_grad.lower = lambda log_kp, log_wind_factor: jitted.lower(
-        log_kp, log_wind_factor, initial_state, stacked, tail, point_attrs)
+    value_and_grad.lower = lambda log_kp, log_wind_factor, extra: jitted.lower(
+        log_kp, log_wind_factor, extra, initial_state, stacked, tail, point_attrs)
     value_and_grad.args = (initial_state, stacked, tail, point_attrs)
     value_and_grad.loss_fn = loss_fn
 
@@ -597,7 +776,8 @@ def make_loss_fn(model, obs, counts, stacked, tail):
     # guarantees the two paths compute identical math.
     params_jitted = jax.jit(
         lambda params: loss_fn(params['log_kp'], params['log_wind_factor'],
-                               initial_state, stacked, tail, point_attrs)[0])
+                               params['extra'], initial_state, stacked, tail,
+                               point_attrs)[0])
 
     return value_and_grad, params_jitted
 
@@ -624,7 +804,7 @@ def report_forward_health(step, metrics, model, obs):
     """
     healthy = True
 
-    for key in ('albedo', 'wet', 'mb'):
+    for key in ('albedo', 'wet', 'mb', 'index_winter', 'index_summer'):
         vals = np.asarray(metrics[key])
         bad = np.where(~np.isfinite(vals))[0]
         if len(bad):
@@ -671,8 +851,15 @@ def report_forward_health(step, metrics, model, obs):
     return healthy
 
 
+def _extras_physical(extra, extras):
+    """{name: per-glacier list in physical units} from the scaled extra array."""
+    return {name: (np.asarray(extra[i]) * EXTRA_SCALE[name]).tolist()
+            for i, name in enumerate(extras)}
+
+
 def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
-                     n_steps=30, lr=5e-2, lr_final_frac=0.1):
+                     n_steps=10, lr=5e-2, lr_final_frac=0.1,
+                     init_extra=None, extras=()):
     """
     Adam on log(kp) and log(wind_factor), one pair per glacier, so both stay
     positive without a constrained optimizer.
@@ -687,10 +874,15 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
     decaying to 0) leaves room to keep improving if convergence lands later
     than expected. As a second line of defense, the best total loss seen is
     tracked independently of where the run ends up.
+
+    Any extra parameters (og_kappa, precgrad; see EXTRA_SCALE) are optimized
+    linearly, so they can reach 0, and clipped at 0 after each update.
     """
     params = {
         'log_kp': jnp.log(jnp.asarray(init_kp, dtype=jnp.float64)),
         'log_wind_factor': jnp.log(jnp.asarray(init_wind_factor, dtype=jnp.float64)),
+        'extra': jnp.asarray(np.zeros((0, len(init_kp))) if init_extra is None
+                             else init_extra, dtype=jnp.float64),
     }
     schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=n_steps,
                                            alpha=lr_final_frac)
@@ -698,16 +890,17 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
     opt_state = optimizer.init(params)
 
     header = (f"{'Step':>4}  {'Total':>12}  {'Albedo':>10}  {'Wet':>10}  "
-              f"{'MB':>10}  {'|grad|':>10}  {'lr':>10}")
+              f"{'MB':>10}  {'IdxWin':>10}  {'IdxSum':>10}  {'|grad|':>10}  {'lr':>10}")
     print(header, flush=True)
 
     history = []
-    best = dict(step=-1, total=np.inf, kp=init_kp, wind_factor=init_wind_factor)
+    best = dict(step=-1, total=np.inf, kp=init_kp, wind_factor=init_wind_factor,
+                **_extras_physical(params['extra'], extras))
     for i in range(n_steps):
         t0 = time.time()
-        (total, metrics), (d_kp, d_wf) = value_and_grad(
-            params['log_kp'], params['log_wind_factor'])
-        grads = {'log_kp': d_kp, 'log_wind_factor': d_wf}
+        (total, metrics), (d_kp, d_wf, d_extra) = value_and_grad(
+            params['log_kp'], params['log_wind_factor'], params['extra'])
+        grads = {'log_kp': d_kp, 'log_wind_factor': d_wf, 'extra': d_extra}
         jax.block_until_ready((total, grads))
 
         bad = {k: np.where(~np.isfinite(np.asarray(v)))[0] for k, v in grads.items()}
@@ -717,7 +910,7 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
             for key, idx in bad.items():
                 if len(idx):
                     print(f'  step {i}: non-finite {key} for '
-                          f'{[GLACIERS[j] for j in idx]}', flush=True)
+                          f'{[GLACIERS[j % len(GLACIERS)] for j in idx]}', flush=True)
             report_forward_health(i, metrics, model, obs)
             print('  Stopping: non-finite gradient detected.', flush=True)
             break
@@ -727,47 +920,55 @@ def run_optimization(value_and_grad, init_kp, init_wind_factor, model, obs,
         # to both log history and check for a new best, ahead of updating
         cur_kp = np.exp(np.asarray(params['log_kp'])).tolist()
         cur_wf = np.exp(np.asarray(params['log_wind_factor'])).tolist()
-        history.append(dict(step=i, total=float(total), kp=cur_kp, wind_factor=cur_wf))
+        cur_extra = _extras_physical(params['extra'], extras)
+        history.append(dict(step=i, total=float(total), kp=cur_kp, wind_factor=cur_wf,
+                            **cur_extra))
         if float(total) < best['total']:
-            best = dict(step=i, total=float(total), kp=cur_kp, wind_factor=cur_wf)
+            best = dict(step=i, total=float(total), kp=cur_kp, wind_factor=cur_wf,
+                        **cur_extra)
 
         raw_norm = float(optax.global_norm(grads))
         cur_lr = float(schedule(opt_state[-1].count if hasattr(opt_state[-1], 'count')
                                 else opt_state.count))
         updates, opt_state = optimizer.update(grads, opt_state)
         params = optax.apply_updates(params, updates)
+        params['extra'] = jnp.maximum(params['extra'], 0.0)
 
         print(f'{i:>4}  {float(total):>12.2f}  '
               f"{float(jnp.sum(metrics['albedo'])):>10.3f}  "
               f"{float(jnp.sum(metrics['wet'])):>10.3f}  "
               f"{float(jnp.sum(metrics['mb'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['index_winter'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['index_summer'])):>10.3f}  "
               f'{raw_norm:>10.3e}  {cur_lr:>10.3e}  ({time.time() - t0:.1f}s)', flush=True)
 
     print(f'\nBest total loss {best["total"]:.2f} at step {best["step"]} '
           f'(final step was {history[-1]["step"] if history else -1})', flush=True)
 
-    return np.asarray(best['kp']), np.asarray(best['wind_factor']), history
+    return (np.asarray(best['kp']), np.asarray(best['wind_factor']),
+            {name: np.asarray(best[name]) for name in extras}, history)
 
 
 class _NonFiniteGradient(Exception):
     """Raised out of the trust-region objective when a pass comes back bad."""
 
 
-def write_progress(best, history):
+def write_progress(best, history, tag=''):
     """
     Rewrites the best parameters so far and the full evaluation history
     after every objective evaluation, so a run that hits its time limit
     still leaves its results behind.
     """
-    fn = os.path.join(HOST_PATHS[host]['output_fp'], 'AD_optimize_progress.yaml')
+    fn = os.path.join(HOST_PATHS[host]['output_fp'], f'AD_optimize_progress{tag}.yaml')
     os.makedirs(os.path.dirname(fn), exist_ok=True)
     with open(fn, 'w') as f:
         yaml.dump(dict(glaciers=GLACIERS, best=best, history=history), f, sort_keys=False)
 
 
 def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
-                                  model, obs, n_steps=30, initial_radius=0.2,
-                                  gtol=1e-4, xtol=1e-10, hessian='bfgs'):
+                                  model, obs, n_steps=10, initial_radius=0.2,
+                                  gtol=1e-4, xtol=1e-10, hessian='bfgs',
+                                  init_extra=None, extras=(), tag=''):
     """
     Trust-region optimization of log(kp) and log(wind_factor), via scipy's
     trust-constr with a quasi-Newton Hessian built from the gradients we
@@ -803,19 +1004,33 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
     accepted or rejected. Iterations and evaluations therefore differ, and
     both are reported. As with the Adam loop, the best total loss seen is
     tracked independently of where the solver stops.
+
+    Each extra parameter (og_kappa, precgrad; see EXTRA_SCALE) adds one more
+    block of n_glaciers to x, kept linear (so it can reach 0) and bounded
+    below by 0 through trust-constr's bounds.
     """
     n_glaciers = len(init_kp)
+    n_extra = len(extras)
+    extra0 = np.asarray(np.zeros((0, n_glaciers)) if init_extra is None else init_extra,
+                        dtype=np.float64).reshape(n_extra, n_glaciers)
     x0 = np.concatenate([np.log(np.asarray(init_kp, dtype=np.float64)),
-                         np.log(np.asarray(init_wind_factor, dtype=np.float64))])
+                         np.log(np.asarray(init_wind_factor, dtype=np.float64)),
+                         extra0.ravel()])
+    keys = ['log_kp', 'log_wind_factor'] + list(extras)
+
+    def unpack(x):
+        return (x[:n_glaciers], x[n_glaciers:2 * n_glaciers],
+                x[2 * n_glaciers:].reshape(n_extra, n_glaciers))
 
     progress = dict(n_eval=0, n_iter=0, radius=float(initial_radius))
     history = []
     best = dict(step=-1, total=np.inf,
                 kp=list(np.asarray(init_kp, dtype=np.float64)),
-                wind_factor=list(np.asarray(init_wind_factor, dtype=np.float64)))
+                wind_factor=list(np.asarray(init_wind_factor, dtype=np.float64)),
+                **_extras_physical(extra0, extras))
 
     header = (f"{'Eval':>4}  {'Iter':>4}  {'Total':>12}  {'Albedo':>10}  "
-              f"{'Wet':>10}  {'MB':>10}  {'|grad|':>10}  "
+              f"{'Wet':>10}  {'MB':>10}  {'IdxWin':>10}  {'IdxSum':>10}  {'|grad|':>10}  "
               f"{'radius':>10}")
     print(header, flush=True)
 
@@ -824,39 +1039,46 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
         step = progress['n_eval']
         progress['n_eval'] += 1
 
-        (total, metrics), (d_kp, d_wf) = value_and_grad(
-            jnp.asarray(x[:n_glaciers]), jnp.asarray(x[n_glaciers:]))
-        jax.block_until_ready((total, d_kp, d_wf))
+        log_kp, log_wf, extra = unpack(x)
+        (total, metrics), (d_kp, d_wf, d_extra) = value_and_grad(
+            jnp.asarray(log_kp), jnp.asarray(log_wf), jnp.asarray(extra))
+        jax.block_until_ready((total, d_kp, d_wf, d_extra))
         grad = np.concatenate([np.asarray(d_kp, dtype=np.float64),
-                               np.asarray(d_wf, dtype=np.float64)])
+                               np.asarray(d_wf, dtype=np.float64),
+                               np.asarray(d_extra, dtype=np.float64).ravel()])
 
         if not (np.isfinite(float(total)) and np.isfinite(grad).all()):
             print(f'  step {step}: non-finite value/gradient after '
                   f'{time.time() - t0:.1f}s', flush=True)
             bad = np.where(~np.isfinite(grad))[0]
             for j in bad:
-                key = 'log_kp' if j < n_glaciers else 'log_wind_factor'
-                print(f'  step {step}: non-finite {key} for '
+                print(f'  step {step}: non-finite {keys[j // n_glaciers]} for '
                       f'{GLACIERS[j % n_glaciers]}', flush=True)
             report_forward_health(step, metrics, model, obs)
             raise _NonFiniteGradient
 
-        cur_kp = np.exp(x[:n_glaciers]).tolist()
-        cur_wf = np.exp(x[n_glaciers:]).tolist()
+        cur_kp = np.exp(log_kp).tolist()
+        cur_wf = np.exp(log_wf).tolist()
+        cur_extra = _extras_physical(extra, extras)
         history.append(dict(step=step, iteration=progress['n_iter'],
                             total=float(total), kp=cur_kp, wind_factor=cur_wf,
-                            radius=progress['radius'],
+                            **cur_extra, radius=progress['radius'],
                             albedo=np.asarray(metrics['albedo']).tolist(),
                             wet=np.asarray(metrics['wet']).tolist(),
-                            mb=np.asarray(metrics['mb']).tolist()))
+                            mb=np.asarray(metrics['mb']).tolist(),
+                            index_winter=np.asarray(metrics['index_winter']).tolist(),
+                            index_summer=np.asarray(metrics['index_summer']).tolist()))
         if float(total) < best['total']:
-            best.update(step=step, total=float(total), kp=cur_kp, wind_factor=cur_wf)
-        write_progress(best, history)
+            best.update(step=step, total=float(total), kp=cur_kp, wind_factor=cur_wf,
+                        **cur_extra)
+        write_progress(best, history, tag)
 
         print(f"{step:>4}  {progress['n_iter']:>4}  {float(total):>12.2f}  "
               f"{float(jnp.sum(metrics['albedo'])):>10.3f}  "
               f"{float(jnp.sum(metrics['wet'])):>10.3f}  "
               f"{float(jnp.sum(metrics['mb'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['index_winter'])):>10.3f}  "
+              f"{float(jnp.sum(metrics['index_summer'])):>10.3f}  "
               f"{np.linalg.norm(grad):>10.3e}  {progress['radius']:>10.3e}  "
               f'({time.time() - t0:.1f}s)', flush=True)
 
@@ -875,8 +1097,15 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
     else:
         hess = BFGS(exception_strategy='damp_update')
 
+    # extras >= 0; kp and wind_factor are already positive through the log
+    bounds = None
+    if n_extra:
+        lower = np.full(len(x0), -np.inf)
+        lower[2 * n_glaciers:] = 0.0
+        bounds = Bounds(lower, np.full(len(x0), np.inf))
+
     try:
-        result = minimize(objective, x0, jac=True, hess=hess,
+        result = minimize(objective, x0, jac=True, hess=hess, bounds=bounds,
                           method='trust-constr', callback=callback,
                           options=dict(initial_tr_radius=float(initial_radius),
                                        maxiter=n_steps, gtol=gtol, xtol=xtol,
@@ -893,7 +1122,8 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
     print(f'\nBest total loss {best["total"]:.2f} at evaluation {best["step"]} '
           f'(last evaluation was {history[-1]["step"]})', flush=True)
 
-    return np.asarray(best['kp']), np.asarray(best['wind_factor']), history
+    return (np.asarray(best['kp']), np.asarray(best['wind_factor']),
+            {name: np.asarray(best[name]) for name in extras}, history)
 
 
 
@@ -903,7 +1133,7 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('-n', '--n_steps', type=int, default=30)
+    parser.add_argument('-n', '--n_steps', type=int, default=10)
     parser.add_argument('-lr', '--learning_rate', type=float, default=5e-2)
     parser.add_argument('--chunk_days', type=int, default=CHUNK_DAYS)
     parser.add_argument('--checkpoint_hourly', action='store_true',
@@ -915,13 +1145,41 @@ def main():
                         help='initial trust-region radius, in log-parameter units: '
                              '0.2 is about a 20%% change in kp/wind_factor')
     parser.add_argument('--tr_hessian', choices=['bfgs', 'sr1'], default='bfgs')
+    parser.add_argument('--fit_kappa', action='store_true',
+                        help="switch to method_turbulent='OG_hybrid' and optimize og_kappa "
+                             'per glacier alongside kp and wind_factor')
+    parser.add_argument('--fit_precgrad', action='store_true',
+                        help='optimize the precipitation gradient precgrad per glacier')
+    parser.add_argument('--index_mb', action='store_true',
+                        help='add index-site point mass balance (CRPS / sigma) to the objective')
+    parser.add_argument('--sigma_winter', type=float, default=0.3,
+                        help='uncertainty [m w.e.] of an index-site winter balance '
+                             '(USGS README: snow accumulation, 0.3 m w.e.)')
+    parser.add_argument('--sigma_summer', type=float, default=0.1,
+                        help='uncertainty [m w.e.] of an index-site summer balance anomaly '
+                             '(USGS README: snow and ice melt, 0.10 m w.e.)')
+    parser.add_argument('--index_weight', type=float, default=1.0,
+                        help='multiplier on the two per-glacier index-site terms')
+    parser.add_argument('--init_from', default=None,
+                        help='yaml with glaciers and per-glacier kp, wind_factor and '
+                             '(optionally) og_kappa / precgrad to start from, instead of '
+                             'the baseline / config values')
+    parser.add_argument('--tag', default='',
+                        help='suffix for the config, progress and result files, so a '
+                             'run does not overwrite AD_optimize_result.yaml')
     opts = parser.parse_args()
+    tag = f'_{opts.tag}' if opts.tag else ''
+    extras = tuple(name for name, on in (('og_kappa', opts.fit_kappa),
+                                         ('precgrad', opts.fit_precgrad)) if on)
 
     print(f'JAX backend: {jax.default_backend()}  devices: {jax.devices()}',
           flush=True)
 
     t0 = _tick('starting')
-    config_fn = build_config(dict(checkpoint_hourly=opts.checkpoint_hourly))
+    overrides = dict(checkpoint_hourly=opts.checkpoint_hourly)
+    if opts.fit_kappa:
+        overrides['method_turbulent'] = 'OG_hybrid'
+    config_fn = build_config(overrides, tag=f'AD_optimize{tag}')
     print(f'Config -> {config_fn}', flush=True)
 
     model = init_pebsi(config_fn)
@@ -949,7 +1207,7 @@ def main():
               flush=True)
 
     print('Loading observations...', flush=True)
-    obs = build_observations(model, model_days)
+    obs = build_observations(model, model_days, index_mb=opts.index_mb)
     t0 = _tick('observations loaded', t0)
 
     print(f'Packing {len(chunk_bounds)} chunks...', flush=True)
@@ -958,39 +1216,68 @@ def main():
         print(f'  {metric:<7} observations per glacier: {c.tolist()}', flush=True)
     t0 = _tick('chunks packed', t0)
 
-    value_and_grad, params_loss_fn = make_loss_fn(model, obs, counts, stacked, tail)
+    value_and_grad, params_loss_fn = make_loss_fn(
+        model, obs, counts, stacked, tail,
+        extras=extras, sigma_winter=opts.sigma_winter,
+        sigma_summer=opts.sigma_summer, index_weight=opts.index_weight)
 
     n_glaciers = len(GLACIERS)
     init_kp = np.full(n_glaciers, baseline['kp'])
     init_wf = np.full(n_glaciers, baseline['wind_factor'])
+    # extras start from the config's value unless the init file gives one
+    init_phys = {name: np.full(n_glaciers, float(np.mean(getattr(model.config.params, name))))
+                 for name in extras}
+    if opts.init_from:
+        with open(opts.init_from) as f:
+            start = yaml.safe_load(f)
+        order = [start['glaciers'].index(g) for g in GLACIERS]
+        init_kp = np.asarray(start['kp'], dtype=float)[order]
+        init_wf = np.asarray(start['wind_factor'], dtype=float)[order]
+        for name in extras:
+            if name in start:
+                init_phys[name] = np.asarray(start[name], dtype=float)[order]
+    init_extra = np.array([init_phys[name] / EXTRA_SCALE[name] for name in extras]
+                          ).reshape(len(extras), n_glaciers)
     print(f'Optimizer: {opts.optimizer}', flush=True)
+    print(f"{'Start':<14} {'kp':>10} {'wind_factor':>13}"
+          + ''.join(f' {name:>10}' for name in extras), flush=True)
+    for g, name in enumerate(GLACIERS):
+        print(f'{name:<14} {init_kp[g]:>10.4f} {init_wf[g]:>13.4f}'
+              + ''.join(f' {init_phys[e][g]:>10.2e}' for e in extras), flush=True)
     if opts.optimizer == 'trust':
-        kp, wind_factor, history = run_optimization_trust_region(
+        kp, wind_factor, fitted, history = run_optimization_trust_region(
             value_and_grad, init_kp=init_kp, init_wind_factor=init_wf,
             model=model, obs=obs, n_steps=opts.n_steps,
-            initial_radius=opts.tr_radius, hessian=opts.tr_hessian)
+            initial_radius=opts.tr_radius, hessian=opts.tr_hessian,
+            init_extra=init_extra, extras=extras, tag=tag)
     elif opts.optimizer == 'lbfgs':
         kp, wind_factor, history = run_optimization_lbfgs(
             value_and_grad, params_loss_fn, init_kp=init_kp, init_wind_factor=init_wf,
             model=model, obs=obs, n_steps=opts.n_steps)
     else:
-        kp, wind_factor, history = run_optimization(
+        kp, wind_factor, fitted, history = run_optimization(
             value_and_grad, init_kp=init_kp, init_wind_factor=init_wf,
-            model=model, obs=obs, n_steps=opts.n_steps, lr=opts.learning_rate)
+            model=model, obs=obs, n_steps=opts.n_steps, lr=opts.learning_rate,
+            init_extra=init_extra, extras=extras)
     _tick('optimization loop done', t0)
 
     print('\nOptimized parameters:')
-    print(f"{'Glacier':<14} {'kp':>10} {'wind_factor':>13}")
-    for name, k, w in zip(GLACIERS, kp, wind_factor):
-        print(f'{name:<14} {k:>10.4f} {w:>13.4f}')
+    print(f"{'Glacier':<14} {'kp':>10} {'wind_factor':>13}"
+          + ''.join(f' {name:>10}' for name in extras))
+    for g, name in enumerate(GLACIERS):
+        print(f'{name:<14} {kp[g]:>10.4f} {wind_factor[g]:>13.4f}'
+              + ''.join(f' {fitted[e][g]:>10.2e}' for e in extras))
 
-    out_fn = os.path.join(HOST_PATHS[host]['output_fp'], 'AD_optimize_result.yaml')
+    out_fn = os.path.join(HOST_PATHS[host]['output_fp'], f'AD_optimize_result{tag}.yaml')
     os.makedirs(os.path.dirname(out_fn), exist_ok=True)
+    result = dict(glaciers=GLACIERS,
+                  kp=[float(v) for v in kp],
+                  wind_factor=[float(v) for v in wind_factor])
+    for name in extras:
+        result[name] = [float(v) for v in fitted[name]]
+    result['history'] = history
     with open(out_fn, 'w') as f:
-        yaml.dump(dict(glaciers=GLACIERS,
-                       kp=[float(v) for v in kp],
-                       wind_factor=[float(v) for v in wind_factor],
-                       history=history), f, sort_keys=False)
+        yaml.dump(result, f, sort_keys=False)
     print(f'\nWrote {out_fn}')
 
 
