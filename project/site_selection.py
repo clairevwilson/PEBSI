@@ -8,7 +8,7 @@ import numpy as np
 import os
 from data_handling import MassBalance, translate_rgi
 
-benchmark_fp = '/ocean/projects/ees260009p/cwilson4/MB_data/'
+benchmark_fp = '/ocean/projects/ees260009p/cwilson4/data/mass_balance/point/'
 benchmark_glaciers = [f.lower() for f in os.listdir(benchmark_fp) if not '.' in f]
 
 all_sites = {} 

@@ -39,7 +39,7 @@ for file in list_RGI:
         fp_RGI = home_fp + 'RGI/rgi60/00_rgi60_attribs/' + file
 fp_MERRA2_constants = home_fp + 'climate_data/MERRA2/MERRA2constants.nc4'
 fp_ERA5_constants = home_fp + 'climate_data/ERA5/ERA5_hourly/ERA5_geopotential.nc'
-fp_MB = home_fp + f'MB_data/{glac_name.capitalize()}/Input_{glac_name.capitalize()}_Glaciological_Data.csv'
+fp_MB = home_fp + f'data/mass_balance/point/{glac_name.capitalize()}/Input_{glac_name.capitalize()}_Glaciological_Data.csv'
 fp_sites = home_fp + f'PEBSI/data/by_glacier/{glac_name}/site_constants.csv'
 bias_names = {'taku':'lemon_creek','kennicott':'gulkana'}
 bias_name = bias_names[glac_name] if glac_name in bias_names else glac_name

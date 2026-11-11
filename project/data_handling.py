@@ -54,7 +54,7 @@ class MassBalance():
         """
         # open dataframes
         # wgms_df = pd.read_csv(home_fp + 'data/wgms/data/mass_balance_point.csv', parse_dates=True)
-        benchmark_fp = base_fp + 'MB_data/'
+        benchmark_fp = base_fp + 'data/mass_balance/point/'
 
         # store input attributes
         self.name = name

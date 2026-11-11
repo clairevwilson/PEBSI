@@ -32,7 +32,7 @@ import itertools
 date_form = mpl.dates.DateFormatter('%b %d')
 mpl.style.use('seaborn-v0_8-white')
 GNSSIR_fp = '../MB_data/Stakes/gulkanaSITE24_GNSSIR.csv'
-USGS_fp = '../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv'
+USGS_fp = '../data/mass_balance/point/Gulkana/Input_Gulkana_Glaciological_Data.csv'
 
 all_colors = ['#63c4c7','#fcc02e','#4D559C','#60C252','#BF1F6A',
               '#F77808','#298282','#999999','#FF89B0','#427801']

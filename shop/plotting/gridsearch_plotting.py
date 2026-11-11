@@ -1884,7 +1884,7 @@ def plot_fluxes(savefig=False):
         plt.savefig(base_fp + 'fluxes.png',dpi=200,bbox_inches='tight')
     plt.show()
 
-def find_precip_gradient(med_site='B',fn='../MB_data/Gulkana/Input_Gulkana_Glaciological_Data.csv'):
+def find_precip_gradient(med_site='B',fn='../data/mass_balance/point/Gulkana/Input_Gulkana_Glaciological_Data.csv'):
     data = pd.read_csv(fn)
     grads = []
     colors = plt.get_cmap('Grays')

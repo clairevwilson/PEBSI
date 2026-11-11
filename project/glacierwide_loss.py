@@ -476,7 +476,7 @@ class MassBalance():
 
     def _load_from_csv(self):
         rgiid = f'RGI60-{translate_rgi[self.name]["6"]}'
-        data_fp = base_fp + 'data/mass_balance/df_pergla_global_20yr-filled.csv'
+        data_fp = base_fp + 'data/mass_balance/glacierwide/df_pergla_global_20yr-filled.csv'
         df = pd.read_csv(data_fp, usecols=['rgiid', 't1', 't2', 'mb_mwea', 'mb_mwea_err'])
         row = df[df['rgiid'] == rgiid]
         assert len(row) == 1, f'expected one row for {rgiid} in {data_fp}, found {len(row)}'
@@ -525,12 +525,12 @@ class MassBalance():
         parsed from the tile filename(s), asserted identical across every
         tile used.
         """
-        period_dir = os.path.join(base_fp, 'data/mass_balance',
+        period_dir = os.path.join(base_fp, 'data/mass_balance/glacierwide',
                                    f'{self.start.year}_{self.end.year}', kind)
         if not os.path.isdir(period_dir):
             # fallback for a period whose tiles were never split into their
             # own {start}_{end}/{kind}/ subfolder
-            period_dir = os.path.join(base_fp, f'data/mass_balance/{kind}')
+            period_dir = os.path.join(base_fp, f'data/mass_balance/glacierwide/{kind}')
 
         candidates = []
         for fn in sorted(os.listdir(period_dir)):
