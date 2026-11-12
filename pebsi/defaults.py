@@ -131,6 +131,13 @@ bias_vars = []                              # Vars to correct by quantile mappin
 temp_perturb = 0                            # Additive factor to apply to model temperature
 tp_perturb = 1                              # Multiplicative factor to apply to precipitation
 
+# SYNTHETIC HEATWAVE (added to the reanalysis before bias correction)
+heatwave_start = None                       # First local day of the heatwave ('YYYY-MM-DD'); None for no heatwave
+heatwave_duration = 0                       # Length of the heatwave [days]
+heatwave_intensity = 1                      # Multiple of each cell's average heatwave [-]
+heatwave_remove_precip = False              # Set precipitation to zero during the heatwave?
+heatwave_anomaly_fn = 'MERRA2/reg01_no_heatwaves/heatwave_anomaly.nc'  # Average heatwave by cell, relative to climate_fp (extreme_weather_analysis/prepare_no_heatwaves.py)
+
 # ====================================================================================================================
 #                                            MODEL OPTIONS
 # ====================================================================================================================

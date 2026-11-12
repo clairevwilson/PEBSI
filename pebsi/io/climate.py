@@ -222,6 +222,59 @@ class Climate():
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
 
             self.get_var_data(fn, var)
+
+        if self.params.heatwave_start:
+            self.add_heatwave()
+        return
+
+    def add_heatwave(self):
+        """
+        Adds a synthetic heatwave to the raw reanalysis: heatwave_intensity x each cell's
+        average heatwave (by local hour) on temperature, shortwave, longwave and specific
+        humidity over heatwave_duration local days from heatwave_start. Shortwave is capped
+        at the clear-sky maximum and RH is recomputed from the new temperature and
+        specific humidity. Precipitation is zeroed if heatwave_remove_precip.
+        """
+        params = self.params
+        SPH = params.seconds_per_hour
+
+        # the average heatwave is by local hour in UTC-8, as in prepare_no_heatwaves.py
+        local = pd.DatetimeIndex(self.dates) - pd.Timedelta(hours=8)
+        start = pd.Timestamp(params.heatwave_start)
+        event = (local >= start) & (local < start + pd.Timedelta(days=params.heatwave_duration))
+        if not event.any():
+            return
+        hours = local.hour[event]
+        doys = local.dayofyear[event]
+
+        ds = xr.open_dataset(params.climate_fp + params.heatwave_anomaly_fn)
+        ds = ds.sel(lat=xr.DataArray(self.unique_lats, dims='cell'),
+                    lon=xr.DataArray(self.unique_lons, dims='cell'), method='nearest')
+        assert np.allclose(ds.lat.values, self.unique_lats) and np.allclose(ds.lon.values, self.unique_lons), \
+            f'{params.heatwave_anomaly_fn} does not cover every cell'
+
+        # (N_UNIQUE, N_EVENT) anomaly for each event hour
+        def anomaly(vn):
+            return params.heatwave_intensity * ds[vn].transpose('local_hour', 'cell').values[hours].T
+
+        # specific humidity from the same folder as RH
+        region = 'reg' + str(params.rgi_region).zfill(2)
+        if params.secondary_climate_string and 'rh' in params.secondary_vars:
+            region += params.secondary_climate_string
+        self.get_var_data(self.GCM_fp + self.var_dict['qv']['fn'].format(r=region), 'qv')
+
+        self.temp[:, event] += anomaly('T2M')
+        self.LWin[:, event] += anomaly('LWGAB') * SPH
+        cap = ds['SWGDN_cap'].transpose('doy', 'local_hour', 'cell').values[doys - 1, hours].T * SPH
+        self.SWin[:, event] = np.clip(self.SWin[:, event] + anomaly('SWGDN') * SPH, 0, cap)
+
+        qv = self.qv[:, event] + anomaly('QV2M')
+        esat = self.sat_vapor_pressure(self.temp[:, event])
+        ws = 0.622 * esat / (self.sp[:, event] - esat)
+        self.rh[:, event] = qv / (1 - qv) / ws * 100
+
+        if params.heatwave_remove_precip:
+            self.tp[:, event] = 0
         return
     
     def get_var_data(self, fn, var):
@@ -431,7 +484,7 @@ class Climate():
 
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
-                       'rh':'%','sp':'Pa','tp':'m','elev':'m',
+                       'rh':'%','sp':'Pa','tp':'m','elev':'m','qv':'kg kg-1',
                        'SWin':'J m-2', 'LWin':'J m-2', 'NR':'J m-2', 'tcc':'1',
                        'bcdry':'kg m-2 s-1', 'bcwet':'kg m-2 s-1',
                        'ocdry':'kg m-2 s-1', 'ocwet':'kg m-2 s-1',
@@ -957,6 +1010,7 @@ class Climate():
                 'bcwet': 'BCWT002', 'bcdry': 'BCDP002',
                 'ocwet': 'OCWT002', 'ocdry': 'OCDP002',
                 'dustwet': 'DUWT003', 'dustdry': 'DUDP003',
+                'qv': 'QV2M',
             }
             for var, vn in merra2_vn.items():
                 self.var_dict[var] = {'vn': vn, 'fn': f'{{r}}/{vn}_{{r}}.zarr'}
