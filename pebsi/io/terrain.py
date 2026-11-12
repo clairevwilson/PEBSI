@@ -231,7 +231,9 @@ class Terrain:
         ownership = sparse.csr_matrix(
             (np.ones(len(owner)), (owner, np.arange(len(owner)))),
             shape=(n_points, len(owner)))
-        total = np.asarray(ownership @ values.T)
+        # in blocks of timesteps, so a boolean stack is only ever upcast one block at a time
+        total = np.concatenate([np.asarray(ownership @ values[t:t + 500].T)
+                                for t in range(0, len(values), 500)], axis=1)
         return total / np.maximum(count, 1)[:, None]
 
     def load_dem_info(self, dem, lats_in, lons_in, glaciers=None):
@@ -903,7 +905,7 @@ class Terrain:
 
             if on_ice.any():
                 pixels = np.column_stack([grid_x[on_ice], grid_y[on_ice]])
-                shadow_pix = ds['shadow_mask'].values[:, on_ice].astype(np.float64)
+                shadow_pix = ds['shadow_mask'].values[:, on_ice]
                 svf_pix = ds['sky_view_factor'].values[on_ice]
 
                 masks[gid_idx, :] = self.cell_mean_timeseries(points, pixels, shadow_pix)
