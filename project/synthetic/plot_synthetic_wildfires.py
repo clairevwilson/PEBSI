@@ -19,6 +19,13 @@ FIG_FN = os.path.join(OUT_DIR, 'synthetic_wildfire_effects.png')
 INK = 'k'
 GRID = '#e6e5e1'
 
+# real Kennicott wildfire (extreme_events_daily_ukesm.nc) with the greatest effect on mass balance
+# in the controlled base minus no_fires runs, 1997-2015: 5-20 Jul 2009, shown at the same calendar
+# dates in 2006; total GFED minus no-fires BC+OC deposition as PEBSI sees it
+REAL_START, REAL_END, REAL_DEPOSITION = '2006-07-05', '2006-07-21', 264.4
+# its effect: change in base minus no_fires mass balance from its start until the next wildfire
+REAL_EFFECT = -0.017
+
 results = pd.read_csv(RESULTS_FN, index_col='run', parse_dates=['start'])
 baseline_mb = results.loc[0, 'season_mb']
 events = results.drop(0)
@@ -33,6 +40,11 @@ fig, ax = plt.subplots(figsize=(7, 4))
 for _, ev in events.sort_values('effect', ascending=False).iterrows():
     ax.plot([ev['start'], ev['end']], [ev['total_deposition']] * 2, color=cmap(norm(ev['effect'])),
             linewidth=2.2, solid_capstyle='butt', path_effects=outline)
+ax.plot([pd.Timestamp(REAL_START), pd.Timestamp(REAL_END)], [REAL_DEPOSITION] * 2, color=cmap(norm(REAL_EFFECT)),
+        linewidth=2.2, solid_capstyle='projecting',
+        path_effects=[mpl.patheffects.Stroke(linewidth=3, foreground=INK), mpl.patheffects.Normal()])
+ax.annotate('2009 wildfire', (pd.Timestamp(REAL_START), REAL_DEPOSITION), xytext=(0, 4),
+            textcoords='offset points', color=INK, fontsize=9)
 
 months = pd.date_range('2006-05-01', '2006-09-01', freq='MS')
 ax.set_xticks(months)
