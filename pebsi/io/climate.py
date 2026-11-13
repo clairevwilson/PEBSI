@@ -222,18 +222,17 @@ class Climate():
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
 
             self.get_var_data(fn, var)
-
-        if self.params.heatwave_start:
-            self.add_heatwave()
         return
 
-    def add_heatwave(self):
+    def add_heatwave(self, raw_temp):
         """
-        Adds a synthetic heatwave to the raw reanalysis: heatwave_intensity x each cell's
-        average heatwave (by local hour) on temperature, shortwave, longwave and specific
-        humidity over heatwave_duration local days from heatwave_start. Shortwave is capped
-        at the clear-sky maximum and RH is recomputed from the new temperature and
-        specific humidity. Precipitation is zeroed if heatwave_remove_precip.
+        Adds a synthetic heatwave to the bias-corrected climate: heatwave_intensity x each
+        cell's average heatwave (by local hour) on temperature, shortwave, longwave and
+        specific humidity over heatwave_duration local days from heatwave_start. Shortwave
+        is capped at the highest value observed at that hour and time of year. RH is
+        recomputed from raw_temp (temperature before bias correction, which the baseline
+        RH comes from) plus the anomaly, and the new specific humidity. Precipitation is
+        zeroed if heatwave_remove_precip.
         """
         params = self.params
         SPH = params.seconds_per_hour
@@ -263,18 +262,44 @@ class Climate():
             region += params.secondary_climate_string
         self.get_var_data(self.GCM_fp + self.var_dict['qv']['fn'].format(r=region), 'qv')
 
-        self.temp[:, event] += anomaly('T2M')
+        dtemp = anomaly('T2M')
+        self.temp[:, event] += dtemp
         self.LWin[:, event] += anomaly('LWGAB') * SPH
         cap = ds['SWGDN_cap'].transpose('doy', 'local_hour', 'cell').values[doys - 1, hours].T * SPH
         self.SWin[:, event] = np.clip(self.SWin[:, event] + anomaly('SWGDN') * SPH, 0, cap)
 
         qv = self.qv[:, event] + anomaly('QV2M')
-        esat = self.sat_vapor_pressure(self.temp[:, event])
+        esat = self.sat_vapor_pressure(raw_temp[:, event] + dtemp)
         ws = 0.622 * esat / (self.sp[:, event] - esat)
         self.rh[:, event] = qv / (1 - qv) / ws * 100
 
         if params.heatwave_remove_precip:
             self.tp[:, event] = 0
+        return
+
+    def add_wildfire(self):
+        """
+        Adds a synthetic wildfire to the UK-ESM deposition: wildfire_intensity x each cell's
+        average fire-attributable BC and OC deposition, wet and dry, over wildfire_duration
+        UTC days from wildfire_start (UK-ESM deposition is daily over UTC days).
+        """
+        params = self.params
+        assert params.deposition_data == 'UKESM', 'Synthetic wildfires are only set up for UKESM deposition'
+        start = pd.Timestamp(params.wildfire_start)
+        dates = pd.DatetimeIndex(self.dates)
+        event = (dates >= start) & (dates < start + pd.Timedelta(days=params.wildfire_duration))
+        if not event.any():
+            return
+
+        ds = xr.open_dataset(params.climate_fp + params.wildfire_anomaly_fn)
+        ds = ds.sel(lat=xr.DataArray(self.unique_lats, dims='cell'),
+                    lon=xr.DataArray(self.unique_lons, dims='cell'), method='nearest')
+        assert np.allclose(ds.lat.values, self.unique_lats) and np.allclose(ds.lon.values, self.unique_lons), \
+            f'{params.wildfire_anomaly_fn} does not cover every cell'
+
+        for var in self.carbon_vars:
+            added = params.wildfire_intensity * ds[var].values[:, None]
+            getattr(self, var)[:, event] = np.maximum(getattr(self, var)[:, event] + added, 0)
         return
     
     def get_var_data(self, fn, var):
@@ -400,13 +425,22 @@ class Climate():
         self.winddir = winddir
 
         # bias correction
+        raw_temp = self.temp.copy()
         if params.climate_source == 'MERRA2':
             # do not adjust variables that were measured
             self.bias_vars = [v for v in self.params.bias_vars if v not in self.measured_vars]
 
             for var in self.bias_vars:
                 self.bias_correct_qm(var)
-        
+
+        # synthetic heatwave, on top of the bias-corrected climate
+        if params.heatwave_start:
+            self.add_heatwave(raw_temp)
+
+        # synthetic wildfire, on the UK-ESM deposition before its ratio to MERRA-2 below
+        if params.wildfire_start:
+            self.add_wildfire()
+
         # apply coefficients to adjust deposition
         if params.rgi_region == 0:
             pass  # test glacier: no adjustmenets necessary
