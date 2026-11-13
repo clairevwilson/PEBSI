@@ -9,14 +9,26 @@ intensity come from a Latin hypercube, with intensity sampled on a log scale; ru
 
 The design table gives each event's total fire-attributable BC+OC deposition as PEBSI sees it,
 after its UK-ESM to MERRA-2 ratio, in mg m-2.
+
+`python prepare_synthetic_wildfires.py anomaly` instead saves the average fire of every MERRA-2
+cell in CELLS to ANOMALY_NC, for PEBSI to add on the fly (wildfire_* in pebsi/defaults.py).
 """
 import os
+import sys
+import socket
 import numpy as np
 import pandas as pd
 import xarray as xr
 from scipy.stats import qmc
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/climate_data/'
+if 'forge' in socket.gethostname():
+    ROOT = '/home/claire/Research/climate_data/'
+else:
+    ROOT = '/ocean/projects/ees260009p/cwilson4/climate_data/'
+ANOMALY_NC = ROOT + 'UKESM/wildfire_anomaly.nc'
+# MERRA-2 cells of gulkana, lemon_creek, wolverine, kennicott and kahiltna (two cells)
+CELLS = [(63.5, -145.625), (58.5, -134.375), (60.5, -148.75), (61.5, -143.125),
+         (62.5, -151.25), (63.0, -151.25)]
 ukesm_fp = ROOT + 'UKESM/{run}/sum_{sp}_{t}deposition_kgm-2s-1.nc'
 out_fp = ROOT + 'UKESM/kennicott_fire{run:03d}/sum_{sp}_{t}deposition_kgm-2s-1.nc'
 ratio_fp = ROOT + 'ukesm_merra2_reg01_{sp}{t}.nc'
@@ -140,5 +152,36 @@ def main(design, run_fp, design_fn):
     print(f"Saved {design_fn}")
 
 
+def save_anomaly():
+    """
+    Average fire of each cell in CELLS: fire-attributable UK-ESM deposition (GFED minus no-fires)
+    of each component at the UK-ESM cell nearest it, averaged over the cell's wildfire days.
+    """
+    events = xr.open_dataset(EVENTS_FN)['wildfire']
+    lats = sorted({c[0] for c in CELLS})
+    lons = sorted({c[1] for c in CELLS})
+    ds = xr.Dataset(coords={'lat': lats, 'lon': lons})
+    for sp, t in COMPONENTS:
+        diff = open_component(BASE_RUN, sp, t) - open_component(NOFIRE_RUN, sp, t)
+        values = np.full((len(lats), len(lons)), np.nan)
+        for la, lo in CELLS:
+            fire_days = events.sel(y=la, x=lo, method='nearest').to_series()
+            fire_days = fire_days.index[fire_days.values.astype(bool)]
+            cell = diff.sel(latitude=la, longitude=lo % 360, method='nearest').to_series()
+            # the events file labels each UK-ESM day by its midnight
+            cell.index = cell.index - pd.Timedelta(hours=12)
+            values[lats.index(la), lons.index(lo)] = cell.loc[fire_days].mean()
+        ds[f'{sp}{t}'] = (('lat', 'lon'), values)
+        ds[f'{sp}{t}'].attrs = {'units': 'kg m-2 s-1'}
+    ds.attrs['description'] = (f'Average daily fire-attributable deposition ({BASE_RUN} minus '
+                               f'{NOFIRE_RUN}) over each cell\'s wildfire days, at the nearest UK-ESM cell')
+    ds.to_netcdf(ANOMALY_NC)
+    print(ds)
+    print(f"Saved {ANOMALY_NC}")
+
+
 if __name__ == '__main__':
-    main(sample_design(), out_fp, DESIGN_FN)
+    if sys.argv[1:] == ['anomaly']:
+        save_anomaly()
+    else:
+        main(sample_design(), out_fp, DESIGN_FN)
