@@ -194,6 +194,10 @@ class MassBalance():
             dates[year].append(fall_date)
         # for site in df['site_name'].unique():
         #     print(site, df.loc[df['site_name'] == site, 'ba'].count())
+        # fill a site's missing visit dates with that year's median across sites
+        for col in ('spring_date', 'fall_date'):
+            visit = pd.to_datetime(df[col], format='mixed')
+            df[col] = visit.fillna(visit.groupby(df['Year']).transform('median'))
         df = df.loc[df['site_name'] == self.site]
 
         # determine if there are sufficient seasonal data to compare summer/winter
