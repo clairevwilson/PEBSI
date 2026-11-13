@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import simulation as sim
 from pebsi.io.terrain import Terrain
-from project.parameters import host, HOST_PATHS, GLACIERS, BASE_CONFIG, translate_rgi, wind_factor_aws
+from project.parameters import host, HOST_PATHS, GLACIERS, BASE_CONFIG, translate_rgi
 
 # defaults; overridable with --start-date/--end-date/--kp-values/
 # --wind-factor-values. A daily-output start must be 00:00 and end 23:00
@@ -129,10 +129,10 @@ def parse_args():
                    help='directory this run writes to; the .zarr lands in '
                         '<output-fp>_N and the grid .npz beside it '
                         f'(default {HOST_PATHS[host]["output_fp"]!r})')
-    p.add_argument('--wind-factor-by-glacier', action='store_true',
-                   help='scale each glacier by its AWS-derived wind factor '
-                        '(project.parameters.wind_factor_aws), so the '
-                        'wind_factor grid values act as multipliers of it')
+    p.add_argument('--wind-factor-by-glacier', default=None, metavar='RESULT_YAML',
+                   help='take each glacier\'s wind_factor from an AD_optimize-style '
+                        'result yaml (glaciers, wind_factor), so the wind_factor grid '
+                        'values act as multipliers of it (e.g. --wind-factor-values 1.0)')
     p.add_argument('--set', nargs='+', default=[], metavar='KEY=VALUE',
                    help='config overrides, values parsed as YAML '
                         '(e.g. roughness_ice=20 bias_vars=[])')
@@ -254,9 +254,12 @@ def main():
     kp = np.repeat([c[0] for c in combos], n_base)
     wind_factor = np.repeat([c[1] for c in combos], n_base)
     if args.wind_factor_by_glacier:
+        with open(args.wind_factor_by_glacier) as f:
+            result = yaml.safe_load(f)
+        wf_of = dict(zip(result['glaciers'], result['wind_factor']))
         base_wf = np.ones(n_base)
         for g in glaciers:
-            base_wf[terrain.rgiid_n[:n_base] == translate_rgi[g]['6']] = wind_factor_aws[g]
+            base_wf[terrain.rgiid_n[:n_base] == translate_rgi[g]['6']] = wf_of[g]
         wind_factor = wind_factor * np.tile(base_wf, n_combos)
 
     if args.kp_by_glacier:
