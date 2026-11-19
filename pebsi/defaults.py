@@ -138,11 +138,11 @@ heatwave_intensity = 1                      # Multiple of each cell's average he
 heatwave_remove_precip = False              # Set precipitation to zero during the heatwave?
 heatwave_anomaly_fn = 'MERRA2/reg01_no_heatwaves/heatwave_anomaly.nc'  # Average heatwave by cell, relative to climate_fp (extreme_weather_analysis/prepare_no_heatwaves.py)
 
-# SYNTHETIC WILDFIRE (added to the UK-ESM deposition before its ratio to MERRA-2)
+# SYNTHETIC WILDFIRE (added to the UK-ESM or MERRA-2 deposition before its ratio)
 wildfire_start = None                       # First UTC day of the wildfire ('YYYY-MM-DD'); None for no wildfire
 wildfire_duration = 0                       # Length of the wildfire [days]
 wildfire_intensity = 1                      # Multiple of each cell's average wildfire [-]
-wildfire_anomaly_fn = 'UKESM/wildfire_anomaly.nc'  # Average wildfire by cell, relative to climate_fp (project/synthetic/prepare_synthetic_wildfires.py)
+wildfire_anomaly_fn = 'UKESM/wildfire_anomaly.nc'  # Average wildfire by cell, relative to climate_fp
 
 # ====================================================================================================================
 #                                            MODEL OPTIONS

@@ -279,12 +279,12 @@ class Climate():
 
     def add_wildfire(self):
         """
-        Adds a synthetic wildfire to the UK-ESM deposition: wildfire_intensity x each cell's
-        average fire-attributable BC and OC deposition, wet and dry, over wildfire_duration
-        UTC days from wildfire_start (UK-ESM deposition is daily over UTC days).
+        Adds a synthetic wildfire to the UK-ESM or MERRA-2 deposition: wildfire_intensity x each
+        cell's average fire-attributable BC and OC deposition, wet and dry, over wildfire_duration
+        UTC days from wildfire_start (UK-ESM deposition is daily over UTC days). wildfire_anomaly_fn
+        must match the deposition source, since it is added before that source's ratio.
         """
         params = self.params
-        assert params.deposition_data == 'UKESM', 'Synthetic wildfires are only set up for UKESM deposition'
         start = pd.Timestamp(params.wildfire_start)
         dates = pd.DatetimeIndex(self.dates)
         event = (dates >= start) & (dates < start + pd.Timedelta(days=params.wildfire_duration))
@@ -437,7 +437,7 @@ class Climate():
         if params.heatwave_start:
             self.add_heatwave(raw_temp)
 
-        # synthetic wildfire, on the UK-ESM deposition before its ratio to MERRA-2 below
+        # synthetic wildfire, on the UK-ESM or MERRA-2 deposition before its ratio below
         if params.wildfire_start:
             self.add_wildfire()
 
