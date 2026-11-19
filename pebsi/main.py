@@ -128,7 +128,7 @@ def main(
 
         # ===================== STEP 6 =====================
         #          annual checks and tracker updates
-        current_state = mb.run_annual_routines(current_state, current_forcings)
+        current_state = mb.run_annual_routines(current_state, current_forcings, point_attrs)
 
         # ===================== STEP 7 =====================
         #            mass conservation tracking

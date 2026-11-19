@@ -158,10 +158,12 @@ class MassBalanceDriver:
         )
         return state, water_squeezed_out
 
-    def run_annual_routines(self, state, forcings):
+    def run_annual_routines(self, state, forcings, point_attrs):
         """
         Checks if it is the end of summer to run
-        firn conversion routine.
+        firn conversion routine. The check is per glacier:
+        a glacier converts once any of its points meets the
+        triggers, independent of the other glaciers in the run.
         """
         params = self.params
 
@@ -171,14 +173,19 @@ class MassBalanceDriver:
         is_midnight = forcings.local_hour == 0
         # does past snowfall surpass the threshold to consider winter?
         weather_trigger = jnp.sum(state.past_snow, axis=1) >= params.new_snow_threshold
-        # put temporal triggers together
-        time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
+        # put temporal triggers together, then spread to every point of a glacier that has a triggered point
+        point_trigger = is_summer_end_window & is_midnight & weather_trigger
+        n_glaciers = point_attrs.glacier_point_counts.shape[0]
+        glacier_ready = jax.ops.segment_max(point_trigger.astype(jnp.int32), point_attrs.glacier_idx,
+                                            num_segments=n_glaciers) > 0
+        ready_pt = glacier_ready[point_attrs.glacier_idx]
+        time_to_merge = jnp.any(ready_pt & ~state.annual_firn_converted)
 
         # only run end of summer if we met all temporal conditions
         state = jax.lax.cond(
-            time_to_merge, 
-            self.end_of_summer,
-            lambda s: s, 
+            time_to_merge,
+            lambda s: self.end_of_summer(s, ready_pt),
+            lambda s: s,
             state
         )
 
@@ -1414,13 +1421,14 @@ class MassBalanceDriver:
 
         return all_updated_grainsize
 
-    def end_of_summer(self, state):
+    def end_of_summer(self, state, ready_pt):
         """
         Checks prognostically if enough snow fell in the 
         previous days to constitute the start of the 
         accumulation season. If so, snow layers over a 
         certain age are transformed to firn and cumulative 
-        refreeze is reset to 0.
+        refreeze is reset to 0. Only points on glaciers
+        that met the triggers (ready_pt) convert.
         """
         params = self.params
         N_LAYERS = state.lice.shape[1]
@@ -1428,8 +1436,8 @@ class MassBalanceDriver:
         # load state (spatial) inputs
         annual_firn_converted = state.annual_firn_converted
 
-        # points where firn has not been converted yet
-        convert_firn_pt = ~annual_firn_converted
+        # points on triggered glaciers where firn has not been converted yet
+        convert_firn_pt = ~annual_firn_converted & ready_pt
 
         # define function that will be looped to merge snow layers down
         def run_merger_loop(state):
