@@ -275,14 +275,24 @@ class MassBalance():
             summer_ends = pd.to_datetime(df_mb['fall_date'].values)
             summer_data = df_mb['ba'].values - df_mb['bw'].values + this_summer_acc
             no_summer_nans = np.where((~np.isnan(summer_starts) &
-                                        ~np.isnan(summer_ends)))[0]
+                                        ~np.isnan(summer_ends) &
+                                        (summer_ends > summer_starts)))[0]
 
             # winter periods
             winter_starts = pd.to_datetime(df_last['fall_date'].values, format='mixed')
             winter_ends = pd.to_datetime(df_mb['spring_date'].values, format='mixed')
             winter_data = df_mb['bw'].values - past_summer_acc + this_winter_abl
+            # drop winters that bw cannot describe: begun by a mid-summer "fall" visit (the
+            # rest of that summer's melt is in no column), ended by a summer "spring" visit
+            # without a recorded winter ablation, ended by a row whose dates are swapped,
+            # or spanning a gap of more than one winter
+            late_spring = (winter_ends.month > 6) & np.isnan(df_mb['winter_ablation'].values.astype(float))
+            swapped = summer_ends <= summer_starts
+            winter_days = (winter_ends - winter_starts).days.values
+            valid_winter = ((winter_starts.month >= 8) & ~late_spring & ~swapped &
+                            (winter_days > 0) & (winter_days <= 400))
             no_winter_nans = np.where((~np.isnan(winter_starts) &
-                                        ~np.isnan(winter_ends)))[0]
+                                        ~np.isnan(winter_ends) & valid_winter))[0]
 
             self.period_starts = pd.to_datetime(np.append(summer_starts[no_summer_nans],
                                             winter_starts[no_winter_nans]))
