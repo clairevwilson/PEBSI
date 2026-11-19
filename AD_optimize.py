@@ -535,12 +535,16 @@ def _crps_gaussian(mod, meas, sigma):
 
 
 def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
-                 sigma_winter=0.3, sigma_summer=0.1, index_weight=1.0):
+                 sigma_winter=0.3, sigma_summer=0.1, index_weight=1.0,
+                 fixed=None, summer_weight=1.0):
     """
     Builds the value-and-gradient of the whole run with respect to the
     per-glacier log(kp), log(wind_factor) and an (len(extras), n_glaciers)
     array of extra parameters, each stored as value / EXTRA_SCALE[name].
-    Fields not in extras keep their config values.
+    Fields not in extras keep their config values, unless fixed gives
+    them per-glacier values ({name: (n_glaciers,)}) held constant.
+    summer_weight multiplies the summer index term in the total only (0
+    keeps it as a diagnostic); the reported index_summer is unweighted by it.
 
     The full-length temporal chunks are walked by one lax.scan, carrying
     the glacier state and a set of running sums the three metrics are built
@@ -612,7 +616,7 @@ def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
     if index is None:
         index = dict(point=np.zeros(0, dtype=np.int32), meas=np.zeros(0),
                      summer=np.zeros(0, dtype=bool), glacier=np.zeros(0, dtype=np.int32),
-                     site=np.zeros(0, dtype=np.int32))
+                     site=np.zeros(0, dtype=np.int32), start_day=np.zeros(0, dtype=np.int32))
     index_point = jnp.asarray(index['point'], dtype=jnp.int32)
     index_meas = jnp.asarray(index['meas'])
     is_summer = np.asarray(index['summer'], dtype=bool)
@@ -624,6 +628,11 @@ def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
     site_summer_mean = jnp.asarray(  # (n_sites, n_periods): mean over that site's summers
         site_summer / np.maximum(site_summer.sum(axis=1, keepdims=True), 1))
     index_site = jnp.asarray(index['site'], dtype=jnp.int32)
+    # diagnostic: summers starting in 2004 (a late fall visit can end one in January), per glacier
+    start_year = pd.DatetimeIndex(model.dates[::24][index['start_day']]).year
+    summer_2004 = (glacier_hot & is_summer & (start_year == 2004)[None, :]).astype(np.float64)
+    n_2004 = jnp.asarray(summer_2004.sum(axis=1))
+    summer_2004 = jnp.asarray(summer_2004)
     is_summer = jnp.asarray(is_summer)
 
     # fields to be checked directly for non-finite values anywhere
@@ -715,14 +724,21 @@ def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
         index_crps = _crps_gaussian(index_mod, index_meas, sigma) / sigma
         index_winter = per_obs(winter_member @ index_crps, count['index_winter'])
         index_summer = per_obs(summer_member @ index_crps, count['index_summer'])
+        # diagnostics: summer anomaly MAE and mean 2004 anomaly error (model -
+        # measured, NaN where a glacier has no 2004 summer)
+        anom_err = index_mod - index_meas
+        summer_mae = per_obs(summer_member @ jnp.abs(anom_err), count['index_summer'])
+        summer_err_2004 = jnp.where(n_2004 > 0, (summer_2004 @ anom_err)
+                                    / jnp.maximum(n_2004, 1.0), jnp.nan)
 
         # index_weight multiplies both index terms (1 = one vote each, like
         # the other per-glacier terms)
         index_winter = index_weight * index_winter
         index_summer = index_weight * index_summer
-        total = jnp.sum(albedo + wet + mb + index_winter + index_summer)
+        total = jnp.sum(albedo + wet + mb + index_winter + summer_weight * index_summer)
         return total, dict(albedo=albedo, wet=wet, mb=mb, index_winter=index_winter,
-                           index_summer=index_summer, mb_mod=mb_mod, acc=acc)
+                           index_summer=index_summer, summer_mae=summer_mae,
+                           summer_err_2004=summer_err_2004, mb_mod=mb_mod, acc=acc)
 
     # static_args stays in the closure: jax.checkpoint only sees
     # JAX-traceable arguments
@@ -738,6 +754,9 @@ def make_loss_fn(model, obs, counts, stacked, tail, extras=(),
         for i, name in enumerate(extras):
             new_dynamic_args = new_dynamic_args._replace(
                 **{name: (extra[i] * EXTRA_SCALE[name])[glacier_of_point]})
+        for name, values in (fixed or {}).items():
+            new_dynamic_args = new_dynamic_args._replace(
+                **{name: jnp.asarray(values)[glacier_of_point]})
 
         def scan_chunk(carry, xs):
             state, acc = carry
@@ -1067,7 +1086,9 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
                             wet=np.asarray(metrics['wet']).tolist(),
                             mb=np.asarray(metrics['mb']).tolist(),
                             index_winter=np.asarray(metrics['index_winter']).tolist(),
-                            index_summer=np.asarray(metrics['index_summer']).tolist()))
+                            index_summer=np.asarray(metrics['index_summer']).tolist(),
+                            summer_mae=np.asarray(metrics['summer_mae']).tolist(),
+                            summer_err_2004=np.asarray(metrics['summer_err_2004']).tolist()))
         if float(total) < best['total']:
             best.update(step=step, total=float(total), kp=cur_kp, wind_factor=cur_wf,
                         **cur_extra)
@@ -1081,6 +1102,11 @@ def run_optimization_trust_region(value_and_grad, init_kp, init_wind_factor,
               f"{float(jnp.sum(metrics['index_summer'])):>10.3f}  "
               f"{np.linalg.norm(grad):>10.3e}  {progress['radius']:>10.3e}  "
               f'({time.time() - t0:.1f}s)', flush=True)
+        print('      summer MAE  ' + '  '.join(
+                  f'{g} {v:.3f}' for g, v in zip(GLACIERS, np.asarray(metrics['summer_mae'])))
+              + '\n      2004 err    ' + '  '.join(
+                  f'{g} {v:+.3f}' for g, v in zip(GLACIERS, np.asarray(metrics['summer_err_2004']))),
+              flush=True)
 
         return float(total), grad
 
@@ -1148,6 +1174,12 @@ def main():
     parser.add_argument('--fit_kappa', action='store_true',
                         help="switch to method_turbulent='OG_hybrid' and optimize og_kappa "
                              'per glacier alongside kp and wind_factor')
+    parser.add_argument('--hybrid', action='store_true',
+                        help="use method_turbulent='OG_hybrid' with og_kappa held fixed at "
+                             'the --init_from values (implied by --fit_kappa)')
+    parser.add_argument('--summer_weight', type=float, default=1.0,
+                        help='multiplier on the summer index term in the objective; '
+                             '0 keeps it as a diagnostic only')
     parser.add_argument('--fit_precgrad', action='store_true',
                         help='optimize the precipitation gradient precgrad per glacier')
     parser.add_argument('--index_mb', action='store_true',
@@ -1177,7 +1209,7 @@ def main():
 
     t0 = _tick('starting')
     overrides = dict(checkpoint_hourly=opts.checkpoint_hourly)
-    if opts.fit_kappa:
+    if opts.fit_kappa or opts.hybrid:
         overrides['method_turbulent'] = 'OG_hybrid'
     config_fn = build_config(overrides, tag=f'AD_optimize{tag}')
     print(f'Config -> {config_fn}', flush=True)
@@ -1216,10 +1248,21 @@ def main():
         print(f'  {metric:<7} observations per glacier: {c.tolist()}', flush=True)
     t0 = _tick('chunks packed', t0)
 
+    # --hybrid without --fit_kappa: og_kappa per glacier from the init file, held fixed
+    fixed = None
+    if opts.hybrid and not opts.fit_kappa:
+        with open(opts.init_from) as f:
+            start = yaml.safe_load(f)
+        fixed = dict(og_kappa=np.asarray(start['og_kappa'], dtype=float)[
+            [start['glaciers'].index(g) for g in GLACIERS]])
+        print('Fixed og_kappa: ' + '  '.join(
+            f'{g} {v:.2e}' for g, v in zip(GLACIERS, fixed['og_kappa'])), flush=True)
+
     value_and_grad, params_loss_fn = make_loss_fn(
         model, obs, counts, stacked, tail,
         extras=extras, sigma_winter=opts.sigma_winter,
-        sigma_summer=opts.sigma_summer, index_weight=opts.index_weight)
+        sigma_summer=opts.sigma_summer, index_weight=opts.index_weight,
+        fixed=fixed, summer_weight=opts.summer_weight)
 
     n_glaciers = len(GLACIERS)
     init_kp = np.full(n_glaciers, baseline['kp'])
