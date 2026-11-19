@@ -12,6 +12,8 @@ after its UK-ESM to MERRA-2 ratio, in mg m-2.
 
 `python prepare_synthetic_wildfires.py anomaly` instead saves the average fire of every MERRA-2
 cell in CELLS to ANOMALY_NC, for PEBSI to add on the fly (wildfire_* in pebsi/defaults.py).
+`python prepare_synthetic_wildfires.py anomaly merra2` does the same for MERRA-2 deposition
+(MERRA2_ANOMALY_NC), from the wildfires extreme_weather_analysis/prepare_no_wildfires.py removed.
 """
 import os
 import sys
@@ -26,6 +28,10 @@ if 'forge' in socket.gethostname():
 else:
     ROOT = '/ocean/projects/ees260009p/cwilson4/climate_data/'
 ANOMALY_NC = ROOT + 'UKESM/wildfire_anomaly.nc'
+MERRA2_ANOMALY_NC = ROOT + 'MERRA2/reg01_no_wildfires/wildfire_anomaly.nc'
+MERRA2_EVENTS_FN = ROOT + 'extreme_events_daily_merra2_wildfire_1day.nc'
+MERRA2_FP = ROOT + 'MERRA2/{d}/{v}_{d}.zarr'
+MERRA2_VARS = {'bcdry': 'BCDP002', 'bcwet': 'BCWT002', 'ocdry': 'OCDP002', 'ocwet': 'OCWT002'}
 # MERRA-2 cells of gulkana, lemon_creek, wolverine, kennicott and kahiltna (two cells)
 CELLS = [(63.5, -145.625), (58.5, -134.375), (60.5, -148.75), (61.5, -143.125),
          (62.5, -151.25), (63.0, -151.25)]
@@ -180,8 +186,41 @@ def save_anomaly():
     print(f"Saved {ANOMALY_NC}")
 
 
+def save_merra2_anomaly():
+    """
+    Average fire of each cell in CELLS for MERRA-2 deposition: fire-attributable deposition (reg01
+    minus reg01_no_wildfires) of each component, as daily means of the raw representative bin
+    (before PEBSI's ratio to total deposition), averaged over the cell's wildfire days.
+    """
+    events = xr.open_dataset(MERRA2_EVENTS_FN)['wildfire']
+    lats = sorted({c[0] for c in CELLS})
+    lons = sorted({c[1] for c in CELLS})
+    ds = xr.Dataset(coords={'lat': lats, 'lon': lons})
+    for name, vn in MERRA2_VARS.items():
+        values = np.full((len(lats), len(lons)), np.nan)
+        for la, lo in CELLS:
+            fire_days = events.sel(y=la, x=lo).to_series()
+            fire_days = fire_days.index[fire_days.values.astype(bool)]
+            diff = 0
+            for d in ['reg01', 'reg01_no_wildfires']:
+                s = xr.open_zarr(MERRA2_FP.format(d=d, v=vn), consolidated=False)[vn].sel(lat=la, lon=lo).to_series()
+                diff = s if d == 'reg01' else diff - s
+            # the events file labels UTC days by their midnight
+            daily = diff.groupby(diff.index.normalize()).mean()
+            values[lats.index(la), lons.index(lo)] = daily.loc[fire_days].mean()
+        ds[name] = (('lat', 'lon'), values)
+        ds[name].attrs = {'units': 'kg m-2 s-1'}
+    ds.attrs['description'] = ('Average daily fire-attributable MERRA-2 deposition (reg01 minus reg01_no_wildfires, '
+                               'representative bin) over each cell\'s wildfire days')
+    ds.to_netcdf(MERRA2_ANOMALY_NC)
+    print(ds)
+    print(f"Saved {MERRA2_ANOMALY_NC}")
+
+
 if __name__ == '__main__':
     if sys.argv[1:] == ['anomaly']:
         save_anomaly()
+    elif sys.argv[1:] == ['anomaly', 'merra2']:
+        save_merra2_anomaly()
     else:
         main(sample_design(), out_fp, DESIGN_FN)

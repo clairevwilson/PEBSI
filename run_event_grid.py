@@ -1,21 +1,25 @@
 """
-Synthetic heatwave or wildfire grid on the five calibration glaciers in summer 1999, at the
-parameters AD_optimize.py calibrated for each glacier, on the no-heatwave forcing.
+Synthetic heatwave or wildfire grid on the five calibration glaciers in summer YEAR, at the
+parameters and settings of the MERRA-2 deposition controlled runs (run_controlled_experiment.py with
+DEPOSITION=MERRA2), on the no-heatwave forcing. YEAR is the 2000-2025 summer most typical in
+temperature with the fewest extreme events, including fire deposition
+(extreme_weather_analysis/select_baseline_year.py).
 
 EVENT in the environment selects the experiment ('heatwave' or 'wildfire'), and RUN the run:
-  RUN=spinup  1998-04-01 to 1999-04-30, saving the checkpoint every event run starts from
+  RUN=spinup  April of the year before YEAR to the end of April YEAR, saving the checkpoint every
+              event run starts from
   RUN=0       no event
-  RUN=1-64    every event center x duration x intensity
+  RUN=1-N     every event center x duration x intensity (heatwaves 1-64, wildfires 1-96)
   RUN=65-80   heatwaves only: every center x duration at PRECIP_INTENSITY, precipitation removed
-  then        each glacier's largest real event (REAL_EVENTS), heatwaves 81-85, wildfires 65-69,
-              then its most damaging one where different (DAMAGING_EVENTS), wildfires 70-73
+  then        each glacier's largest real event (REAL_EVENTS), heatwaves 81-85, wildfires 97-101,
+              then its most damaging one where different (DAMAGING_EVENTS, none yet)
 Each event run copies the spin-up's folder into its own and resumes from it, so its
-output.zarr holds the spin-up followed by May-Sep 1999.
+output.zarr holds the spin-up followed by May-Sep YEAR.
 
 PEBSI adds the event on the fly (heatwave_* / wildfire_* in pebsi/defaults.py), from the
 average event of each MERRA-2 cell: heatwaves from extreme_weather_analysis/prepare_no_heatwaves.py
-on the GFED deposition, wildfires from project/synthetic/prepare_synthetic_wildfires.py on the
-UK-ESM no-fires deposition.
+on the MERRA-2 deposition, wildfires from `project/synthetic/prepare_synthetic_wildfires.py anomaly
+merra2` on the MERRA-2 no-wildfire deposition (reg01_no_either).
 """
 import os
 import shutil
@@ -31,58 +35,66 @@ from project.parameters import host, HOST_PATHS, BASE_CONFIG, GLACIERS, translat
 EVENT = os.environ['EVENT']
 RUN = os.environ['RUN']
 
-START_DATE = '1998-04-01'
-SPINUP_END = '1999-04-30 23:00'
-END_DATE = '1999-09-30 23:00'
+YEAR = 2021
+START_DATE = f'{YEAR - 1}-04-01'
+SPINUP_END = f'{YEAR}-04-30 23:00'
+END_DATE = f'{YEAR}-09-30 23:00'
 STORE_VARS = ['mass_balance', 'accumulation', 'melt', 'albedo', 'snowdepth']
 
-CENTERS = ['1999-05-15', '1999-06-15', '1999-07-15', '1999-08-15']
+CENTERS = [f'{YEAR}-{m:02d}-15' for m in range(5, 9)]
+MERRA2_DEP_VARS = ['bcdry', 'bcwet', 'ocdry', 'ocwet']
 if EVENT == 'heatwave':
     DURATIONS = [5, 10, 15, 20]  # days
     INTENSITIES = [0.5, 0.8, 1.1, 1.4]  # multiple of each cell's average heatwave; real events reached 0.49-1.37
     PRECIP_INTENSITY = 1.1  # intensity of the precipitation-removed runs
-    UKESM_FP = '../UKESM/dr401_GFED/'
+    # no-heatwave weather on the MERRA-2 deposition (fires kept)
+    SECONDARY = dict(secondary_climate_string='_no_heatwaves', secondary_vars=['temp', 'SWin', 'LWin', 'rh'])
 elif EVENT == 'wildfire':
-    DURATIONS = [3, 6, 10, 15]  # days; real fires at these cells lasted 3-16 days, median 3-4
-    INTENSITIES = [0.5, 1, 2, 3]  # multiple of each cell's average fire; real events reached 0.32-2.8
-    UKESM_FP = '../UKESM/dw068_nofires/'
+    DURATIONS = [3, 6, 10, 15]  # days; real MERRA-2 fires at these cells last up to 8-20 days (90% <= 3-4)
+    # multiple of each cell's average fire; 95% of real MERRA-2 events reached <= 2.2-3.2, the largest 5-16
+    INTENSITIES = [0.5, 1, 2, 3, 5, 10]
+    # no-heatwave weather on the MERRA-2 no-wildfire deposition
+    SECONDARY = dict(secondary_climate_string='_no_either',
+                     secondary_vars=['temp', 'SWin', 'LWin', 'rh'] + MERRA2_DEP_VARS,
+                     wildfire_anomaly_fn='MERRA2/reg01_no_wildfires/wildfire_anomaly.nc')
 
 if host == 'forge':
-    RESULT_FN = '/home/claire/Research/Output/AD_optimize_result.yaml'
-    OUT_DIR = f'/home/claire/Research/Output/{EVENT}_grid/'
+    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
+    OUT_DIR = f'/home/claire/Research/Output/{EVENT}_grid_merra2/'
 else:
-    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result.yaml'
-    OUT_DIR = f'/ocean/projects/ees260009p/cwilson4/Output/{EVENT}_grid/'
+    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
+    OUT_DIR = f'/ocean/projects/ees260009p/cwilson4/Output/{EVENT}_grid_merra2/'
+# og_kappa is held fixed during the fit, so it is not in the result YAML (see CALIBRATION_NOTES.md)
+OG_KAPPA_FN = os.path.join(os.path.dirname(RESULT_FN), 'og_kappa_kp2.yaml')
 SPINUP_FP = OUT_DIR + 'spinup_0/'  # PEBSI appends _0 to a new output_fp
 
 
-# each glacier's largest real event of 1997-2015 at the MERRA-2 cell nearest its centroid, by duration x
-# intensity (heatwaves) or fire-attributable deposition (wildfires), as (start month-day, duration, intensity);
-# heatwaves: gulkana 2004, lemon_creek 2015, wolverine 1997, kennicott 2004, kahiltna 2004;
-# wildfires: gulkana 2004, lemon_creek 2005, wolverine 2010, kennicott 2009, kahiltna 2015
+# each glacier's largest real event of 2000-2025 at the MERRA-2 cell nearest its centroid, by duration x
+# intensity (heatwaves) or fire-attributable MERRA-2 deposition (wildfires, runs of the 1-day wildfire mask),
+# as (start month-day, duration, intensity);
+# heatwaves: gulkana 2004, lemon_creek 2019, wolverine 2019, kennicott 2004, kahiltna 2004;
+# wildfires: gulkana 2004, lemon_creek 2004, wolverine 2004, kennicott 2016, kahiltna 2022
 REAL_EVENTS = {
-    'heatwave': {'gulkana': ('08-13', 12, 1.21), 'lemon_creek': ('05-12', 12, 1.15),
-                 'wolverine': ('06-21', 10, 1.32), 'kennicott': ('06-17', 17, 1.29),
+    'heatwave': {'gulkana': ('08-13', 12, 1.22), 'lemon_creek': ('06-25', 16, 1.18),
+                 'wolverine': ('06-23', 16, 1.62), 'kennicott': ('06-17', 17, 1.29),
                  'kahiltna': ('08-14', 12, 1.37)},
-    'wildfire': {'gulkana': ('08-15', 16, 2.10), 'lemon_creek': ('08-14', 5, 3.37),
-                 'wolverine': ('07-24', 8, 2.56), 'kennicott': ('07-05', 16, 1.59),
-                 'kahiltna': ('07-18', 15, 2.73)},
+    'wildfire': {'gulkana': ('08-16', 20, 2.09), 'lemon_creek': ('06-26', 6, 5.17),
+                 'wolverine': ('06-27', 8, 6.55), 'kennicott': ('07-17', 9, 6.65),
+                 'kahiltna': ('07-09', 5, 9.65)},
 }[EVENT]
 
-# each glacier's real event of 1997-2015 with the largest effect estimated from the grid (deposition x the
-# grid's effect per mg m-2 at the event's midpoint date), where that differs from REAL_EVENTS (wildfires
-# only: gulkana 2004, kahiltna 2015, wolverine 2003, lemon_creek 2004)
+# each glacier's real event with the largest effect estimated from the grid (deposition x the grid's effect
+# per mg m-2 at the event's midpoint date), where that differs from REAL_EVENTS; to be filled in from this grid
 DAMAGING_EVENTS = {
     'heatwave': {},
-    'wildfire': {'gulkana': ('06-26', 11, 2.36), 'kahiltna': ('06-16', 11, 3.62),
-                 'wolverine': ('05-08', 5, 0.94), 'lemon_creek': ('07-07', 7, 1.45)},
+    'wildfire': {},
 }[EVENT]
 
 
 def design():
     """
     (center, duration, intensity, remove_precip) of each run; run 0 has no event. After the grid
-    come the real events of REAL_EVENTS, then of DAMAGING_EVENTS, inserted into 1999 on the same
+    come the real events of REAL_EVENTS, then of DAMAGING_EVENTS, inserted into YEAR on the same
     dates, in their order.
     """
     runs = [(None, 0, 0, False)]
@@ -90,13 +102,14 @@ def design():
     if EVENT == 'heatwave':
         runs += [(c, d, PRECIP_INTENSITY, True) for c, d in itertools.product(CENTERS, DURATIONS)]
     for start, d, i in list(REAL_EVENTS.values()) + list(DAMAGING_EVENTS.values()):
-        center = str((pd.Timestamp(f'1999-{start}') + pd.Timedelta(days=d // 2)).date())
+        center = str((pd.Timestamp(f'{YEAR}-{start}') + pd.Timedelta(days=d // 2)).date())
         runs.append((center, d, i, False))
     return runs
 
 
-def build_config(config_fn, end_date, output_fp, kp=None, wind_factor=None, event=None):
-    """Writes the run's config: calibrated parameters, no-heatwave forcing and the event."""
+def build_config(config_fn, end_date, output_fp, params=None, event=None):
+    """Writes the run's config: calibrated parameters (kp, wind_factor, precgrad, og_kappa per point),
+    no-heatwave forcing, MERRA-2 deposition and the event."""
     configs = dict(BASE_CONFIG)
     configs.update(
         rgi_ids=[translate_rgi[g]['6'] for g in GLACIERS],
@@ -108,15 +121,17 @@ def build_config(config_fn, end_date, output_fp, kp=None, wind_factor=None, even
         store_data=True,
         debug=True,
         progress_bar=False,
-        kp=baseline['kp'] if kp is None else [float(v) for v in kp],
-        wind_factor=baseline['wind_factor'] if wind_factor is None else [float(v) for v in wind_factor],
-        deposition_data='UKESM',
-        ukesm_fp=UKESM_FP,
-        secondary_climate_string='_no_heatwaves',
-        secondary_vars=['temp', 'SWin', 'LWin', 'rh'],
+        kp=baseline['kp'],
+        wind_factor=baseline['wind_factor'],
+        deposition_data=None,
+        method_turbulent='OG_hybrid',
+        **SECONDARY,
         output_fp=output_fp,
         **{k: v for k, v in HOST_PATHS[host].items() if k != 'output_fp'},
     )
+    if params is not None:
+        for k, v in zip(['kp', 'wind_factor', 'precgrad', 'og_kappa'], params):
+            configs[k] = [float(x) for x in v]
     if event is not None and event[1] > 0:
         center, duration, intensity, remove_precip = event
         start = str((pd.Timestamp(center) - pd.Timedelta(days=duration // 2)).date())
@@ -130,15 +145,19 @@ def build_config(config_fn, end_date, output_fp, kp=None, wind_factor=None, even
 
 
 def calibrated_params(config_fn):
-    """Per-point (kp, wind_factor) from RESULT_FN, on the mesh config_fn builds."""
+    """Per-point (kp, wind_factor, precgrad, og_kappa) from RESULT_FN and OG_KAPPA_FN, on the mesh
+    config_fn builds."""
     with open(RESULT_FN) as f:
         result = yaml.safe_load(f)
-    best = {translate_rgi[g]['6']: (kp, wf) for g, kp, wf
-            in zip(result['glaciers'], result['kp'], result['wind_factor'])}
+    with open(OG_KAPPA_FN) as f:
+        og = yaml.safe_load(f)
+    og = dict(zip(og['glaciers'], og['og_kappa']))
+    best = {translate_rgi[g]['6']: (kp, wf, pg, og[g]) for g, kp, wf, pg
+            in zip(result['glaciers'], result['kp'], result['wind_factor'], result['precgrad'])}
     args = sim.get_args(parse=False).parse_args([])
     args.config_fn = config_fn
     rgiid_n = np.asarray(Terrain(sim.PEBSI(args).params).rgiid_n, dtype=str)
-    return [best[g][0] for g in rgiid_n], [best[g][1] for g in rgiid_n]
+    return [[best[g][i] for g in rgiid_n] for i in range(4)]
 
 
 def main():
@@ -155,8 +174,7 @@ def main():
         config_fn = os.path.join(run_fp, 'config.yaml')
 
     build_config(config_fn, end_date, run_fp)
-    kp, wind_factor = calibrated_params(config_fn)
-    build_config(config_fn, end_date, run_fp, kp, wind_factor, event)
+    build_config(config_fn, end_date, run_fp, calibrated_params(config_fn), event)
     print(f'{EVENT} run {RUN}  event {event}', flush=True)
 
     args = sim.get_args(parse=False).parse_args([])

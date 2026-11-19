@@ -24,8 +24,8 @@ from project.parameters import (host, HOST_PATHS, BASE_CONFIG, GLACIERS,
 sim_type = os.environ['SIM_TYPE']
 # turbulent flux scheme: 'bulk' (default) or 'OG' (katabatic, see pebsi/defaults.py);
 # non-default schemes get their own output folder so they don't mix with the bulk runs
-turb_method = os.environ.get('TURB_METHOD', 'bulk')
-run_name = sim_type if turb_method == 'bulk' else f'{sim_type}_{turb_method}'
+turb_method = os.environ.get('TURB_METHOD', 'OG_hybrid')
+run_name = sim_type if turb_method == 'OG_hybrid' else f'{sim_type}_{turb_method}'
 # optional override of the OG katabatic constant (default in pebsi/defaults.py)
 og_kappa = os.environ.get('OG_KAPPA')
 if og_kappa is not None:
@@ -35,34 +35,49 @@ if og_kappa is not None:
 wind_scale = os.environ.get('WIND_SCALE')
 if wind_scale is not None:
     run_name += f'_ws{wind_scale}'
+# 'UKESM' (default) or 'MERRA2': MERRA-2 BC+OC deposition, with the no-fire runs reading the
+# wildfire-removed copy in MERRA2/reg01_no_wildfires (extreme_weather_analysis/prepare_no_wildfires.py)
+deposition = os.environ.get('DEPOSITION', 'UKESM')
+MERRA2_DEP_VARS = ['bcdry', 'bcwet', 'ocdry', 'ocwet']
+if deposition == 'MERRA2':
+    run_name += '_merra2'
+    # the SSP runs only have UKESM future deposition
+    assert sim_type not in ('ssp245_mpi', 'ssp245_gfdl'), \
+        f'DEPOSITION=MERRA2 is not set up for {sim_type}'
 
-START_DATE = '1997-04-01'
-END_DATE = '2015-09-01'
+START_DATE = '2000-01-01'
+END_DATE = '2025-09-30'
 STORE_VARS = ['MB', 'EB', 'climate']
 if host == 'forge':
-    # calibration the bridges controlled runs (base_0 etc.) used, recovered from their configs
-    RESULT_FN = '/home/claire/Research/Output/controlled/AD_optimize_result_used_by_base_0.yaml'
+    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
     output_fp = f'/home/claire/Research/Output/controlled/{run_name}/'
 else:
-    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result.yaml'
+    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
     output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{run_name}/'
 out_config_fn = f'controlled_{run_name}.yaml'
 
 rgi_ids = [translate_rgi[g]['6'] for g in GLACIERS]
 
 
+# og_kappa is held fixed during the fit, so it is not in the result YAML (see CALIBRATION_NOTES.md)
+OG_KAPPA_FN = os.path.join(os.path.dirname(RESULT_FN), 'og_kappa_kp2.yaml')
+
+
 def get_best_params():
     """
-    Reads the per-glacier (kp, wind_factor) from RESULT_FN,
-    as a dict keyed by RGI ID.
+    Reads the per-glacier (kp, wind_factor, precgrad) from RESULT_FN and og_kappa from
+    OG_KAPPA_FN, as a dict keyed by RGI ID.
     """
     with open(RESULT_FN) as f:
         result = yaml.safe_load(f)
-    return {translate_rgi[g]['6']: (kp, wf) for g, kp, wf
-            in zip(result['glaciers'], result['kp'], result['wind_factor'])}
+    with open(OG_KAPPA_FN) as f:
+        og_result = yaml.safe_load(f)
+    og_by_glacier = dict(zip(og_result['glaciers'], og_result['og_kappa']))
+    return {translate_rgi[g]['6']: (kp, wf, pg, og_by_glacier[g]) for g, kp, wf, pg
+            in zip(result['glaciers'], result['kp'], result['wind_factor'], result['precgrad'])}
 
 
-def build_config(kp=None, wind_factor=None):
+def build_config(kp=None, wind_factor=None, precgrad=None, og=None):
     """
     Writes the run's config: AD_optimize's configuration without the
     calibration, plus the UKESM deposition and this run's climate.
@@ -82,7 +97,7 @@ def build_config(kp=None, wind_factor=None):
         progress_bar=False,
         kp=baseline['kp'],
         wind_factor=baseline['wind_factor'],
-        deposition_data='UKESM',
+        deposition_data=None if deposition == 'MERRA2' else 'UKESM',
         method_turbulent=turb_method,
         **({'og_kappa': float(og_kappa)} if og_kappa is not None else {}),
         output_fp=output_fp,
@@ -117,9 +132,21 @@ def build_config(kp=None, wind_factor=None):
     else:
         raise ValueError(f'unknown sim_type {sim_type!r}')
 
+    # MERRA-2 deposition: no_fires reads BC/OC from the wildfire-removed folder; no_either reads
+    # its heatwave and deposition variables from reg01_no_either (extreme_weather_analysis/prepare_no_either.py)
+    if deposition == 'MERRA2' and sim_type == 'no_fires':
+        configs['secondary_climate_string'] = '_no_wildfires'
+        configs['secondary_vars'] = MERRA2_DEP_VARS
+    if deposition == 'MERRA2' and sim_type == 'no_either':
+        configs['secondary_climate_string'] = '_no_either'
+        configs['secondary_vars'] = ['temp', 'SWin', 'LWin', 'rh'] + MERRA2_DEP_VARS
+
     if kp is not None:
         configs['kp'] = [float(v) for v in kp]
         configs['wind_factor'] = [float(v) for v in wind_factor]
+        configs['precgrad'] = [float(v) for v in precgrad]
+        if og_kappa is None:  # OG_KAPPA, if set, overrides the calibrated values
+            configs['og_kappa'] = [float(v) for v in og]
 
     with open(out_config_fn, 'w') as f:
         yaml.dump(configs, f, sort_keys=False)
@@ -139,6 +166,8 @@ def main():
     rgiid_n = np.asarray(terrain.rgiid_n, dtype=str)
     kp = np.array([best[gid][0] for gid in rgiid_n])
     wind_factor = np.array([best[gid][1] for gid in rgiid_n])
+    precgrad = np.array([best[gid][2] for gid in rgiid_n])
+    og = np.array([best[gid][3] for gid in rgiid_n])
     if wind_scale is not None:
         wind_factor = wind_factor * float(wind_scale)
 
@@ -150,12 +179,12 @@ def main():
     for g in GLACIERS:
         gid = translate_rgi[g]['6']
         n = int((rgiid_n == gid).sum())
-        kp_g, wf_g = best[gid]
+        kp_g, wf_g = best[gid][:2]
         print(f'  {g:<12} {n:>5} points  kp={kp_g:.2f} '
               f'wind_factor={wf_g:.2f}', flush=True)
     print(f'output_fp {output_fp}', flush=True)
 
-    build_config(kp=kp, wind_factor=wind_factor)
+    build_config(kp=kp, wind_factor=wind_factor, precgrad=precgrad, og=og)
     args = sim.get_args(parse=False).parse_args([])
     args.config_fn = out_config_fn
 
