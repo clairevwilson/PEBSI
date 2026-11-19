@@ -39,7 +39,7 @@ YEAR = 2021
 START_DATE = f'{YEAR - 1}-04-01'
 SPINUP_END = f'{YEAR}-04-30 23:00'
 END_DATE = f'{YEAR}-09-30 23:00'
-STORE_VARS = ['mass_balance', 'accumulation', 'melt', 'albedo', 'snowdepth']
+STORE_VARS = ['mass_balance', 'accumulation', 'melt', 'albedo', 'snowdepth', 'surftype']  # surftype: 0 snow, 1 firn, 2 ice
 
 CENTERS = [f'{YEAR}-{m:02d}-15' for m in range(5, 9)]
 MERRA2_DEP_VARS = ['bcdry', 'bcwet', 'ocdry', 'ocwet']

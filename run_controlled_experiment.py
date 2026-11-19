@@ -47,7 +47,7 @@ if deposition == 'MERRA2':
 
 START_DATE = '2000-01-01'
 END_DATE = '2025-09-30'
-STORE_VARS = ['MB', 'EB', 'climate']
+STORE_VARS = ['MB', 'EB', 'climate', 'surftype']  # surftype: 0 snow, 1 firn, 2 ice
 if host == 'forge':
     RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
     output_fp = f'/home/claire/Research/Output/controlled/{run_name}/'
