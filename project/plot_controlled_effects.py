@@ -5,7 +5,7 @@ elevation profiles, energy-balance attribution, seasonal timing,
 the effects as a share of observed loss, and a single-summer case study.
 
 Reads per_glacier.nc and per_point_annual.nc written by
-shop/postprocessing/aggregate_per_glacier.py and saves PNGs into base_fp.
+shop/postprocessing/aggregate_per_glacier.py and saves PNGs into base_fp/figs/.
 """
 import sys
 
@@ -18,12 +18,14 @@ import xarray as xr
 sys.path.append('/jet/home/cwilson4/PEBSI/')
 from glacierwide_loss import MassBalance, translate_rgi
 
-base_fp = '/ocean/projects/ees260009p/cwilson4/Output/controlled/'
+base_fp = '/home/claire/Research/Output/controlled/'
+fig_fp = base_fp + 'figs/'
 
 # Inputs for the figures below. The effect of a forcing is Base minus the run with
 # that forcing removed, so a negative effect means the forcing caused extra loss.
 i = 0
-runs = {'Base': 'base', 'No fires': 'no_fires', 'No heatwaves': 'no_heatwaves', 'Neither': 'no_either'}
+runs = {'Base': 'base_merra2', 'No fires': 'no_fires_merra2', 'No heatwaves': 'no_heatwaves_merra2',
+        'Neither': 'no_either_merra2'}
 glac = {sim: xr.open_dataset(base_fp + f'{run}_{i}/per_glacier.nc').load() for sim, run in runs.items()}
 pts = {sim: xr.open_dataset(base_fp + f'{run}_{i}/per_point_annual.nc').load() for sim, run in runs.items()}
 glaciers = glac['Base'].glacier.values
@@ -31,8 +33,8 @@ glaciers = glac['Base'].glacier.values
 effects = {'Wildfires': 'No fires', 'Heatwaves': 'No heatwaves', 'Both': 'Neither'}
 effect_colors = {'Wildfires': 'r', 'Heatwaves': 'b', 'Both': 'gray', 'Interaction': 'k'}
 
-# the run starts 1997-04-01, so WY1997 is missing its winter
-first_full_wy = 1998
+# the run starts 2000-01-01, so WY2000 is missing Oct-Dec 1999
+first_full_wy = 2001
 
 def effect(dsets, name, var='mass_balance'):
     if name == 'Interaction':
@@ -85,7 +87,7 @@ secondary.axis('off')
 secondary.legend(loc='center')
 
 fig.supylabel('Cumulative change in mass balance (m w.e.)')
-plt.savefig(base_fp + 'cumulative_divergence.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'cumulative_divergence.png', dpi=300, bbox_inches='tight')
 plt.close()
 
 # Synergy: does removing both forcings do more than the sum of removing each one?
@@ -118,7 +120,7 @@ def effect_bars(values, ylabel, fn, sigma=None):
         ax.axhline(0, linewidth=0.5, c='k')
         ax.set_ylabel(ylabel)
         fig.legend(loc='outside upper center', ncol=len(names) + (sigma is not None), fontsize=11, frameon=False)
-        plt.savefig(base_fp + fn.replace('.png', f'_{stage}.png'), dpi=300, bbox_inches='tight')
+        plt.savefig(fig_fp + fn.replace('.png', f'_{stage}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
 rates = {glacier: {name: float(water_years(effect(glac, name).sel(glacier=glacier)).mean()) * 100 for name in names}
@@ -157,9 +159,9 @@ for stage in ['fires', 'fires_heatwaves']:
     ax.set_xticklabels([fmt_name(g) for g in glaciers])
     ax.axhline(0, linewidth=0.5, c='k')
     ax.set_ylim(1.05 * min(t['Base'] for t in totals.values()), 0)
-    ax.set_ylabel('Mass balance, 1997$-$2015 (m w.e.)')
+    ax.set_ylabel('Mass balance, 2000$-$2025 (m w.e.)')
     fig.legend(loc='outside upper center', ncol=len(stack_names) + 1, fontsize=11, frameon=False)
-    plt.savefig(base_fp + f'familiar_units_{stage}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(fig_fp + f'familiar_units_{stage}.png', dpi=300, bbox_inches='tight')
     plt.close()
 
 shares = {name: {glacier: parts[glacier][name] / totals[glacier]['Base'] * 100 for glacier in glaciers}
@@ -235,7 +237,7 @@ secondary.legend(loc='center')
 
 fig.supxlabel(r'Change in mass balance (cm w.e. a$^{-1}$)')
 fig.supylabel('Elevation (m a.s.l.)')
-plt.savefig(base_fp + 'elevation_profile.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'elevation_profile.png', dpi=300, bbox_inches='tight')
 plt.close()
 
 # Energy-balance attribution: mean change in each surface flux over May-Sep
@@ -264,7 +266,7 @@ secondary.axis('off')
 secondary.legend(loc='center')
 
 fig.supylabel(r'May$-$Sep mean flux change (W m$^{-2}$)')
-plt.savefig(base_fp + 'energy_balance_attribution.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'energy_balance_attribution.png', dpi=300, bbox_inches='tight')
 plt.close()
 
 # Seasonal timing: day-of-year climatology of the daily effect on mass balance and albedo
@@ -293,7 +295,7 @@ axes[0, 0].set_ylabel(r'$\Delta$ mass balance' + '\n' + r'(mm w.e. d$^{-1}$)')
 axes[1, 0].set_ylabel(r'$\Delta$ albedo')
 axes[0, 0].legend(fontsize=7)
 fig.supxlabel('Day of year')
-plt.savefig(base_fp + 'seasonal_timing.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'seasonal_timing.png', dpi=300, bbox_inches='tight')
 plt.close()
 
 # Case study of one fire summer at one glacier
@@ -328,5 +330,152 @@ axes[3].axhline(0, linewidth=0.5, c='k')
 axes[0].legend(fontsize=8)
 axes[3].legend(fontsize=8)
 axes[0].set_title(f'{fmt_name(case_glacier)} {case_year}', fontsize=10)
-plt.savefig(base_fp + f'case_study_{case_glacier}_{case_year}.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + f'case_study_{case_glacier}_{case_year}.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# Extra mass loss per water year, stacked by forcing (Wildfires, Heatwaves, Both). WY2004 and WY2019
+# get their own colors. Other years are gray, unless they are most of a glacier's total, in which
+# case the largest of them get colors too (up to MAX_EXTRA_YEARS).
+from matplotlib.patches import Patch
+
+SPECIAL_YEARS = [2004, 2019]
+MAX_OTHER_SHARE = 0.5  # gray above this share of the Both total gets extra colors
+MAX_EXTRA_YEARS = 6
+# the shared palette (shop/plotting_fxns.py all_colors) without its gray, which 'Other years' uses
+year_colors = ['#63c4c7', '#fcc02e']  # fixed to 2004 and 2019
+extra_colors = ['#4D559C', '#60C252', '#BF1F6A', '#F77808', '#298282', '#FF89B0']
+top_names = ['Wildfires', 'Heatwaves', 'Both']
+
+fig, axes_2d = plt.subplots(2, 3, figsize=(7.5, 6), layout='constrained', sharey=True)
+axes = axes_2d.flatten()[:-1]
+legend_ax = axes_2d.flatten()[-1]
+
+for ax, glacier in zip(axes, glaciers):
+    extra = {name: -water_years(effect(glac, name).sel(glacier=glacier)) * 100 for name in top_names}
+    both = extra['Both']
+    total = float(both.sum())
+    # other years, largest first, get their own colors until gray is no longer most of the total
+    other = both.water_year.values[np.argsort(both.values)[::-1]]
+    other = [int(y) for y in other if y not in SPECIAL_YEARS]
+    extras = []
+    while (total - float(both.sel(water_year=SPECIAL_YEARS + extras).sum())) / total > MAX_OTHER_SHARE \
+            and other and len(extras) < MAX_EXTRA_YEARS:
+        extras.append(other.pop(0))
+    named = SPECIAL_YEARS + extras
+    print(f'{glacier:<12} named years {named}, gray {100 * (1 - float(both.sel(water_year=named).sum()) / total):.0f}% of Both')
+
+    for j, name in enumerate(top_names):
+        v = extra[name]
+        heights = [float(v.sel(water_year=y)) for y in named]
+        heights.append(float(v.sum()) - sum(heights))
+        colors = year_colors + extra_colors[:len(extras)] + ['0.85']
+        bottom = 0
+        for k, (h, c) in enumerate(zip(heights, colors)):
+            ax.bar(j, h, 0.6, bottom=bottom, facecolor=c, edgecolor='k', linewidth=0.5)
+            if name == 'Both' and len(SPECIAL_YEARS) <= k < len(named):
+                ax.text(j, bottom + h / 2, str(named[k]), ha='center', va='center', fontsize=9,
+                        color='w' if c == '#4D559C' else 'k')
+            bottom += h
+    ax.set_xticks(range(len(top_names)))
+    ax.set_xticklabels(top_names)
+    ax.axhline(0, linewidth=0.5, c='k')
+    ax.set_title(fmt_name(glacier), fontsize=9)
+
+handles = [Patch(facecolor=c, edgecolor='k', linewidth=0.5, label=str(y))
+           for c, y in zip(year_colors, SPECIAL_YEARS)]
+handles.append(Patch(facecolor='0.85', edgecolor='k', linewidth=0.5, label='Other years'))
+legend_ax.legend(handles=handles, loc='center', fontsize=9, frameon=False)
+legend_ax.axis('off')
+
+fig.supylabel('Extra mass loss per water year (cm w.e.)')
+plt.savefig(fig_fp + 'top_loss_years.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# Heatmap of extra loss by water year: rows are glaciers, panels are forcings stacked vertically.
+# Color is each year's share of that glacier's total extra loss from that forcing.
+heat_cmap = mpl.colormaps['magma']
+years = water_years(effect(glac, 'Both')).water_year.values
+shares, totals = {}, {}
+for name in top_names:
+    loss = np.array([-water_years(effect(glac, name).sel(glacier=g)).values * 100 for g in glaciers])
+    if (loss < 0).any():
+        print(f'{name}: some years are net gains; they show as zero share')
+    totals[name] = loss.sum(axis=1)
+    shares[name] = np.clip(loss / totals[name][:, None], 0, None)
+
+fig, axes = plt.subplots(3, 1, figsize=(7.5, 4.2), layout='constrained', sharex=True)
+fig.get_layout_engine().set(hspace=0.02)
+vmax = max(s.max() for s in shares.values())
+for ax, name in zip(axes, top_names):
+    im = ax.imshow(shares[name], cmap=heat_cmap, vmin=0, vmax=vmax, aspect='auto', interpolation='nearest')
+    ax.set_yticks(range(len(glaciers)))
+    ax.set_yticklabels([fmt_name(g) for g in glaciers], fontsize=9)
+    ax.set_title(name, fontsize=9, loc='left')
+axes[-1].set_xticks(range(0, len(years), 4))
+axes[-1].set_xticklabels(years[::4], fontsize=9)
+fig.colorbar(im, ax=axes, label="Share of glacier's total extra loss (per forcing)", shrink=0.9)
+plt.savefig(fig_fp + 'loss_year_heatmap.png', dpi=300, bbox_inches='tight')
+plt.close()
+for name in top_names:
+    print(f'{name:<10} totals (cm w.e.): ' + ', '.join(f'{g} {t:.0f}' for g, t in zip(glaciers, totals[name])))
+
+# 3D version of the heatmap for Both: each bar's height is that year's extra loss (cm w.e.) and its color
+# is the same share as the heatmap. Glaciers run front to back by total extra loss, so the largest total
+# sits at the back and the rest step down toward the front.
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+order = np.argsort(totals['Both'])
+n_years = len(years)
+
+# year bars are full width so neighbouring years touch
+fig = plt.figure(figsize=(7.5, 6))
+ax = fig.add_subplot(1, 1, 1, projection='3d')
+ax.computed_zorder = False  # keep the draw order below instead of matplotlib's depth sort
+zmax_both = (shares['Both'] * totals['Both'][:, None]).max()
+# drawn year by year, and within each year from Kennicott (back) to Lemon Creek (front), so nearer
+# bars draw over farther ones; years under 1 cm w.e. are skipped
+for yr in range(n_years):
+    for yi, gi in reversed(list(enumerate(order))):
+        height = shares['Both'][gi][yr] * totals['Both'][gi]
+        if height >= 1.0:
+            # bar3d draws from its corner, so offset by half a bar to center it on the tick
+            ax.bar3d(yr - 0.5, yi - 0.25, 0, 1.0, 0.5, height, color=heat_cmap(shares['Both'][gi][yr] / vmax), shade=True)
+ax.set_zlim(0, zmax_both)
+ax.set_yticks(range(len(order)))
+ax.set_zticks([0, 25,50, 75,100,125, 150])
+ax.tick_params(axis='z', pad=0)
+ax.set_yticklabels([])
+for yi, gi in enumerate(order):  # glacier names drawn at the end of each row
+    # the year-axis direction is right and down on screen, so push along it and lift in z to cancel the drop
+    ax.text(n_years + 3, yi, 1, fmt_name(glaciers[gi]), fontsize=9, ha='left', va='center')
+ax.set_xticks(range(0, n_years, 4))
+ax.set_xticklabels(years[::4], fontsize=9)
+ax.set_zlabel('cm w.e.', fontsize=9, labelpad=4)
+ax.tick_params(labelsize=9)
+ax.view_init(elev=25, azim=-60)
+ax.set_box_aspect((2.4, 1.6, 1.0))
+sm = mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, vmax), cmap=heat_cmap)
+sm.set_array([])
+cax = fig.add_axes([0.94, 0.3, 0.02, 0.4])
+fig.colorbar(sm, cax=cax, label="Share of glacier's total extra loss")
+plt.savefig(fig_fp + 'loss_year_3d_both.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# Both forcing as flat bars: one row per glacier (largest on top). Height is each year's share of
+# that glacier's total extra loss; color is the year's extra loss (cm w.e.) on the same magma scale.
+fig, axes = plt.subplots(len(glaciers), 1, figsize=(6, 6), layout='constrained', sharex=True, sharey=True)
+for ax, gi in zip(axes, order[::-1]):
+    share = shares['Both'][gi]
+    magnitude = share * totals['Both'][gi]
+    ax.bar(np.arange(n_years), share, width=1.0, color=mpl.colormaps['magma'](magnitude / zmax_both),
+           edgecolor='none')
+    ax.set_title(fmt_name(glaciers[gi]), loc='left', fontsize=9)
+    ax.tick_params(labelsize=9)
+axes[-1].set_xticks(range(0, n_years, 4))
+axes[-1].set_xticklabels(years[::4], fontsize=9)
+sm = mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, zmax_both), cmap=mpl.colormaps['magma'])
+sm.set_array([])
+fig.colorbar(sm, ax=axes, label='Extra mass loss (cm w.e.)')
+fig.supylabel("Share of glacier's total extra loss")
+plt.savefig(fig_fp + 'loss_year_bars_both.png', dpi=300, bbox_inches='tight')
 plt.close()

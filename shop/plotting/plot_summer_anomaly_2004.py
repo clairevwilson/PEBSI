@@ -20,7 +20,7 @@ sys.path.insert(0, PEBSI_FP)
 
 from project.data_handling import MassBalance, translate_rgi
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/AD_result_1/'
+ROOT = sys.argv[1] if len(sys.argv) > 1 else '/ocean/projects/ees260009p/cwilson4/Output/AD_result_1/'
 FIG_FN = ROOT + 'summer_anomaly_2004.png'
 YEAR = 2004
 TIMESERIES_SITES = [('gulkana', 'B'), ('wolverine', 'B'), ('kahiltna', 'K17b')]

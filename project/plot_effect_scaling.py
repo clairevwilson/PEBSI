@@ -36,8 +36,8 @@ EVENTS_FN = CLIMATE + 'extreme_events_daily_ukesm.nc'
 T2M_FN = CLIMATE + 'MERRA2/reg01/T2M_reg01.zarr'
 T2M_NOHW_FN = CLIMATE + 'MERRA2/reg01_no_heatwaves/T2M_reg01_no_heatwaves.zarr'
 PRECIP_FN = CLIMATE + 'MERRA2/reg01/PRECTOTCORR_reg01.zarr'
-FIG_FN = OUT + 'controlled/effect_scaling.png'
-TIMING_FIG_FN = OUT + 'controlled/effect_scaling_timing.png'
+FIG_FN = OUT + 'controlled/figs/effect_scaling.png'
+TIMING_FIG_FN = OUT + 'controlled/figs/effect_scaling_timing.png'
 
 KENNICOTT = (61.5, -143.125)
 UTC_OFFSET = pd.Timedelta(hours=8)

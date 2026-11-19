@@ -21,7 +21,7 @@ sys.path.insert(0, PEBSI_FP)
 from project.data_handling import MassBalance, translate_rgi
 
 CORE = '../../../'
-ROOT = CORE + 'Output/controlled/base_OG_0/'
+ROOT = sys.argv[1] if len(sys.argv) > 1 else CORE + 'Output/controlled/base_OG_0/'
 BEST_ZARR = ROOT + 'output.zarr'
 FIG_FN = ROOT + 'index_site_seasonal_1to1.png'
 

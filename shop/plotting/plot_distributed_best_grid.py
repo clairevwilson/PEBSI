@@ -12,6 +12,7 @@ import os
 import sys
 import warnings
 import numpy as np
+import yaml
 import xarray as xr
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -26,25 +27,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from project.glacierwide_loss import *
 
-ROOT = '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_2/'
-OUT_ZARR = ROOT + 'best.zarr'
+ROOT = sys.argv[1] if len(sys.argv) > 1 else '/ocean/projects/ees260009p/cwilson4/Output/loss_surface_2/'
+# 'loss' maps the calibration terms (CRPS / sigma, Brier); 'mae' maps plain absolute errors
+METRIC = sys.argv[2] if len(sys.argv) > 2 else 'loss'
+# a forward run (run_AD_result.py) already holds one combination per glacier, so its output.zarr stands in for best.zarr
+OUT_ZARR = ROOT + ('best.zarr' if os.path.exists(ROOT + 'best.zarr') else 'output.zarr')
 LOSS_FN = ROOT + 'loss_surface_losses.npz'
-rgi_fp = '/ocean/projects/ees260009p/cwilson4/RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
+rgi_fp = base_fp + 'RGI/rgi60/01_rgi60_Alaska/01_rgi60_Alaska.shp'
 FIG_DIR = ROOT
 
 # ===================== LOAD DATA =====================
-grids = np.load(LOSS_FN, allow_pickle=True)
-glaciers = [str(g) for g in grids['glaciers']]
+if os.path.exists(LOSS_FN):
+    glaciers = [str(g) for g in np.load(LOSS_FN, allow_pickle=True)['glaciers']]
+else:
+    from project.parameters import GLACIERS
+    glaciers = list(GLACIERS)
 
 ds_all = xr.open_zarr(OUT_ZARR, consolidated=False)
 
 gdf = gpd.read_file(rgi_fp)
-
-
-def bce(mod, meas, eps=1e-3):
-    p = np.clip(np.asarray(mod, dtype=float), eps, 1 - eps)
-    y = np.asarray(meas, dtype=float)
-    return -(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
 def weighted_pts(terms):
@@ -145,17 +146,19 @@ def plot_glacier(glacier):
     mb = MassBalance(glacier, dates=(start, end))
     wet = Wet(glacier)
 
-    ab.get_model_albedo(ds)
-    ab.get_deltas()
+    ab.get_model_albedo(ds)  # raw albedo, as calibrated
     mb.get_model_mb(ds)
     wet.get_model_wet(ds)
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
-        albedo_residual = ab.mod - ab.meas
-        albedo_pts = weighted_pts(0.5 * np.log(2 * np.pi * ALBEDO_SIGMA**2)
-                                  + albedo_residual**2 / (2 * ALBEDO_SIGMA**2))
-        wet_pts = weighted_pts(bce(wet.mod_wet, wet.meas_wet))
+        # the calibration's own per-observation terms: CRPS / sigma and Brier
+        if METRIC == 'mae':  # wet: fraction of observations misclassified
+            albedo_pts = weighted_pts(np.abs(ab.mod - ab.meas))
+            wet_pts = weighted_pts(np.abs(wet.mod_wet.astype(float) - wet.meas_wet))
+        else:
+            albedo_pts = weighted_pts(crps_gaussian(ab.mod, ab.meas, ALBEDO_SIGMA) / ALBEDO_SIGMA)
+            wet_pts = weighted_pts((wet.p_wet - wet.meas_wet)**2)
 
     point_losses = {'wet': wet_pts, 'albedo': albedo_pts}
 
@@ -227,21 +230,39 @@ def plot_glacier(glacier):
         ax.add_collection(pc)
         ax.set_xlim(bx0, bx1)
         ax.set_ylim(by0, by1)
-        fig.colorbar(pc, ax=ax, label='weighted log loss [nats]', shrink=0.7)
+        fig.colorbar(pc, ax=ax, label=({'wet': 'Brier score', 'albedo': 'CRPS / sigma'} if METRIC != 'mae'
+                     else {'wet': 'fraction misclassified', 'albedo': 'albedo MAE'})[var], shrink=0.7)
         ax.set_title(error_labels[var])
 
-    ab_loss = ab.crps_loss()
-    mb_loss = mb.crps_loss()
-    wet_loss = wet.brier_loss()
+    if METRIC == 'mae':
+        ab_loss = ab.mae()
+        mb_loss = abs(mb.mod - mb.meas)
+        wet_loss = np.nanmean(np.abs(wet.mod_wet.astype(float) - wet.meas_wet))
+    else:
+        ab_loss = ab.crps_loss()
+        mb_loss = mb.crps_loss()
+        wet_loss = wet.brier_loss()
     losses = [mb_loss, ab_loss, wet_loss]
 
     axes[-1].bar(range(len(losses)), losses)
     axes[-1].set_xticks(range(len(losses)))
-    axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Wet extent'], rotation=20, ha='right')
-    axes[-1].set_ylabel('log loss [nats]')
+    if METRIC == 'mae':
+        axes[-1].set_xticklabels(['Mass balance\n(m w.e. yr$^{-1}$)', 'Albedo', 'Wet extent\n(fraction)'],
+                                 rotation=20, ha='right')
+        axes[-1].set_ylabel('MAE')
+    else:
+        axes[-1].set_xticklabels(['Mass balance', 'Albedo', 'Wet extent'], rotation=20, ha='right')
+        axes[-1].set_ylabel('loss (CRPS / sigma, Brier)')
 
+    if 'kp' in ds:
+        kp0, wf0 = float(ds.kp[0]), float(ds.wind_factor[0])
+    else:  # forward run: per-point parameters live in its config.yaml
+        with open(ROOT + 'config.yaml') as f:
+            cfg = yaml.safe_load(f)
+        p0 = int(ds.point.values[0])
+        kp0, wf0 = float(np.atleast_1d(cfg['kp'])[p0]), float(np.atleast_1d(cfg['wind_factor'])[p0])
     fig.suptitle(f'{glacier}: distributed error at best combo '
-                 f'(kp={float(ds.kp[0]):.1f}, wind_factor={float(ds.wind_factor[0]):.1f})')
+                 f'(kp={kp0:.1f}, wind_factor={wf0:.1f})')
 
     # freeze the constrained layout, then give the bar panel the same box
     # as the map panels (which are shrunk by their colorbars and equal aspect)
@@ -251,7 +272,7 @@ def plot_glacier(glacier):
     pos = axes[-1].get_position()
     axes[-1].set_position([pos.x0, ref.y0, ref.width, ref.height])
 
-    output_fn = f'{FIG_DIR}{rgi_id}_best_grid_loss_map.png'
+    output_fn = f'{FIG_DIR}{rgi_id}_best_grid_{"mae" if METRIC == "mae" else "loss"}_map.png'
     plt.savefig(output_fn, dpi=150)
     plt.close(fig)
     print(f'saved to {output_fn}')
