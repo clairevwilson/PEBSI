@@ -134,6 +134,9 @@ class Albedo():
         )
         ds_mean["dtype"] = dtype_da
         self.ds_meas = ds_mean.sortby('time')
+        # drop implausible retrievals (cloud, shadow, artefacts), as AD_optimize does
+        self.ds_meas['albedo'] = self.ds_meas['albedo'].where(
+            (self.ds_meas['albedo'] >= 0.1) & (self.ds_meas['albedo'] <= 0.9))
         self.ds_meas.attrs['crs'] = self.crs
         return
 
