@@ -21,7 +21,7 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'synthetic'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'synthetic'))
 os.environ['EVENT'] = 'wildfire'
 from plot_event_grid import MERRA2_FP, MERRA2_VARS, merra2_ratio, GLACIERS, translate_rgi
 

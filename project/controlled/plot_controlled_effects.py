@@ -7,6 +7,7 @@ the effects as a share of observed loss, and a single-summer case study.
 Reads per_glacier.nc and per_point_annual.nc written by
 shop/postprocessing/aggregate_per_glacier.py and saves PNGs into base_fp/figs/.
 """
+import os
 import sys
 
 import matplotlib as mpl
@@ -16,6 +17,7 @@ import pandas as pd
 import xarray as xr
 
 sys.path.append('/jet/home/cwilson4/PEBSI/')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from glacierwide_loss import MassBalance, translate_rgi
 
 base_fp = '/home/claire/Research/Output/controlled/'
@@ -341,7 +343,7 @@ from matplotlib.patches import Patch
 SPECIAL_YEARS = [2004, 2019]
 MAX_OTHER_SHARE = 0.5  # gray above this share of the Both total gets extra colors
 MAX_EXTRA_YEARS = 6
-# the shared palette (shop/plotting_fxns.py all_colors) without its gray, which 'Other years' uses
+# the shared palette (shop/plotting/plotting_fxns.py all_colors) without its gray, which 'Other years' uses
 year_colors = ['#63c4c7', '#fcc02e']  # fixed to 2004 and 2019
 extra_colors = ['#4D559C', '#60C252', '#BF1F6A', '#F77808', '#298282', '#FF89B0']
 top_names = ['Wildfires', 'Heatwaves', 'Both']

@@ -30,7 +30,7 @@ FLUXES = {'sensible_heat': 'Sensible', 'latent_heat': 'Latent', 'longwave_net': 
           'rain_heat': 'Rain', 'ground_heat': 'Ground'}
 SW_PARTS = {'sw_sun': 'Net shortwave:\nmore sunlight', 'sw_snowloss': 'Net shortwave:\nsnow lost early',
             'sw_darker': 'Net shortwave:\ndarker snow', 'sw_other': 'Net shortwave: other'}
-# the shared palette (shop/plotting_fxns.py all_colors)
+# the shared palette (shop/plotting/plotting_fxns.py all_colors)
 COLORS = {'sensible_heat': '#4D559C', 'latent_heat': '#63c4c7', 'longwave_net': '#60C252', 'rain_heat': '#FF89B0',
           'sw_sun': '#fcc02e', 'sw_snowloss': '#F77808', 'sw_darker': '#BF1F6A'}
 

@@ -15,6 +15,8 @@ import os
 import yaml
 import numpy as np
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import simulation as sim
 from pebsi.io.terrain import Terrain
 from project.parameters import (host, HOST_PATHS, BASE_CONFIG, GLACIERS,
