@@ -5,7 +5,7 @@ Holds the computational geometry that breaks a glacier
 outline into model points and assigns each point the
 share of glacier area it represents.
 
-Three distributions are available:
+Four distributions are available:
 
 'grid'      an axis-aligned lattice clipped to the outline,
             weighted by clipped Voronoi cell area
@@ -16,6 +16,9 @@ Three distributions are available:
             centroid weighted by its Voronoi cell area
 'adaptive'  the patch-conforming mesh, at whatever spacing
             each glacier's own sampling error asks for
+'relief'    the patch-conforming mesh, with each glacier's
+            sampling error predicted from its RGI elevation
+            range instead of measured by a survey run
 
 The 'mesh' distribution is controlled by a target element
 edge length in meters rather than a point count, so the same
@@ -1020,6 +1023,63 @@ def distribute_rule(rgi_df, rgi_gdf, rgi_ids, table_fn, tolerance,
                 solved = float(row['point_spacing'])
         spacing = solved if np.isfinite(solved) else \
             spacing_for_target_n(polygon, target_n, **kwargs)[0]
+
+        xs, ys, ws, _ = mesh_polygon(polygon, spacing, **kwargs)
+        point_lons, point_lats = to_latlon(xs, ys, metric_crs)
+        for lon, lat, w in zip(point_lons, point_lats, ws):
+            lons.append(lon)
+            lats.append(lat)
+            glaciers.append(gid)
+            weights.append(float(w))
+
+    return lats, lons, glaciers, weights
+def distribute_relief(rgi_df, rgi_gdf, rgi_ids, spread_per_km, tolerance,
+                      coefficient, confidence=1.96, **kwargs):
+    """
+    Meshes each glacier at the point count its elevation range asks
+    for, so no survey run or sigma table is needed.
+
+    The spread of mass balance across a glacier comes mostly from its
+    elevation range, so sigma is predicted as spread_per_km times the
+    RGI Zmax - Zmin and passed to the same rule 'adaptive' uses. The
+    default spread_per_km is the high end of the five calibration
+    glaciers at their calibrated parameters, so the prediction errs
+    toward too many points; it overshoots large glaciers, where a small
+    high area stretches the range.
+
+    Parameters
+    ==========
+    rgi_df : pd.DataFrame
+        RGI attributes for the region
+    rgi_gdf : gpd.GeoDataFrame
+        RGI outlines for the region
+    rgi_ids : list
+        Glacier IDs without the 'RGI60-' prefix
+    spread_per_km : float
+        Mass balance sigma per km of elevation range [cm w.e. a-1 km-1]
+    tolerance : float
+        Allowed error on each glacier-wide mean [cm w.e. a-1]
+    coefficient : float
+        Fitted constant relating sigma to the error of the mean
+    confidence : float
+        Standard normal multiplier for the confidence wanted
+
+    Returns
+    =======
+    lats, lons, glaciers, weights : lists
+        Per-point latitude, longitude, glacier ID, and area
+        weight (normalized to sum to 1 within each glacier)
+    """
+    attrs = rgi_df.set_index('RGIId')
+
+    lats, lons, glaciers, weights = [], [], [], []
+    for gid in np.unique(rgi_ids):
+        row = attrs.loc['RGI60-' + gid]
+        sigma = spread_per_km * (row['Zmax'] - row['Zmin']) / 1000
+        target_n = point_count_for_sigma(sigma, tolerance, coefficient, confidence)
+
+        polygon, metric_crs = glacier_polygon(rgi_gdf, gid)
+        spacing = spacing_for_target_n(polygon, target_n, **kwargs)[0]
 
         xs, ys, ws, _ = mesh_polygon(polygon, spacing, **kwargs)
         point_lons, point_lats = to_latlon(xs, ys, metric_crs)

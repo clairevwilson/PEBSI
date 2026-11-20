@@ -68,7 +68,7 @@ class Terrain:
             self.elev_n = self.slope_n = self.aspect_n = self.weight_n = None
             return
 
-        if self.params.method_distribute in ('grid', 'adaptive', 'mesh'):
+        if self.params.method_distribute in ('grid', 'adaptive', 'relief', 'mesh'):
             # every distribution reads elevation, slope and aspect
             # off the DEM later, in run_dem_functions
             self.elev_n = None
@@ -85,6 +85,13 @@ class Terrain:
             elif self.params.method_distribute == 'adaptive':
                 lats, lons, glaciers, weights = mesh.distribute_rule(
                     *args, self.params.sigma_table_fn,
+                    self.params.point_error_tolerance,
+                    self.params.point_error_coefficient,
+                    confidence=self.params.point_error_confidence)
+
+            elif self.params.method_distribute == 'relief':
+                lats, lons, glaciers, weights = mesh.distribute_relief(
+                    *args, self.params.point_spread_per_km,
                     self.params.point_error_tolerance,
                     self.params.point_error_coefficient,
                     confidence=self.params.point_error_confidence)
@@ -630,18 +637,22 @@ class Terrain:
             shading_model.longitude = centroid_geo.x
             
             datetimes_utc = pd.date_range('2000-01-01 00:00', '2000-12-31 23:00', freq='h', tz='UTC')
-            masks_gpu, sun_az_rad, sun_zen_rad, svf, pixel_slope, pixel_aspect = \
-                shading_model.compute_shadow_masks(datetimes_utc)
-            
-            # check size of dataset to avoid crashing RAM
-            nt, nx, ny = masks_gpu.shape
-            array_bytes = nt * ny * nx # int8 = 1 byte each cell
+
+            # check size of dataset to avoid crashing RAM; the masks are downsampled
+            # as they are computed so the full-resolution array is never allocated
+            ny, nx = shading_model.z.shape
+            array_bytes = len(datetimes_utc) * ny * nx # 1 byte each cell
 
             # use a fixed, conservative budget
             threshold_bytes = 8e9
+            factor = 1
             if array_bytes > threshold_bytes:
                 factor = np.ceil(np.sqrt(array_bytes / threshold_bytes)).astype(int)
-                masks_gpu = masks_gpu[:, ::factor, ::factor]
+
+            masks_gpu, sun_az_rad, sun_zen_rad, svf, pixel_slope, pixel_aspect = \
+                shading_model.compute_shadow_masks(datetimes_utc, stride=factor)
+
+            if factor > 1:
                 svf = svf[::factor, ::factor]
                 pixel_slope = pixel_slope[::factor, ::factor]
                 pixel_aspect = pixel_aspect[::factor, ::factor]
@@ -657,7 +668,7 @@ class Terrain:
             # store shadow mask with UTC datetimes
             datetimes_clean = datetimes_utc.tz_localize(None)
             subregion_masks = xr.Dataset(
-                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool), {'units':'0=shade, 1=sun'}),
+                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool, copy=False), {'units':'0=shade, 1=sun'}),
                  'solar_azimuth': (['time'], sun_az_rad, {'units': 'radians'}),
                  'solar_zenith': (['time'], sun_zen_rad, {'units': 'radians'}),
                  'sky_view_factor': (['y','x'], svf, {'units':'-'}),
@@ -671,7 +682,8 @@ class Terrain:
 
             # crop shadows cleanly to individual glacier box
             for gid in missing_glaciers:
-                g_bounds = glacier.geometry.bounds
+                ids_in_block = glaciers_in_block['RGIId'].str.split('-').str[-1]
+                g_bounds = glaciers_in_block.loc[ids_in_block == gid].geometry.iloc[0].bounds
                 
                 glacier_masks = subregion_masks.sel(
                     x=slice(g_bounds[0], g_bounds[2]),

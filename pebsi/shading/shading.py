@@ -169,7 +169,7 @@ class Shading:
         elev_deg = self.horizon_elev_deg(azimuth_deg)
         return (altitude_deg > elev_deg).astype(xp.int8)
 
-    def compute_shadow_masks(self, datetimes):
+    def compute_shadow_masks(self, datetimes, stride=1):
         """
         Compute shadow masks for a sequence of datetimes,
         which should be a leap year.
@@ -179,6 +179,10 @@ class Shading:
         datetimes : list of datetime.datetime
             Sequence of timezone-aware datetimes in
             UTC to evaluate.
+        stride : int
+            Keep every stride-th pixel of each mask, so a
+            downsampled (nt, ny, nx) array is never held at
+            full resolution.
 
         Returns
         -------
@@ -199,8 +203,9 @@ class Shading:
         ny, nx = self.z.shape
         total_steps = len(datetimes)
 
-        # preallocate a single 3D array for all masks
-        masks_cpu = np.zeros((total_steps, ny, nx), dtype=np.int8)
+        # preallocate a single 3D array for all masks, keeping every stride-th pixel
+        masks_cpu = np.zeros((total_steps, len(range(0, ny, stride)), len(range(0, nx, stride))),
+                             dtype=bool)
 
         # allocate 1D arrays for the solar position
         sun_zenith = np.zeros(total_steps, dtype=np.float32)
@@ -223,6 +228,7 @@ class Shading:
                 continue # sun below horizon, mask remains zero
             else:
                 mask_gpu = self.shadow_mask(altitude, azimuth)
+                mask_gpu = mask_gpu[::stride, ::stride]
                 masks_cpu[idx] = mask_gpu.get() if hasattr(mask_gpu, 'get') else np.asarray(mask_gpu)
 
                 # clear the gpu_mask from VRAM
