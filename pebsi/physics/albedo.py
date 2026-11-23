@@ -153,12 +153,13 @@ def get_albedo(state, params, forcings):
         jnp.minimum(state.annual_min_albedo[:, year_idx], albedo)
     )
 
-    # for exposed firn, use the minimum albedo from the year it was exposed
-    exposed_year = (state.lage[:, 0] / 365.25).astype(int)
-    exposed_idx = exposed_year - params.start_year
-    albedo_firn = new_annual_min_albedo[jnp.arange(state.lage.shape[0]), exposed_idx]
+    # for exposed firn, use the minimum albedo from the year it formed: lage is
+    # the layer's age in days, so count its whole years back from this year
+    exposed_idx = year_idx - (state.lage[:, 0] / 365.25).astype(int)
+    albedo_firn = new_annual_min_albedo[jnp.arange(state.lage.shape[0]), jnp.maximum(exposed_idx, 0)]
 
-    albedo_firn = jnp.where(albedo_firn < 1, albedo_firn, params.albedo_firn)
+    # firn from before the run (or a year with no albedo yet) uses the default
+    albedo_firn = jnp.where((exposed_idx >= 0) & (albedo_firn < 1), albedo_firn, params.albedo_firn)
 
     final_albedo = jnp.where(
         state.ltype[:, 0] == 0,
