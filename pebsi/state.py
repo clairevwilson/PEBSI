@@ -18,10 +18,12 @@ import jax.numpy as jnp
 
 # define which variables belong to which output groups
 OUTPUT_GROUPS = {
-    'minimal':  ['accumulation', 'refreeze', 'melt'],
+    'minimal':  ['accumulation', 'refreeze', 'melt', 'albedo'],
     'MB':       ['melt', 'refreeze', 'runoff', 'cumrefreeze',
                  'sublimation', 'deposition', 'evaporation',
-                 'condensation', 'accumulation', 'rainfall', 'error'],
+                 'condensation', 'accumulation', 'rainfall', 'error',
+                 'total_mass', 'total_water', 'top_water', 'mass_balance'],
+    'surface':  ['surftemp', 'surftype', 'albedo', 'snowdepth'],
     'EB':       ['melt_energy', 'shortwave_in', 'shortwave_ref',
                  'longwave_in', 'longwave_out', 'sensible_heat',
                  'latent_heat', 'rain_heat', 'ground_heat',
@@ -30,6 +32,71 @@ OUTPUT_GROUPS = {
                  'layerage', 'layertype', 'layergrainsize', 'layerrefreeze',
                  'layerBC', 'layerOC', 'layerdust'],
     'climate':  ['airtemp', 'rh', 'wind', 'winddir', 'sp', 'tp'],
+}
+
+# how to collapse hourly step records into one daily/monthly output record:
+# 'sum', 'mean', 'min', or 'last'
+AGG_METHOD = {
+    # energy balance (instantaneous rates)
+    'melt_energy':     'mean',
+    'shortwave_in':    'mean',
+    'shortwave_ref':   'mean',
+    'longwave_in':     'mean',
+    'longwave_out':    'mean',
+    'sensible_heat':   'mean',
+    'latent_heat':     'mean',
+    'rain_heat':       'mean',
+    'ground_heat':     'mean',
+    'albedo':          'mean',
+    'surftemp':        'mean',
+
+    # mass balance (per-timestep fluxes)
+    'error':           'sum',
+    'melt':            'sum',
+    'refreeze':        'sum',
+    'accumulation':    'sum',
+    'runoff':          'sum',
+    'rainfall':        'sum',
+    'sublimation':     'sum',
+    'deposition':      'sum',
+    'evaporation':     'sum',
+    'condensation':    'sum',
+    'mass_balance':    'sum',
+
+    # already-cumulative running totals
+    'cumrefreeze':     'last',
+    'total_mass':      'last',
+
+    # liquid water, as the day's typical state
+    'total_water':     'mean',
+    'top_water':       'mean',
+
+    # snapshot, collapsed conservatively 
+    'snowdepth':       'min',
+
+    # climate (instantaneous conditions, except precipitation)
+    'airtemp':         'mean',
+    'rh':              'mean',
+    'wind':            'mean',
+    'winddir':         'mean',
+    'tp':              'sum',
+    'sp':              'mean',
+
+    # layers (state snapshots, except the categorical type code)
+    'layerheight':     'mean',
+    'layertemp':       'mean',
+    'layerwater':      'mean',
+    'layerdensity':    'mean',
+    'layerrefreeze':   'mean',
+    'layergrainsize':  'mean',
+    'layerage':        'mean',
+    'layerBC':         'mean',
+    'layerOC':         'mean',
+    'layerdust':       'mean',
+
+    # type codes (categorical)
+    'surftype':        'last',
+    'layertype':       'last',
 }
 
 
@@ -41,9 +108,13 @@ def make_step_outputs_class(store_vars):
     """
     fields = []
     for group in store_vars:
-        for f in OUTPUT_GROUPS[group]:
-            if f not in fields:
-                fields.append(f)
+        if group in OUTPUT_GROUPS:
+            for f in OUTPUT_GROUPS[group]:
+                if f not in fields:
+                    fields.append(f)
+        else:
+            if group not in fields:
+                fields.append(group)
     return namedtuple('StepOutputs', fields)
 
 class GlacierState(NamedTuple):
@@ -62,6 +133,7 @@ class GlacierState(NamedTuple):
     albedo: jnp.ndarray         # Albedo [-]
     albedo_surr: jnp.ndarray    # Albedo of off-glacier surroundings [-]
     surftemp: jnp.ndarray       # Surface temperature [C]
+    surftype: jnp.ndarray       # Surface type [-]
     roughness: jnp.ndarray      # Surface roughness [m]
     last_snow: jnp.ndarray      # Time index of last snowfall [-]
 
@@ -136,7 +208,7 @@ class ClimateState(NamedTuple):
     # ---------------------------- Radiation terms ----------------------------
     shortwave_in: jnp.ndarray   # Incoming shortwave radiation [J m-2]
     longwave_in: jnp.ndarray    # Incoming longwave radiation [J m-2]
-    shadow_mask: jnp.ndarray    # Boolean shadow mask [-]
+    shadow_mask: jnp.ndarray    # Sunlit fraction of the point's cell [-]
     solar_azimuth: jnp.ndarray  # Solar azimuth angle [rad]
     solar_zenith: jnp.ndarray   # Solar zenith angle [rad]
 
@@ -148,12 +220,18 @@ class ClimateState(NamedTuple):
     dustdry: jnp.ndarray        # Dry dust deposition [kg m-2 s-1]
     dustwet: jnp.ndarray        # Wet dust deposition [kg m-2 s-1]
 
+    # index to draw from annually periodic shading / solar incidence tables
+    shading_idx: jnp.ndarray = jnp.array(0, dtype=jnp.int32)
+    cos_theta: jnp.ndarray = jnp.zeros((1,), dtype=jnp.float64)
+
 class PointAttributes(NamedTuple):
     """
     Time-invariant spatial attributes for each point.
 
     Per-point arrays: (N_POINTS,)
-    Per-cell arrays:  (N_UNIQUE,)  — one entry per unique MERRA-2 grid cell
+    Per-cell arrays:  (N_UNIQUE,)        — one entry per unique MERRA-2 grid cell
+    Shading arrays:   (N_UNIQUE_SHADE,)  — one entry per unique (lat, lon), read
+                      via loc_idx; see Terrain.unique_point_locations
     """
     # ========================= Per-point (N_POINTS,) =========================
     latitude: jnp.ndarray           # Point latitude [deg]
@@ -163,13 +241,32 @@ class PointAttributes(NamedTuple):
     aspect: jnp.ndarray             # Point aspect [deg, 0=N]
     sky_view_factor: jnp.ndarray    # Sky-view factor [-]
     median_elev: jnp.ndarray        # Glacier median elevation for precip gradient [m]
+    glacier_idx: jnp.ndarray        # Index into (N_GLACIERS,) glacier arrays for this point
+    precip_upper25: jnp.ndarray     # Point sits above the option_preclimit threshold elevation [bool]
+    precip_anchor_idx: jnp.ndarray  # Point supplying the precipitation the taper decays from
+    precip_taper: jnp.ndarray       # Exponential decay factor above the threshold elevation [-]
     cell_idx: jnp.ndarray           # Index into (N_UNIQUE,) cell arrays for this point
+    loc_idx: jnp.ndarray            # Index into (N_UNIQUE_SHADE,) shading arrays for this point
+
+    # ====================== Wind (N_POINTS, N_DIRECTIONS) ====================
+    wind_spdup: jnp.ndarray          # Wind speed-up factor per direction [-]
+    wind_directions: jnp.ndarray     # Wind direction bins [deg]
 
     # ========================= Per-cell (N_UNIQUE,) ==========================
     gcm_elev: jnp.ndarray           # GCM grid cell elevation [m]
     temp_elev: jnp.ndarray          # Reference elevation for temp lapse rate [m]
     sp_elev: jnp.ndarray            # Reference elevation for surface pressure [m]
     LWin_elev: jnp.ndarray          # Reference elevation for longwave correction [m]
+
+    # ======================= Per-glacier (N_GLACIERS,) ========================
+    glacier_point_counts: jnp.ndarray  # Number of points on each glacier [-]
+
+    # ============= Shading (N_UNIQUE_SHADE, N_SHADE_TIME) ====================
+    # one year of (dayofyear, hour) shading at each unique point location
+    shadow_mask_table: jnp.ndarray = jnp.ones((1, 1), dtype=jnp.float64)
+    solar_azimuth_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
+    solar_zenith_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
+    cos_theta_table: jnp.ndarray = jnp.zeros((1, 1), dtype=jnp.float64)
 
 class MBOutputs(NamedTuple):
     """Minimal per-timestep outputs for optimization — omits layer arrays."""
@@ -179,8 +276,8 @@ class MBOutputs(NamedTuple):
 
 class StepOutputs(NamedTuple):
     """
-    Example, complete step outputs class including every energy balance and mass flux 
-    for documentation purposes.
+    Placeholder (unused) step outputs class which documents every possible
+    energy balance and mass flux for documentation purposes.
 
     The actual StepOutputs class created uses only a subset of these variables
     depending on which variables were specified in store_vars.
@@ -217,6 +314,9 @@ class StepOutputs(NamedTuple):
     evaporation: jnp.ndarray        # Evaporation (water->vapor) [m w.e.]
     condensation: jnp.ndarray       # Condensation (vapor->water) [m w.e.]
     cumrefreeze: jnp.ndarray        # Refrozen mass in layers [m w.e.]
+    total_mass: jnp.ndarray         # Total mass: layers (ice+water) + basal_reservoir [m w.e.]
+    total_water: jnp.ndarray        # Total water: layers only [kg m-2]
+    top_water: jnp.ndarray          # Water within top_water_depth of the surface [kg m-2]
 
     # ============================= Climate ==============================
     airtemp: jnp.ndarray            # Air temperature [C]

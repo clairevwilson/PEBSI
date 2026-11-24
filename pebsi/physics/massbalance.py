@@ -128,11 +128,18 @@ class MassBalanceDriver:
             (N_POINTS,) water that no longer has 
             pore space due to densification
         """
-        # densification is only run daily
+        # densification is only run daily, at each point's local midnight
         is_day_start = forcings.local_hour == 0
+        def densify(s):
+            new_s, squeezed = self.densification(s)
+            def keep(new, old):
+                if new.ndim == 0 or new.shape[0] != is_day_start.shape[0]:
+                    return new
+                return jnp.where(is_day_start.reshape((-1,) + (1,) * (new.ndim - 1)), new, old)
+            return jax.tree_util.tree_map(keep, new_s, s), jnp.where(is_day_start, squeezed, 0.0)
         state, water_squeezed_out = jax.lax.cond(
             jnp.any(is_day_start),
-            lambda s: self.densification(s),
+            densify,
             lambda s: (s, jnp.zeros_like(state.albedo)),
             state
         )
@@ -143,21 +150,27 @@ class MassBalanceDriver:
         # update grain sizes
         new_grainsize = self.evolve_grain_size(state, forcings)
 
-        # update age 
-        new_age = state.lage + 1
+        # update age (in days)
+        new_age = state.lage + is_day_start[:, None].astype(jnp.int32)
+
+        # update surface type 
+        new_surftype = state.ltype[:, 0]
 
         # store updated properties to state
         state = state._replace(
+            surftype = new_surftype,
             lgrainsize = new_grainsize,
             roughness = new_roughness,
             lage = new_age
         )
         return state, water_squeezed_out
 
-    def run_annual_routines(self, state, forcings):
+    def run_annual_routines(self, state, forcings, point_attrs):
         """
         Checks if it is the end of summer to run
-        firn conversion routine.
+        firn conversion routine. The check is per glacier:
+        a glacier converts once any of its points meets the
+        triggers, independent of the other glaciers in the run.
         """
         params = self.params
 
@@ -167,19 +180,24 @@ class MassBalanceDriver:
         is_midnight = forcings.local_hour == 0
         # does past snowfall surpass the threshold to consider winter?
         weather_trigger = jnp.sum(state.past_snow, axis=1) >= params.new_snow_threshold
-        # put temporal triggers together
-        time_to_merge = jnp.any(is_summer_end_window & is_midnight & weather_trigger)
+        # put temporal triggers together, then spread to every point of a glacier that has a triggered point
+        point_trigger = is_summer_end_window & is_midnight & weather_trigger
+        n_glaciers = point_attrs.glacier_point_counts.shape[0]
+        glacier_ready = jax.ops.segment_max(point_trigger.astype(jnp.int32), point_attrs.glacier_idx,
+                                            num_segments=n_glaciers) > 0
+        ready_pt = glacier_ready[point_attrs.glacier_idx]
+        time_to_merge = jnp.any(ready_pt & ~state.annual_firn_converted)
 
         # only run end of summer if we met all temporal conditions
         state = jax.lax.cond(
-            time_to_merge, 
-            self.end_of_summer,
-            lambda s: s, 
+            time_to_merge,
+            lambda s: self.end_of_summer(s, ready_pt),
+            lambda s: s,
             state
         )
 
         # if it is the start of a year, reset firn converted trackers
-        is_year_start = (forcings.doy == 0) & (forcings.local_hour == 0)
+        is_year_start = (forcings.doy == 1) & (forcings.local_hour == 0)
         new_firn_converted = jnp.where(is_year_start, False, state.annual_firn_converted)
         state = state._replace(annual_firn_converted = new_firn_converted)
         return state
@@ -203,18 +221,11 @@ class MassBalanceDriver:
         SNOW_THRESHOLD_HIGH = self.params.snow_threshold_high
         DENSITY_WATER = self.params.density_water
 
-        # define rain vs snow scaling 
-        rain_scale = jnp.linspace(0, 1, 20)
-        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW, SNOW_THRESHOLD_HIGH, 20)
-
-        # calculate fraction of rain
-        fraction_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
-        rain = forcings.tp * fraction_rain * DENSITY_WATER 
+        # linear rain fraction ramp between the two thresholds
+        threshold_range = SNOW_THRESHOLD_HIGH - SNOW_THRESHOLD_LOW
+        fraction_rain = jnp.clip((forcings.temp - SNOW_THRESHOLD_LOW) / threshold_range, 0.0, 1.0)
+        rain = forcings.tp * fraction_rain * DENSITY_WATER
         snow = forcings.tp * (1-fraction_rain) * DENSITY_WATER
-
-        # make sure amounts to the boundaries correctly
-        rain = jnp.where(forcings.temp <= SNOW_THRESHOLD_LOW, 0, rain)
-        snow = jnp.where(forcings.temp > SNOW_THRESHOLD_HIGH, 0, snow)
         
         return rain,snow # kg m-2
 
@@ -297,31 +308,27 @@ class MassBalanceDriver:
         
         # define conditions for making a new layer for accumulation
         surf_not_snow = (state.ltype[:, 0] > 0)
-        density_threshold = (state.ldensity[:, 0] > (new_density * 3))
         large_top_layer = (state.lheight[:, 0] > params.dz_toplayer * 2)
-        new_layer_cond = surf_not_snow | density_threshold | large_top_layer
+        new_layer_cond = surf_not_snow | large_top_layer
 
         # check for small surface snow layer (merge new snow with it no matter what)
         small_top_layer = (state.lheight[:, 0] < 1e-3) & (state.ltype[:, 0] == 0)
 
         # define masks for possible cases
-        create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= 1e-3)
-        delay_mask = new_layer_cond & (~small_top_layer) & (new_height < 1e-3)
+        create_new_mask = new_layer_cond & (~small_top_layer) & (new_height >= params.min_dz)
+        delay_mask = new_layer_cond & (~small_top_layer) & (new_height < params.min_dz)
         merge_new_mask = (~new_layer_cond) | small_top_layer
-
         action_taken_mask = create_new_mask | merge_new_mask
 
-        # handle cases 1 & 3: create a new layer and merge snowfall with existing layer
+        # handle cases 1 & 2: create a new layer or merge snowfall with existing layer
         state = layers.add_top_layer(state, create_new_mask, new_layer)
         state = layers.merge_new_layer(state, merge_new_mask, new_layer, params)
 
-        # handle case 2: delaying this snowfall to the next timestep
+        # case 3: delay thin snowfall on ice/firn until there's enough for a full layer
         updated_delayed_snow = jnp.where(delay_mask, total_snowfall, state.delayed_snow)
         updated_delayed_snow = jnp.where(action_taken_mask, 0.0, updated_delayed_snow)
         actual_snowfall = jnp.where(delay_mask, 0.0, total_snowfall)
-
-        # update surface snow timestemp
-        updated_last_snow = jnp.where(action_taken_mask, time_idx, state.last_snow)
+        updated_last_snow = jnp.where(action_taken_mask & (total_snowfall > 0), time_idx, state.last_snow)
 
         state = state._replace(
             delayed_snow = updated_delayed_snow,
@@ -493,22 +500,16 @@ class MassBalanceDriver:
             # energy needed to warm this layer to 0.
             energy_to_zero = -1 * ltemp * lmass * lcp
             
-            # check if we have more energy tha needed to warm to 0.
-            warmed_past_zero = total_heat_in > energy_to_zero
-            
             # calculate temperature from all heat, regardless of how much
             safe_denom = jnp.where(lmass * lcp > 0, lmass * lcp, 1.0)
             partial_warm_temp = jnp.where(lmass > 0, ltemp + (total_heat_in / safe_denom), ltemp)
-            # clip ptemperature of points that were warmed past melting point
+
+            warmed_past_zero = total_heat_in > energy_to_zero
             intermediate_temp = jnp.where(warmed_past_zero, 0.0, partial_warm_temp)
-            
-            # leftover energy after melting to 0. converted to mass
             melt_energy_available = jnp.maximum(0.0, total_heat_in - energy_to_zero)
             potential_melt = melt_energy_available / LH_RF
-            
-            # actual melt is capped by how much solid ice physically exists in this layer
             actual_melt = jnp.minimum(potential_melt, lice)
-            
+
             # calculate unspent melt energy that must cascade lower [W m-2]
             carry = jnp.maximum(
                 0., (melt_energy_available - (actual_melt * LH_RF)) / dt
@@ -920,32 +921,27 @@ class MassBalanceDriver:
         state = state._replace(**properties)
         return state, total_runoff, surface_mass_fluxes
         
-    def resolve_temperature_profile(self, state):    
+    def resolve_temperature_profile(self, state):
         """
-        Resolves the temperature profile with vertical
-        heat conduction following an explicit, linearized
-        Forward-in-Time, Central-in-Space (FTCS) scheme.
+        Vertical heat conduction dispatched to 
+        explicit FTCS or backward-Euler implicit.
         Uses a Dirichlet boundary condition at the top layer
         and the temperate boundary at the bottom.
-        """   
+        """
         params = self.params
 
         # CONSTANTS
         CP_ICE = params.Cp_ice
         DENSITY_ICE = params.density_ice
         DENSITY_WATER = params.density_water
-        TEMP_TEMP = params.temp_temp
         TEMP_DEPTH = params.temp_depth
         K_ICE = params.k_ice
         K_WATER = params.k_water
         K_AIR = params.k_air
-        MAX_DT = params.max_temp_change
 
         # load inputs
-        surftemp = state.surftemp
         lheight = state.lheight
         ldensity = state.ldensity
-        ltemp = state.ltemp
         lice = state.lice
         lwater = state.lwater
         ldepth = state.ldepth
@@ -980,12 +976,30 @@ class MassBalanceDriver:
             # mask ice layers with constant conductivity
             lcond = jnp.where(ice_mask, K_ICE, lcond)
 
-        # get timestep for heat equation
+        if params.method_heateq == 'implicit':
+            return self.implicit_conduction(state, params, lcond, is_temperate)
+        else:
+            return self.explicit_conduction(state, params, lcond, is_temperate)
+
+    def explicit_conduction(self, state, params, lcond, is_temperate):
+        """
+        FTCS explicit heat conduction with n_heat_steps 
+        substeps and dT clipping. Non-differentiable.
+        """
+        CP_ICE = params.Cp_ice
+        TEMP_TEMP = params.temp_temp
+        MAX_DT = params.max_temp_change
+
+        surftemp = state.surftemp
+        lheight = state.lheight
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+
+        safe_lheight = jnp.where(lheight > 0, lheight, 1)
         dt_heat = params.dt / params.n_heat_steps
         dT_limit = MAX_DT / params.n_heat_steps
 
-        # inter-layer spacing
-        # dz is the distance between center of layer i and layer i+1
+        # inter-layer spacing (distance between center of layer i and layer i+1)
         dz = 0.5 * (lheight[:, :-1] + lheight[:, 1:])
         safe_dz = jnp.where(dz > 0, dz, 1.0)
         k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
@@ -1002,7 +1016,8 @@ class MassBalanceDriver:
             raw_tm0 = CP_ICE * ldensity[:, 0] * safe_lheight[:, 0]
             safe_thermal_mass_0 = jnp.where(raw_tm0 > 0, raw_tm0, 1.0)
             dT_0 = (flux_surf - flux_inter[:, 0]) * dt_heat / safe_thermal_mass_0
-            
+            dT_0 = jnp.clip(dT_0, -dT_limit, dT_limit)
+
             # mid-layer Updates Logic
             safe_thermal_mass_mid = CP_ICE * ldensity[:, 1:-1] * safe_lheight[:, 1:-1]
             
@@ -1028,22 +1043,68 @@ class MassBalanceDriver:
 
             # overlay layers below TEMP_DEPTH with temperate temperature
             next_temps = jnp.where(is_temperate, TEMP_TEMP, next_temps)
-            
             return next_temps
 
         # execute time-stepping loop
         final_temperatures = jax.lax.fori_loop(
             0, params.n_heat_steps, _conduction_step, ltemp
         )
+        return state._replace(ltemp=final_temperatures)
 
-        # save back to state
-        state = state._replace(ltemp = final_temperatures)
-        
-        return state
+    def implicit_conduction(self, state, params, lcond, is_temperate):
+        """
+        Backward-Euler heat conduction: unconditionally stable, 
+        single dt step, differentiable.
+        """
+        # CONSTANTS
+        CP_ICE = params.Cp_ice
+        TEMP_TEMP = params.temp_temp
+
+        surftemp = state.surftemp
+        lheight = state.lheight
+        ldensity = state.ldensity
+        ltemp = state.ltemp
+
+        safe_lheight = jnp.where(lheight > 0, lheight, 1.0)
+
+        # inter-layer spacing (distance between center of layer i and layer i+1)
+        dz = 0.5 * (lheight[:, :-1] + lheight[:, 1:])
+        safe_dz = jnp.where(dz > 0, dz, 1.0)
+        k_inter = 0.5 * (lcond[:, :-1] + lcond[:, 1:])
+        k_iface = k_inter / safe_dz
+        k_top = lcond[:, 0] / (0.5 * safe_lheight[:, 0])
+
+        # thermal mass and implicit timestep weight
+        therm_mass = CP_ICE * ldensity * safe_lheight
+        valid = (lheight > 0) & (therm_mass > 0)
+        cap_dt = jnp.where(valid, therm_mass, 1.0) / params.dt
+
+        # build tridiagonal system
+        lower = jnp.zeros_like(ltemp).at[:, 1:].set(-k_iface)
+        upper = jnp.zeros_like(ltemp).at[:, :-1].set(-k_iface)
+        diag = cap_dt - lower - upper
+        diag = diag.at[:, 0].add(k_top)
+        b_vec = cap_dt * ltemp
+        b_vec = b_vec.at[:, 0].add(k_top * surftemp)
+
+        # Dirichlet rows for empty, temperate, and bottom layers
+        frozen = (~valid) | is_temperate
+        frozen = frozen.at[:, -1].set(True)
+        lower = jnp.where(frozen, 0.0, lower)
+        upper = jnp.where(frozen, 0.0, upper)
+        diag = jnp.where(frozen, 1.0, diag)
+        b_vec = jnp.where(frozen, ltemp, b_vec)
+
+        # lower[:, 0] and upper[:, -1] are already zero, as the primitive requires
+        final_temperatures = jax.lax.linalg.tridiagonal_solve(
+            lower, diag, upper, b_vec[..., None])[..., 0]
+        final_temperatures = jnp.where(is_temperate, TEMP_TEMP, final_temperatures)
+
+        return state._replace(ltemp=final_temperatures)
 
     def densification(self, state):
         """
-        Calculates densification of layers due to 
+        Calculates densification of layers due to
         compression from overlying mass.
 
         Returns
@@ -1076,11 +1137,11 @@ class MassBalanceDriver:
         # Boone / Anderson (1976) method (COSIPY)
         if params.method_densification in ['Boone']:
             # EMPIRICAL PARAMETERS
-            c1 = params.Boone_c1
-            c2 = params.Boone_c2
-            c3 = params.Boone_c3
-            c4 = params.Boone_c4
-            c5 = params.Boone_c5
+            c1 = params.Boone_c1[:, None]
+            c2 = params.Boone_c2[:, None]
+            c3 = params.Boone_c3[:, None]
+            c4 = params.Boone_c4[:, None]
+            c5 = params.Boone_c5[:, None]
 
             # shift cumulative mass down by one (top layer has no weight above)
             cumulative_mass = jnp.cumsum(lmass, axis=1)[:, :-1]
@@ -1136,7 +1197,7 @@ class MassBalanceDriver:
 
         # check if any water was squeezed out by densification
         if params.constant_irrwater:
-            frac_irreduc = jnp.full_like(new_ldensity, params.Sr)
+            frac_irreduc = jnp.broadcast_to(params.Sr[:, None], new_ldensity.shape)
         else:
             frac_irreduc = jnp.where(new_ldensity > 500.0, params.Sr_dense, params.Sr_light)
         porosity = 1 - new_ldensity / DENSITY_ICE 
@@ -1219,7 +1280,7 @@ class MassBalanceDriver:
         # CONSTANTS
         WET_C = params.wet_grain_C
         PI = jnp.pi
-        RFZ_GRAINSIZE = params.grainsize_rfz
+        RFZ_GRAINSIZE = params.grainsize_rfz[:, None]
         FIRN_GRAINSIZE = params.grainsize_firn
         ICE_GRAINSIZE = params.grainsize_ice
         CTOK = params.celsius_to_kelvin
@@ -1329,7 +1390,12 @@ class MassBalanceDriver:
                 tau + 1e-6, # avoid 0 denominator
                 tau + grainsize - FRESH_GRAINSIZE
             )
-            safe_base = jnp.maximum(jnp.where(denominator > 0, tau / denominator, 1e-6), 1e-10)
+
+            positive_denom = denominator > 0
+            safe_denominator = jnp.where(positive_denom, denominator, 1.0)
+            safe_base = jnp.clip(
+                jnp.where(positive_denom, tau / safe_denominator, 1e-6),
+                1e-10, 1.0)
             
             # determine actual dry grain growth rate from parameters
             safe_kap = jnp.maximum(kap, 1e-6)
@@ -1362,13 +1428,14 @@ class MassBalanceDriver:
 
         return all_updated_grainsize
 
-    def end_of_summer(self, state):
+    def end_of_summer(self, state, ready_pt):
         """
         Checks prognostically if enough snow fell in the 
         previous days to constitute the start of the 
         accumulation season. If so, snow layers over a 
         certain age are transformed to firn and cumulative 
-        refreeze is reset to 0.
+        refreeze is reset to 0. Only points on glaciers
+        that met the triggers (ready_pt) convert.
         """
         params = self.params
         N_LAYERS = state.lice.shape[1]
@@ -1376,15 +1443,19 @@ class MassBalanceDriver:
         # load state (spatial) inputs
         annual_firn_converted = state.annual_firn_converted
 
-        # points where firn has not been converted yet
-        convert_firn_pt = ~annual_firn_converted
+        # points on triggered glaciers where firn has not been converted yet
+        convert_firn_pt = ~annual_firn_converted & ready_pt
 
         # define function that will be looped to merge snow layers down
         def run_merger_loop(state):
             def _merge_snow_step(i, state):
                 # evaluate on the fly if layer i and the next layer down are old snow
-                is_layer_old_snow = (state.ltype[:, i] == 0) & (state.lage[:, i] >= params.firn_age)
-                is_next_old_snow = (state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= params.firn_age)
+                is_layer_old_snow = (
+                    state.ltype[:, i] == 0) & (state.lage[:, i] >= params.firn_age
+                )
+                is_next_old_snow = (
+                    state.ltype[:, i+1] == 0) & (state.lage[:, i+1] >= params.firn_age
+                )
                 
                 # only merge down if the column trigger is True and both layers are old snow
                 active_merge_mask = convert_firn_pt & is_layer_old_snow & is_next_old_snow
@@ -1401,8 +1472,8 @@ class MassBalanceDriver:
                 1, state.ltype
             )
         
-            # reset cumulative refreeze and annual albedo
-            new_lrefreeze = jnp.zeros_like(state.lrefreeze)
+            # reset cumulative refreeze and annual albedo (only on the converting glaciers)
+            new_lrefreeze = jnp.where(convert_firn_pt[:, None], 0.0, state.lrefreeze)
             new_firn_converted = jnp.where(
                 convert_firn_pt, True, annual_firn_converted
             )

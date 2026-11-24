@@ -28,36 +28,52 @@ class EnergyBalanceDriver():
         y_melt, _ = self.compute_fluxes(t_melt, state, forcings, point_attrs)
 
         # 2. solve for the root of the energy balance equation
-        # initialize two starting guesses
-        t0 = state.surftemp     # previous surface temperature
-        t1 = forcings.temp     # current air temperature
+        # derivative comes from the implicit function theorem
+        def residual(t):
+            return self.compute_fluxes(t, state, forcings, point_attrs)[0]
 
-        # evaluate the initial energy balance residuals for both guesses
-        y0, _ = self.compute_fluxes(t0, state, forcings, point_attrs)
-        y1, _ = self.compute_fluxes(t1, state, forcings, point_attrs)
+        def secant_solve(f, t0):
+            # second starting guess is the current air temperature
+            t1 = forcings.temp
+            y0 = f(t0)
+            y1 = f(t1)
 
-        # define the internal loop step that JAX will execute
-        def secant_step(carry, i):
-            # unpack the current state of the root finder
-            t_prev, t_curr, y_prev, y_curr = carry
-            
-            # calculate the denominator with divide-by-zero safeguard
-            denom = jnp.where(jnp.abs(y_curr - y_prev) < 1e-4, 1e-4, y_curr - y_prev)
-            
-            # standard Secant formula to calculate the next temperature guess
-            t_next = t_curr - y_curr * (t_curr - t_prev) / denom
-            t_next = jnp.clip(t_next, -60.0, 0.0) # clip to physical bounds
-            
-            # evaluate the new energy balance residual with the updated temperature
-            y_next, _ = self.compute_fluxes(t_next, state, forcings, point_attrs)
-            
-            # pass the updated values forward to the next iteration
-            return (t_curr, t_next, y_curr, y_next), None
+            def secant_step(carry, i):
+                # unpack the current state of the root finder
+                t_prev, t_curr, y_prev, y_curr = carry
 
-        # run a strict, fixed-length loop of 10 steps using jax.lax.scan
-        initial_carry = (t0, t1, y0, y1)
-        final_carry, _ = jax.lax.scan(secant_step, initial_carry, xs=jnp.arange(8), length=8)
-        surftemp_cooling = jnp.clip(final_carry[1], -60.0, 0.0)
+                # stop updating converged points
+                converged = jnp.abs(y_curr) < 1e-6
+
+                # calculate the denominator with divide-by-zero safeguard
+                denom = jnp.where(jnp.abs(y_curr - y_prev) < 1e-4, 1e-4, y_curr - y_prev)
+
+                # standard secant formula to calculate the next temperature guess
+                t_next_secant = t_curr - y_curr * (t_curr - t_prev) / denom
+                t_next_secant = jnp.clip(t_next_secant, -60.0, 0.0) # clip to physical bounds
+                t_next = jnp.where(converged, t_curr, t_next_secant)
+
+                # evaluate the new energy balance residual with the updated temperature
+                y_next = jnp.where(converged, y_curr, f(t_next))
+
+                # pass the updated values forward to the next iteration
+                return (t_curr, t_next, y_curr, y_next), None
+
+            # run a strict, fixed-length loop of 8 steps using jax.lax.scan
+            # 98% of solutions are converged in 8 steps - should not be any higher or lower
+            final_carry, _ = jax.lax.scan(secant_step, (t0, t1, y0, y1), xs=jnp.arange(8), length=8)
+            return jnp.clip(final_carry[1], -60.0, 0.0)
+
+        def tangent_solve(linear_residual, y):
+            # points are independent, so dF/dT is diagonal: one product gives it
+            dF_dT = linear_residual(jnp.ones_like(y))
+            return y / dF_dT
+
+        surftemp_root = jax.lax.custom_root(residual, state.surftemp, secant_solve, tangent_solve)
+
+        # a temperature pinned at a clip bound is not a root, and does not move
+        at_bound = (surftemp_root <= -60.0) | (surftemp_root >= 0.0)
+        surftemp_cooling = jnp.where(at_bound, jax.lax.stop_gradient(surftemp_root), surftemp_root)
 
         # 3. extract final results for melting or cooling case
         is_melting = y_melt > 0.0
@@ -139,13 +155,16 @@ class EnergyBalanceDriver():
         sun_az = forcings.solar_azimuth
         sun_zen = forcings.solar_zenith
 
-        # shade mask has 0 for shade, 1 for sun
-        sunny = forcings.shadow_mask
+        # fraction of the point's cell in direct sun, 0=full shade, 1=full sun
+        sunny_fraction = forcings.shadow_mask
 
-        # calculate slope correction
-        cos_theta = (jnp.cos(sun_zen)*jnp.cos(slope) + 
-                    jnp.sin(sun_zen)*jnp.sin(slope)*jnp.cos(sun_az - aspect))
+        # cos theta can be precomputed or calculated on-the-fly
         safe_cos_zen = jnp.where(jnp.cos(sun_zen) > 1e-6, jnp.cos(sun_zen), 1.0)
+        if self.params.option_precomputed_costheta:
+            cos_theta = forcings.cos_theta
+        else:
+            cos_theta = (jnp.cos(sun_zen)*jnp.cos(slope) +
+                        jnp.sin(sun_zen)*jnp.sin(slope)*jnp.cos(sun_az - aspect))
         slope_correction = jnp.clip(cos_theta / safe_cos_zen, 0, 5)
         
         # SWin needs to be corrected for shade
@@ -159,11 +178,7 @@ class EnergyBalanceDriver():
         SWin_diffuse = SWin_sky * f_diff * sky_view
 
         # determine overall incoming flux
-        SWin = jnp.where(
-            sunny, # True = point is receiving direct sunlight
-            SWin_terrain + SWin_diffuse + SWin_direct * slope_correction,
-            SWin_terrain + SWin_diffuse
-        )
+        SWin = SWin_terrain + SWin_diffuse + sunny_fraction * SWin_direct * slope_correction
 
         # get reflected radiation
         SWref = SWin * albedo * -1
@@ -207,15 +222,12 @@ class EnergyBalanceDriver():
 
         # unpack climate variables
         airtemp = forcings.temp
-        surftemp = state.surftemp 
+        surftemp = state.surftemp
         precip_rate = forcings.tp / SPH
 
-        # define rain vs snow scaling
-        rain_scale = jnp.linspace(0,1,20)
-        temp_scale = jnp.linspace(SNOW_THRESHOLD_LOW,SNOW_THRESHOLD_HIGH,20)
-        
-        # get fraction of precip that is rain
-        frac_rain = jnp.interp(forcings.temp, temp_scale, rain_scale)
+        # linear rain fraction ramp between the two thresholds
+        threshold_range = SNOW_THRESHOLD_HIGH - SNOW_THRESHOLD_LOW
+        frac_rain = jnp.clip((forcings.temp - SNOW_THRESHOLD_LOW) / threshold_range, 0.0, 1.0)
 
         Qp = (airtemp - surftemp)*precip_rate*frac_rain*DENSITY_WATER*CP_WATER
         return Qp
@@ -236,8 +248,20 @@ class EnergyBalanceDriver():
     
     def get_turbulent(self, state, forcings, point_attrs):
         """
-        Calculates turbulent (sensible and latent heat)
-        fluxes using the Bulk Richardson stability correction.
+        Calculates turbulent (sensible and latent heat) fluxes.
+
+        method_turbulent = 'bulk': bulk transfer with the Bulk
+            Richardson stability correction.
+        method_turbulent = 'OG': katabatic exchange of Oerlemans &
+            Grisogono (2002) in the form of Klok & Oerlemans (2002),
+            see Munro (2004) eqs. 1, 8-10. The wind speed does not
+            enter: C*u = (Kb + Kkat) / 2 with
+            Kkat = kappa * (Ta - Ts) * sqrt(g / (T0 * gamma * Pr)),
+            where Kb is a constant background exchange parameter.
+        method_turbulent = 'OG_hybrid': as 'OG' but the background term
+            is the stability-corrected bulk exchange, Kb = C * psi * u,
+            so C*u = (C * psi * u + Kkat) / 2. Keeps the synoptic wind;
+            with og_kappa = 0 it is half the 'bulk' flux.
         """
         params = self.params 
 
@@ -253,14 +277,19 @@ class EnergyBalanceDriver():
         slope = jnp.deg2rad(point_attrs.slope)
         surftemp = state.surftemp
         z0 = state.roughness  # Roughness length for momentum
-        z0t = z0/100          # Roughness length for heat
-        z0q = z0/10           # Roughness length for moisture
 
         # adjust wind speed to reference height
         z = 2 # reference height in m
         wind_2m = forcings.wind * jnp.where(
             WIND_REF_Z == 2, 1.0, jnp.log(2/z0) / jnp.log(WIND_REF_Z/z0)
         )
+
+        # roughness lengths for heat and moisture
+        if params.method_scalar_roughness == 'Andreas':
+            z0t, z0q = self.scalar_roughness_andreas(z0, wind_2m, z)
+        else:
+            z0t = z0/100
+            z0q = z0/10
 
         # transform humidity into mixing ratio (q) 
         Ewz = self.sat_vapor_pressure(forcings.temp)  # saturation vapor pressure at 2m
@@ -277,6 +306,23 @@ class EnergyBalanceDriver():
         is_evaporating = (jnp.abs(surftemp) < 1e-3) & ((qz - q0) > 0.0)
         Lv = jnp.where(is_evaporating, params.Lv_evap, params.Lv_sub)
 
+        if params.method_turbulent in ('OG', 'OG_hybrid'):
+            # katabatic forcing only exists when air is warmer than the surface;
+            # otherwise exchange falls back to the background term alone
+            temp_diff = forcings.temp - surftemp
+            surftempK = surftemp + params.celsius_to_kelvin
+            K_kat = params.og_kappa * jnp.maximum(temp_diff, 0.0) * jnp.sqrt(
+                GRAVITY / (surftempK * params.og_lapse_rate * params.og_prandtl))
+        else:
+            K_kat = 0.0
+
+        if params.method_turbulent == 'OG':
+            exchange = (params.og_Kb + K_kat) / 2  # replaces C * u [m s-1]
+
+            Qs = density_air * CP_AIR * exchange * temp_diff * jnp.cos(slope)
+            Ql = density_air * Lv * exchange * (qz - q0) * jnp.cos(slope)
+            return Qs, Ql
+
         # calculate richardson number
         safe_wind_sq = jnp.where(wind_2m == 0.0, 1e-5, wind_2m ** 2)
         RICHARDSON = (GRAVITY / tempK) * (forcings.temp - surftemp) \
@@ -288,19 +334,77 @@ class EnergyBalanceDriver():
         csT = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0t))
         csQ = KARMAN ** 2 / (jnp.log(z / z0) * jnp.log(z / z0q))
 
-        # Psi stability factor (Beljaars & Holtslag)
+        # Psi stability factor
+        ri_unstable = jnp.minimum(RICHARDSON, 0.0)
+        if params.method_stability == 'Gryanik':
+            psi_stable = self.stability_gryanik(jnp.maximum(RICHARDSON, 0.0), z / z0, z / z0t)
+        else:
+            # stable (1-5Ri)^2 shuts off turbulence at the critical Ri of 0.2 (Braithwaite 1995)
+            ri_stable = jnp.minimum(jnp.maximum(RICHARDSON, 0.0), 0.2)
+            psi_stable = (1.0 - 5.0 * ri_stable) ** 2
         psi = jnp.where(
             RICHARDSON <= 0.0,
-            jnp.sqrt(jnp.maximum(1.0 - 15.0 * RICHARDSON, 1e-10)),
-            jnp.exp(-5.0 * RICHARDSON)
+            jnp.sqrt(1.0 - 15.0 * ri_unstable),
+            psi_stable
         )
         
         # final flux calculation
-        Qs = density_air * CP_AIR * csT * psi * wind_2m * (forcings.temp - surftemp) * jnp.cos(slope)
-        Ql = density_air * Lv * csQ * psi * wind_2m * (qz - q0) * jnp.cos(slope)
+        if params.method_turbulent == 'OG_hybrid':
+            # Klok & Oerlemans (2002) C*u = (Kb + Kkat) / 2 with Kb = bulk exchange
+            exchange_T = (csT * psi * wind_2m + K_kat) / 2
+            exchange_Q = (csQ * psi * wind_2m + K_kat) / 2
+        else:
+            exchange_T = csT * psi * wind_2m
+            exchange_Q = csQ * psi * wind_2m
+        Qs = density_air * CP_AIR * exchange_T * (forcings.temp - surftemp) * jnp.cos(slope)
+        Ql = density_air * Lv * exchange_Q * (qz - q0) * jnp.cos(slope)
 
         return Qs, Ql
     
+    def stability_gryanik(self, ri, eps_m, eps_t):
+        """
+        Normalized heat transfer coefficient f_h for stable conditions from
+        the noniterative parameterization of Gryanik et al. (2020, JAS,
+        Eqs. 50, 54-56), fit to SHEBA measurements over sea ice. Unlike
+        the Businger-Dyer form it has no critical Richardson number.
+        """
+        PR0 = 0.98  # neutral-limit turbulent Prandtl number (Eq. 38)
+        ln_m = jnp.log(eps_m)
+        ln_t = jnp.log(eps_t)
+        ri_hat = ri / PR0
+
+        # stability parameter zeta (Eqs. 50, 54)
+        A = (ln_m + 23.50) ** 5.25 / (181.3 * (ln_t + 16.67) ** 2.625) \
+            * ((ln_m + 23.50) ** 2 / (ln_t + 16.67) - ln_m ** 2 / ln_t)
+        zeta = ln_m ** 2 / ln_t * ri_hat + A * ri_hat ** 3.625
+
+        # normalized transfer coefficients for momentum and heat (Eqs. 55, 56)
+        f_m = (1.0 + 50.0 / ln_m * ((1.0 + 0.3 * zeta) ** (1 / 3) - 1.0)) ** -2
+        f_h = jnp.sqrt(f_m) / (1.0 + 12.5 / ln_t * jnp.log(1.0 + 0.40 * zeta))
+        return f_h
+
+    def scalar_roughness_andreas(self, z0, wind, z):
+        """
+        Calculates roughness lengths for heat and moisture
+        using the surface renewal model (Andreas 1987).
+        """
+        params = self.params
+        ustar = params.karman * wind / jnp.log(z / z0)
+        reynolds = jnp.clip(ustar * z0 / params.kinematic_viscosity_air, 1e-3, 1000.0)
+        ln_re = jnp.log(reynolds)
+
+        # (b0, b1, b2) for the smooth, transitional and rough regimes
+        smooth = reynolds <= 0.135
+        rough = reynolds >= 2.5
+        def ln_ratio(b_smooth, b_trans, b_rough):
+            coeffs = [jnp.where(smooth, bs, jnp.where(rough, br, bt))
+                      for bs, bt, br in zip(b_smooth, b_trans, b_rough)]
+            return coeffs[0] + coeffs[1] * ln_re + coeffs[2] * ln_re ** 2
+
+        z0t = z0 * jnp.exp(ln_ratio((1.250, 0.0, 0.0), (0.149, -0.550, 0.0), (0.317, -0.565, -0.183)))
+        z0q = z0 * jnp.exp(ln_ratio((1.610, 0.0, 0.0), (0.351, -0.628, 0.0), (0.396, -0.512, -0.180)))
+        return z0t, z0q
+
     def sat_vapor_pressure(self, airtemp, method='ARM'):
         """
         Calculates saturation vapor pressure [Pa] 

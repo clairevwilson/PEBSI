@@ -26,22 +26,32 @@ from jax.scipy.interpolate import RegularGridInterpolator
 import pebsi.defaults as defaults
 
 # Fields must be broken into static and dynamic for JAX. 
+
 # Statics args are needed to initialize the model and
 # make choices in the compilation (e.g., options / methods)
-
 static_fields = [
-    'max_nlayers', 'albedo_TOD', 'bias_vars', 'n_heat_steps', 
-    'store_vars', 'differentiable',
+    'n_layers', 'albedo_TOD', 'bias_vars', 'n_heat_steps',
+    'store_vars', 'differentiable', 'checkpoint_hourly', 'steps_per_output', 'month_lengths',
     
     'intensive_vars','extensive_vars', 'all_layer_vars', 'cmd_args',
+    'carbon_vars','climate_all_vars','climate_optional_vars',
+    'secondary_climate_string', 'secondary_vars',
 
     'method_turbulent', 'method_stability', 'method_diffuse',
     'method_heateq', 'method_densification', 'method_cooling',
     'method_ground', 'method_conductivity',
+    'method_scalar_roughness',
 
-    'option_SWpen', 'option_accel_grains', 
+    'option_SWpen', 'option_accel_grains',
     'option_uniform_ice', 'option_uniform_snow',
-    'option_flat_plates',
+    'option_flat_plates', 'option_dynamics',
+    'option_ice_albedo_tif', 'option_ice_thickness_tif',
+    'option_windmaps', 
+    'option_precomputed_costheta', 'option_preclimit',
+
+    'dynamics_dx', 'dynamics_margin', 'dynamics_n_levels',
+    'dynamics_rheology_B', 'dynamics_rheology_n', 'dynamics_rheology_eps_reg',
+    'dynamics_sliding_beta', 'dynamics_sliding_m',
 
     'constant_snowfall_density','constant_freshgrainsize',
     'constant_drdry','constant_irrwater',
@@ -50,14 +60,17 @@ static_fields = [
 # Dynamic args are parameters / constants which are 
 # allowed to be passed as scalars or as (N_POINTS, ) arrays.
 
-dynamic_fields = ['kp','wind_factor','precgrad',            
+dynamic_fields = ['kp','wind_factor','precgrad',
                 'dust_factor','lapse_rate',
                 'albedo_ice','albedo_firn','albedo_fresh_snow',
                 'temp_depth','roughness_aging_rate',
                 'roughness_fresh_snow', 'roughness_aged_snow',
                 'roughness_firn','roughness_ice',
                 'ksp_BC', 'ksp_OC', 'ksp_dust',
-                'initial_snow_depth', 'initial_firn_depth']
+                'initial_snow_depth', 'initial_firn_depth', 'initial_ice_depth',
+                'Sr','Boone_c1','Boone_c2','Boone_c3','Boone_c4','Boone_c5',
+                'grainsize_rfz','snow_threshold_low','snow_threshold_high',
+                'og_kappa','og_lapse_rate','og_prandtl','og_Kb']
 
 # External args are those which are only needed in the
 # CPU intiialization / output functions but are not used 
@@ -67,7 +80,7 @@ external_fields = [
     'start_date', 'end_date', 'rgi_ids', 'sites',
     'bias_vars', 'station_elevation',
     'use_config', 'rgi_region', 'use_aws', 'store_data',
-    'testing', 'progress_bar', 'debug'
+    'testing', 'progress_bar', 'debug', 'output_freq'
 ]
 
 # Any other parameters from defaults.py not listed here:
@@ -115,6 +128,15 @@ class Config():
                     
         # 2: fill out variables from yaml file, if specified
         yaml_fn = args.config_fn
+
+        # if resuming without an explicit config path, use the config saved in the checkpoint dir
+        if getattr(cmd_args, 'resume_from', None):
+            resume_config = os.path.join(cmd_args.resume_from, os.path.basename(yaml_fn))
+            if os.path.exists(resume_config):
+                yaml_fn = resume_config
+                args.config_fn = resume_config
+                cmd_args.use_config = True
+
         if cmd_args.use_config:
             # open yaml
             with open(yaml_fn, 'r') as f:
@@ -223,21 +245,82 @@ class Config():
         """
         Checks that all configurations are valid.
         """
-        # MODEL OPTIONS 
-        # make sure temporal chunks is a fairly even multiplier of 1 year
-        temporal_chunks = getattr(self.args, 'temporal_chunks')
-        threshold_hours = 10 * 24
+        # TEMPORAL CHUNKS
+        temporal_chunk_years = getattr(self.args, 'temporal_chunk_years')
         hours_in_year = 365 * 24
-        smaller, larger = sorted([temporal_chunks, hours_in_year])
-        remainder = larger % smaller
-        to_next = smaller - remainder if remainder != 0 else 0
-        assert min(remainder, to_next) <= threshold_hours, \
-            f'Temporal chunks should be an ~ even multiplier of 8760'
+        self.args.temporal_chunk_hours = round(temporal_chunk_years * hours_in_year)
+
+        # POINT DISTRIBUTION
+        method_distribute = getattr(self.args, 'method_distribute')
+        assert method_distribute in ('sites', 'grid', 'relief', 'mesh'), \
+            f"method_distribute must be 'sites', 'grid', 'relief' or 'mesh', got {method_distribute!r}"
+
+        if method_distribute == 'mesh':
+            point_spacing = getattr(self.args, 'point_spacing')
+            assert point_spacing > 0, \
+                f'point_spacing must be a positive length in meters, got {point_spacing!r}'
+
+        if method_distribute == 'relief':
+            spread_per_km = getattr(self.args, 'point_spread_per_km')
+            assert spread_per_km > 0, \
+                f'point_spread_per_km must be positive [cm w.e. a-1 km-1], got {spread_per_km!r}'
+            tolerance = getattr(self.args, 'point_error_tolerance')
+            confidence = getattr(self.args, 'point_error_confidence')
+            coefficient = getattr(self.args, 'point_error_coefficient')
+            assert tolerance > 0, \
+                f'point_error_tolerance must be positive [cm w.e. a-1], got {tolerance!r}'
+            assert confidence > 0, \
+                f'point_error_confidence must be positive, got {confidence!r}'
+            assert coefficient > 0, \
+                f'point_error_coefficient must be positive, got {coefficient!r}'
+
+        # OUTPUT RESOLUTION
+        output_freq = getattr(self.args, 'output_freq')
+        assert output_freq in ('hourly', 'daily', 'monthly'), \
+            f"output_freq must be 'hourly', 'daily', or 'monthly', got {output_freq!r}"
+
+        # set per-chunk in simulation.py when output_freq == 'monthly'
+        self.args.month_lengths = ()
+
+        if output_freq == 'hourly':
+            self.args.steps_per_output = 1
+        elif output_freq == 'daily':
+            self.args.steps_per_output = 24
+            # chunks must divide evenly into whole days
+            self.args.temporal_chunk_hours = 24 * round(self.args.temporal_chunk_hours / 24)
+            # self.dates is an inclusive date_range, so +1 vs raw hour diff
+            total_steps = len(pd.date_range(self.args.start_date, self.args.end_date, freq='h'))
+            assert total_steps % 24 == 0, \
+                'output_freq=daily requires the simulation to span whole days: ' \
+                'len(date_range(start_date, end_date, freq="h")) must be a multiple of 24 '
+        else:  # monthly; month_lengths drives aggregation instead
+            self.args.steps_per_output = 1
+
+        # GLACIER DYNAMICS
+        if getattr(self.args, 'option_dynamics'):
+            period = self.args.dynamics_period_years
+            assert period >= 1 and period == int(period), \
+                'dynamics_period_years must be a positive integer (sub-annual GLIDE coupling is not supported)'
+
+            if period < temporal_chunk_years:
+                print('! Temporal chunks span more years than the dynamics period:')
+                print(f'   Running dynamics once per temporal chunk ({temporal_chunk_years} years) instead of every {period} year(s)')
+
+        # TURBULENT FLUXES
+        method_turbulent = getattr(self.args, 'method_turbulent')
+        assert method_turbulent in ('bulk', 'OG', 'OG_hybrid'), \
+            f"method_turbulent must be 'bulk', 'OG' or 'OG_hybrid', got {method_turbulent!r}"
 
         # PHYSICAL CONSTANTS
         # parameters that must be positive
         must_be_positive = ['kp','wind_factor','dust_factor',
                             'initial_snow_depth','roughness_aging_rate']
+        if method_turbulent == 'OG':
+            must_be_positive += ['og_kappa', 'og_lapse_rate', 'og_prandtl', 'og_Kb']
+        elif method_turbulent == 'OG_hybrid':
+            # og_kappa = 0 is allowed here: it reduces OG_hybrid to half the 'bulk' flux
+            must_be_positive += ['og_lapse_rate', 'og_prandtl']
+            assert np.all(np.array(getattr(self.args, 'og_kappa')) >= 0), 'og_kappa must be 0 or positive'
         for var in must_be_positive:
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data > 0), f'{var} must be positive'
@@ -247,7 +330,7 @@ class Config():
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data < 0), f'{var} must be negative'
         
-        must_be_0_or_positive = ['initial_firn_depth', 'precgrad']
+        must_be_0_or_positive = ['initial_firn_depth', 'initial_ice_depth', 'precgrad']
         for var in must_be_0_or_positive:
             var_data = np.array(getattr(self.args, var))
             assert np.all(var_data >= 0), f'{var} must be 0 or positive'
@@ -258,7 +341,6 @@ class Config():
             var_data = np.array(getattr(self.args, var))
             assert np.all((0 < var_data) & (var_data < 1))
 
-        # print quantile mapping warning
         if self.args.debug and len(self.args.bias_vars) > 0:
             print('~ Applying quantile mapping for:',self.args.bias_vars)
 

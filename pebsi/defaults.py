@@ -26,7 +26,6 @@ import socket
 #                             USER OPTIONS (CAN ALL BE FLAGGED FROM COMMAND LINE)
 # ====================================================================================================================
 use_config = True       #$ -c, --use_config         Use configuration file?
-output_fp = None        #$ -out, --output_fp        Output file path (None for a default, descriptive name)
 rgi_ids = None          #$ -ids, --rgi_ids          List of RGI glacier IDs to simulate
 rgi_region = 1          #$ -reg, --rgi_region       RGI region to run (rgi_ids overrides this)
 sites = None            #$ --sites                  Names of sites to use with same length as rgi_ids
@@ -34,7 +33,6 @@ use_aws = False         #$ -use_aws                 Use AWS data?
 store_data = False      #$ -store_data              Store output?
 debug = False           #$ -debug                   Print debug statements?
 progress_bar = False    #$ -pb, --progress_bar      Show progress bar?
-testing = False         #$ --testing                Run in testing mode?
 
 # ====================================================================================================================
 #                      DIRECTORIES AND FILEPATHS (ALL FILEPATHS ARE RELATIVE TO PEBSI/)
@@ -50,8 +48,7 @@ machine = socket.gethostname()
 
 # GENERAL
 config_fn = 'config.yaml'           #$ -cf, --config_fn     # Configuration .yaml file    
-output_fp = '../Output/'                                    # General output filepath
-output_fn = '{g}_{i}.zarr'                                  # Output file name, to be formatted by glacier ID and point index
+output_fp = '../Output/test/'       #$ -out, --output_fp    # Output folder to store output, config copy, etc.
 
 # GLACIER
 rgi_fp = '../RGI/rgi60/00_rgi60_attribs/'                   # Randolph Glacier Inventory attributes filepath
@@ -60,6 +57,9 @@ dem_fn = None                                               # DEM filename to ov
 shading_fp = '../data/shading/'                             # Shading data filepath for output of shading model
 sample_shading_fp = 'data/sample_data/'                     # Shading filepath for the test glacier (region 00)
 shading_fn = '{gid}_shadows.zarr'                           # Shading data filename template
+thickness_fn = '../data/ice_thickness/RGI60-{gid}_thickness.tif' # Ice thickness filename template
+ice_albedo_fn = '../data/ice_albedo/{gid}_albedo.tif'       # Ice albedo filename template
+windmap_fn = '../data/windmapper/{gid}.nc'                  # Wind speed-up filename template
 
 # CLIMATE
 climate_fp = '../climate_data/'                             # General climate data filepath
@@ -79,7 +79,7 @@ initial_LAP_fn = 'data/init/initial_laps_profile.csv'       # Initial LAP conten
 # UTILITY
 metadata_fn = 'data/glacier_metadata.csv'                   # Glacier metadata filename containing site information
 grainsize_fn = 'data/grainsize/drygrainsizeSSAin{s}.nc'     # Grain size evolution lookup table filepath
-emulator_fn = 'data/snicar_emulator.npz'                    # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
+emulator_fn = 'data/snicar_emulator_newest.npz'                  # SNICAR emulator .npz file (CANNOT BE CHANGED IN CONFIG.YAML)
 
 # CLIMATE
 merra2_laps_fn = 'MERRA2/reg{r}_{sp}_regression_map.nc'     # Regional file of BC2-->BCtot and OC2-->OCtot ratios
@@ -87,6 +87,7 @@ ukesm_merra_laps_fn = 'ukesm_merra2_reg{r}_{sp}{t}.nc'      # Regional file of U
 ukesm_fp = '../UKESM/dr401_GFED/'                           # UK-ESM deposition data filepath relative to climate_fp plus one level
 ukesm_fn = 'sum_{sp}_{t}deposition_kgm-2s-1.nc'             # UK-ESM deposition data filename
 bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment file name
+bias_cell_fn = 'MERRA2/{r}/cell_cdfs_{r}.nc' # CDF of each MERRA-2 cell, relative to climate_fp (shop/preprocessing/prepare_cell_climatology.py)
 
 # ====================================================================================================================
 #                                            CLIMATE AND TIME INPUTS
@@ -94,12 +95,18 @@ bias_fn = 'data/quantile_cdfs.nc'                           # Bias adjustment fi
 # TEMPORAL
 start_date = '2024-04-20 00:00'             #$ -start, --start_date     Simulation start time in UTC
 end_date = '2024-04-22 00:00'               #$ -end, --end_date         Simulation end time in UTC
-temporal_chunks = 8760                      # Number of chunks to split up simulation into
-                                            # chunk size should be close to divisible by 8760 for clean spin-up
+temporal_chunk_years = 1                    # Length of a temporal chunk, in years (1/x fractions allowed, e.g. 0.5)
 n_spinup_years = 1                          # Number of years to repeat forcings to spin-up the model
+dynamics_period_years = 1                   # Interval (whole years) between GLIDE coupling steps, if option_dynamics
 
 # SPATIAL 
 n_points = 6                                # Number of points to divide domain into
+point_spacing = 300                         # Target mesh element edge length if method_distribute='mesh' [m]
+# method_distribute='relief' predicts sigma from RGI elevation range and sizes the mesh to hold this tolerance
+point_error_tolerance = 3.0                 # Allowed error on glacier-wide mass balance [cm w.e. a-1]
+point_error_confidence = 1.96               # Standard normal multiplier for 95% confidence; not meant to be changed casually
+point_error_coefficient = 0.0603            # Fitted constant relating sigma to the error of the mean mass balance
+point_spread_per_km = 160.0                # Mass balance standard deviation per km of elevation range [cm w.e. a-1 km-1]
 
 # WEATHER STATION
 aws_elev = None                             # Elevation of the weather station [m a.s.l.]
@@ -113,12 +120,29 @@ ukesm_vn = (                                # Name of var in UKESM data
         'particles_due_to_{t}_deposition')   
 wind_ref_height = 2                         # Reference height for wind speed [m]
 
+# SECONDARY CLIMATE SOURCE
+secondary_climate_string = None             # Suffix appended to region string to load vars from an alternate folder
+secondary_vars = []                         # Variables to load from the secondary climate folder ^
+
 # BIAS CORRECTION
 bias_vars = []                              # Vars to correct by quantile mapping (only applied to reanalysis data)
 
 # PERTURBATIONS
 temp_perturb = 0                            # Additive factor to apply to model temperature
 tp_perturb = 1                              # Multiplicative factor to apply to precipitation
+
+# SYNTHETIC HEATWAVE (added to the climate after bias correction)
+heatwave_start = None                       # First local day of the heatwave ('YYYY-MM-DD'); None for no heatwave
+heatwave_duration = 0                       # Length of the heatwave [days]
+heatwave_intensity = 1                      # Multiple of each cell's average heatwave [-]
+heatwave_remove_precip = False              # Set precipitation to zero during the heatwave?
+heatwave_anomaly_fn = 'MERRA2/reg01_no_heatwaves/heatwave_anomaly.nc'  # Average heatwave by cell, relative to climate_fp (extreme_weather_analysis/prepare_no_heatwaves.py)
+
+# SYNTHETIC WILDFIRE (added to the UK-ESM or MERRA-2 deposition before its ratio)
+wildfire_start = None                       # First UTC day of the wildfire ('YYYY-MM-DD'); None for no wildfire
+wildfire_duration = 0                       # Length of the wildfire [days]
+wildfire_intensity = 1                      # Multiple of each cell's average wildfire [-]
+wildfire_anomaly_fn = 'UKESM/wildfire_anomaly.nc'  # Average wildfire by cell, relative to climate_fp
 
 # ====================================================================================================================
 #                                            MODEL OPTIONS
@@ -131,20 +155,33 @@ initialize_water = 'dry'                # 'dry' or 'saturated'
 surftemp_guess =  -10                   # guess for surface temperature of first timestep [C]
 initial_snow_depth = 1                  # default amount of initial snow [m]
 initial_firn_depth = 10                 # default amount of initial firn [m] (only for sites identified as accumulation area)
+initial_ice_depth = 50                  # default amount of initial ice [m] (unless option_ice_thickness_tif)
 
 # OUTPUT
-store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate']
+store_vars = ['MB','EB','climate']      # Variables to store of the possible set: ['MB','EB','layers','climate','minimal']
+output_freq = 'hourly'                  # Output resolution: 'hourly', 'daily', or 'monthly' (lower resolution reduces VRAM and disk usage)
 differentiable = False                  # Enable gradient checkpointing inside inner scan (set True for optimization)
+checkpoint_hourly = False               # With differentiable and daily output, also checkpoint each hourly step: ~4x less VRAM per point, one extra forward pass
+top_water_depth = 0.5                   # Depth below the surface [m] over which top_water sums liquid water
 
 # METHODS
-method_distribute = 'scatter'           # 'scatter', 'sites'
+method_distribute = 'grid'              # 'sites', 'grid', 'relief', 'mesh'
 method_densification = 'Boone'          # 'Boone', 'HerronLangway', 'Kojima'
 method_conductivity = 'Douville'        # 'Sauter', 'Douville', 'Jansson', 'OstinAndersson', 'VanDusen'
+method_scalar_roughness = 'Andreas'     # 'Andreas', 'ratio'
+method_stability = 'Braithwaite'        # 'Braithwaite' (critical Ri of 0.2) or 'Gryanik' (no critical Ri)
+method_turbulent = 'bulk'               # 'bulk' (Richardson-corrected bulk transfer), 'OG' (Oerlemans & Grisogono 2002 katabatic, Klok & Oerlemans 2002 form) or 'OG_hybrid' (OG with the bulk exchange as background: (C psi u + Kkat)/2)
 
 # OPTIONAL MODULES
 option_SWpen = True                     # Calculate penetration of shortwave radiation?
 option_flat_plates = False              # Use flat grain shapes in SNICAR emulator or only spherical?
 option_accel_grains = False             # Accelerate wet grain metamorphosis?
+option_dynamics = False                 # Run glacier dynamics with GLIDE?
+option_ice_albedo_tif = False           # Take ice albedo from preprocessed .tif?
+option_ice_thickness_tif = False        # Take initial ice thickness from Farinotti .tif?
+option_windmaps = False                 # Load per-point wind speed-up from preprocessed .zarr?
+option_precomputed_costheta = True      # Cell-average cos(solar incidence) per pixel?
+option_preclimit = False                # Taper precipitation over the uppermost 25% of big glaciers?
 
 # CONSTANT SWITCHES
 constant_snowfall_density = False       # False or density [kg m-3]
@@ -158,15 +195,22 @@ constant_irrwater = True                # True or False to estimate from density
 # TIMESTEP
 dt = 3600                   # Model timestep [s]
 daily_dt = 86400            # Seconds in a day [s]
-n_heat_steps = 5            # Number of times to run heat equation per dt [-]
+n_heat_steps = 5            # Number of times to run heat equation per dt [-] (explicit scheme only)
+method_heateq = 'implicit'  # 'explicit' (FTCS substeps) or 'implicit' (backward Euler, unconditionally stable)
 
 # GRAIN SIZE INITIALIZATION
 initSSA = 80   # estimate of Specific Surface Area of fresh snowfall (60, 80 or 100)
 
-# INTENSIVE AND EXTENSIVE LAYER VARIABLES
+# INTENSIVE & EXTENSIVE LAYER VARIABLES
 intensive_vars = ['ltemp','ldensity','lage','lgrainsize','ltype']
 extensive_vars = ['lice','lwater','lBC','lOC','ldust','ldrefreeze','lrefreeze']
 all_layer_vars = intensive_vars + extensive_vars + ['lheight','ldepth']
+
+# REQUIRED & OPTIONAL CLIMATE VARIABLES
+climate_all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
+                    'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
+climate_optional_vars = ['SWout','LWout','tcc','NR','albedo']
+carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
 
 # ====================================================================================================================
 #                                            PARAMETERS AND CONSTANTS
@@ -177,6 +221,9 @@ wind_factor = 1             #* Wind factor [-]
 kp = 2.25                   #* Precipitation factor [-]
 dust_factor = 1             #* Dust factor [-]
 precgrad = 0                #* Precipitation gradient with elevation [% m-1] 
+preclimit_elev_range = 1000 # Glacier elevation range above which option_preclimit applies [m]
+preclimit_frac = 0.75       # Elevation-range fraction above which precipitation is tapered [-]
+preclimit_floor = 0.875     # Tapered precipitation floor, as a fraction of the glacier maximum [-]
 lapse_rate = -6.5           #* Temperature lapse rate for both gcm to glacier and on glacier between elevation bins [K km-1]
 albedo_fresh_snow = 0.85    #* Albedo of fresh snow [-]
 albedo_ice = 0.47           #* Albedo of ice [-] 
@@ -191,9 +238,9 @@ dz_toplayer = 0.05          # Thickness of the uppermost layer [m]
 dz_snowlayer = 0.1          # Thickness of snow layers if option_uniform_snow [m]
 dz_icelayer = 5             # Thickness of ice layers if option_uniform_ice [m]
 layer_growth = 0.3          # Rate of exponential growth of layer size (smaller layer growth = more layers) recommend 0.3-.6
-max_nlayers = 50            # Maximum number of vertical layers allowed (more layers --> larger file size)
+n_layers = 50               # Number of vertical layers (more layers --> larger file size)
 min_area = 2                # Minimum area of glacier to simulate if running an entire region [km2]
-min_dz = 0.01               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
+min_dz = 0.03               # Minimum size a layer can be before it is merged with layer below, regardless of option_uniform [m]
 min_layer_mass = 0.001      # Threshold below which to discard layer mass [kg m-2 = mm w.e.]
 min_glacier_depth = 1000    # Minimum ice depth to end the simulation (fills up with zeros) [kg m-2 = mm w.e.]
 max_temp_change = 2         # Maximum possible temperature change in a timestep for a single layer [K hr-1]
@@ -239,18 +286,34 @@ Boone_c3 = 0.046            # Densification c3 [m3 kg-1]
 Boone_c4 = 0.081            # Densification c4 [K-1]
 Boone_c5 = 0.016            # Densification parameter [m3 kg-1]
 roughness_fresh_snow = 0.24 #* Surface roughness length for fresh snow [mm] (Moelg et al. 2012, TC)
-roughness_aged_snow = 10    #* Surface roughness length for aged snow [mm]
+roughness_aged_snow = 4     #* Surface roughness length for aged snow [mm]
 roughness_firn = 4          #* Surface roughness length for firn [mm] (Moelg et al. 2012, TC)
-roughness_ice = 20          #* Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
-roughness_aging_rate = 0.5  #* Rate in mm/day fresh --> aged snow (60 days from 0.24 to 4.0 => 0.06267)
-wet_grain_C = 4.22e-13      # Constant for wet snow metamorphosis [m3 s-1]   4.22e-13
+roughness_ice = 1.7         #* Surface roughness length for ice [mm] (Moelg et al. 2012, TC)
+roughness_aging_rate = 0.06267 #* Rate from fresh --> aged snow (60 days from 0.24 to 4.0) [mm day-1]
+kinematic_viscosity_air = 1.4e-5 # Kinematic viscosity of air near 0 C [m2 s-1]
+# Katabatic turbulent exchange, only used if method_turbulent='OG' (Oerlemans & Grisogono 2002; Klok & Oerlemans 2002; Munro 2004 eqs. 1, 8-10)
+og_kappa = 0.0004           # Empirical katabatic scaling constant [-] (Oerlemans & Grisogono 2002, Pasterzenkees)
+og_lapse_rate = 0.005       # Ambient potential temperature lapse rate gamma [K m-1] (Oerlemans & Grisogono 2002)
+og_prandtl = 5              # Turbulent Prandtl number [-] (Oerlemans & Grisogono 2002)
+og_Kb = 0.002               # Background (synoptic) exchange parameter [m s-1]; placeholder, ~1.6-2.1e-3 reproduces mean JJA sensible heat at Gulkana B in base_0/AD_result_1
+wet_grain_C = 4.22e-13      # Constant for wet snow metamorphosis [m3 s-1]
 Sr = 0.05                   # Fraction of irreducible water content for percolation [-]
-Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3) (0.12)
-Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3) (0.033)
+Sr_dense = 0.12             # Irreducible water content fraction for dense snow (>500 kg m-3)
+Sr_light = 0.033            # Irreducible water content fraction for less dense snow (<= 500 kg m-3)
 albedo_ground = 0.2         #* Albedo of surrounding bedrock [-]
+# <<<<<< Glacier dynamics (GLIDE coupling, only used if option_dynamics) >>>>>>
+dynamics_dx = 100.0                    # GLIDE grid cell size [m]
+dynamics_margin = 2000.0               # Ice-free buffer around glacier outlines for the GLIDE grid [m]
+dynamics_n_levels = 5                  # GLIDE multigrid levels (grid ny/nx rounded up to a multiple of 2**(n_levels-1))
+dynamics_rheology_B = 1e-17 ** (-1.0 / 3.0) / (density_ice * gravity)  # Glen's law B
+dynamics_rheology_n = 3.0              # Glen's law n
+dynamics_rheology_eps_reg = 1e-6       # Strain-rate regularizer
+dynamics_sliding_beta = 2.5            # Basal sliding coefficient
+dynamics_sliding_m = 1.0 / 3.0         # Sliding law exponent
 # <<<<<< SNICAR >>>>>
 albedo_TOD = [14]           # List of time(s) of day to calculate albedo [hr] 
 diffuse_cloud_limit = 0.6   # Threshold to consider cloudy vs clear-sky in SNICAR [-]
+albedo_impurity_depth = 0.05 # Near-surface depth over which impurity concentrations are averaged for SNICAR [m]
 # <<<<<< BC and dust >>>>>
 # 1 kg m-3 = 1e6 ppb = ng g-1 = ug L-1
 ksp_BC = 1                  #* Meltwater scavenging efficiency of BC [-] (0.1-0.2 from CLM5)

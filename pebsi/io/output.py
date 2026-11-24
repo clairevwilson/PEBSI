@@ -32,16 +32,22 @@ class Output():
         self.terrain = terrain
         self.resume_fp = resume_fp
 
-        self.N_LAYERS = params.max_nlayers
+        self.N_LAYERS = params.n_layers
         self.N_POINTS = terrain.N_POINTS
 
         self.all_vars = OUTPUT_GROUPS
 
         # make sure the requested storage variables are valid
-        for v in params.store_vars: assert v in OUTPUT_GROUPS, f'Invalid output group: {v}'
+        all_vars_flat = [vv for vvs in OUTPUT_GROUPS.values() for vv in vvs]
+        for v in params.store_vars:
+            if v not in OUTPUT_GROUPS and v not in all_vars_flat:
+                assert v in OUTPUT_GROUPS, f'Invalid output group or variable: {v}'
 
         # extract the actual variables to store
-        self.store = [v for g in params.store_vars for v in OUTPUT_GROUPS[g]]
+        self.store = [
+            v for g in params.store_vars 
+            for v in (OUTPUT_GROUPS[g] if g in OUTPUT_GROUPS else [g])
+        ]
 
         # find the filepath to store the data
         self.get_output_name()
@@ -58,15 +64,12 @@ class Output():
         """
         params = self.params
 
-        # specify individual file output name format
-        self.output_fn = params.output_fn
-
         # when resuming, reuse the original output directory without incrementing
         if self.resume_fp is not None:
             self.output_fp = self.resume_fp
             return
 
-        # crop the trailing `/``
+        # crop the trailing `/`
         if str(params.output_fp).endswith('/'):
             output_fp_compare = params.output_fp[:-1]
         else:
@@ -117,28 +120,32 @@ class Output():
 
         if chunk_idx == 0:
             # make sure time is chunked in a reasonable chunk; keep point/layer whole
+            time_chunk = {'hourly': 24 * 7, 'daily': 30, 'monthly': 12}.get(
+                getattr(self.params, 'output_freq', 'hourly'), 24 * 7)
+
             encoding = {}
             for var in ds_chunk.data_vars:
                 if ds_chunk[var].ndim == 2:
-                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS)}
+                    encoding[var] = {'chunks': (time_chunk, self.N_POINTS)}
                 else:
-                    encoding[var] = {'chunks': (24 * 7, self.N_POINTS, self.N_LAYERS)}
+                    encoding[var] = {'chunks': (time_chunk, self.N_POINTS, self.N_LAYERS)}
             ds_chunk.to_zarr(self.out_fn, mode='w', consolidated=False, encoding=encoding)
+            
+            # write site info right away, in case the simulation crashes
+            self.add_site_info()
         else:
             ds_chunk.to_zarr(self.out_fn, append_dim='time', consolidated=False)
 
-    def close_out(self, params, time_elapsed, climate):
+    def close_out(self, params, time_elapsed):
         """
         Closes out the dataset, storing last helpful things:
           - Units for each variable
           - Additional variables like net radiation
-          - Site info (rgiid, lat, lon, elev) per point
           - Metadata attributes
         """
         self.add_units()
         self.add_vars()
-        self.add_site_info()
-        self.add_basic_attrs(params, time_elapsed, climate)
+        self.add_basic_attrs(params, time_elapsed)
         self.rechunk_final()
         return
 
@@ -190,7 +197,8 @@ class Output():
             'layerdensity': 'kg m-3', 'layerBC':'ppb',
             'layerOC': 'ppb', 'layerdust':'ppm',
             'layergrainsize': 'um', 'layerage': 'days',
-            'layertype': '-',
+            'layertype': '-', 'total_water': 'kg m-2',
+            'top_water': 'kg m-2',
         }
 
         z = zarr.open(self.out_fn, mode='a')
@@ -216,8 +224,7 @@ class Output():
           - Net mass balance MB [m w.e.]
           - Summed snow, firn and ice heights [m]
         """
-        # open lazily (dask-backed) so derived variables stay chunked instead
-        # of materializing the entire store (all points x time x layers) in RAM
+        # open lazily (dask-backed) so derived variables stay chunked
         ds = xr.open_zarr(self.out_fn, consolidated=False, chunks={})
         new_vars = {}
 
@@ -243,8 +250,9 @@ class Output():
             new_vars['longwave_net'] = LWnet.assign_attrs(units='W m-2')
             new_vars['net_radiation'] = NetRad.assign_attrs(units='W m-2')
 
-        # add summed mass balance term
-        if np.all([f in self.store for f in ['accumulation','refreeze','melt']]):
+        # add summed mass balance term, unless it was already stored 
+        have_mb_terms = np.all([f in self.store for f in ['accumulation','refreeze','melt']])
+        if 'mass_balance' not in self.store and have_mb_terms:
             MB = ds['accumulation'] + ds['refreeze'] - ds['melt']
             new_vars['mass_balance'] = MB.assign_attrs(units='m w.e.')
 
@@ -276,15 +284,17 @@ class Output():
             'rgiid': (['point'], np.array(self.terrain.rgiid_n, dtype=str)),
             'lat': (['point'], np.array(self.terrain.lat_n, dtype=float)),
             'lon': (['point'], np.array(self.terrain.lon_n, dtype=float)),
+            'elev': (['point'], np.array(self.terrain.elev_n, dtype=float))
         }
-        if self.terrain.elev_n is not None:
-            site_vars['elev'] = (['point'], np.array(self.terrain.elev_n, dtype=float))
+
+        if self.terrain.weight_n is not None:
+            site_vars['weight'] = (['point'], np.array(self.terrain.weight_n, dtype=float))
 
         ds_site = xr.Dataset(site_vars, coords={'point': np.arange(self.N_POINTS)})
         ds_site.to_zarr(self.out_fn, mode='a')
         return
 
-    def add_basic_attrs(self, params, time_elapsed, climate):
+    def add_basic_attrs(self, params, time_elapsed):
         """
         Adds informational attributes to the output dataset.
         - length of the simulation (time_elapsed)
@@ -302,37 +312,35 @@ class Output():
         params : command line arguments
         time_elapsed : float
             Run time for the whole simulation
-        climate
-            Class object from pebsi.climate
         """
         # get elapsed time
         time_elapsed = f'{time_elapsed:.1f} s'
 
-        # get inforation about climate data sources
+        # get information about climate data sources
+        # params.climate_measured_vars and params.climate_all_vars are set in
+        # PEBSI.run() before the main loop (and updated each chunk in pack_forcings)
         which_re = params.climate_source
-        re_str = ''
+        measured = params.climate_measured_vars
         if params.use_aws:
-            measured = climate.measured_vars
             which_AWS = params.aws_fn
             AWS_elev = f'{params.aws_elev:.1f} m a.s.l.'
             AWS_str = ', '.join(measured)
-            re_vars = [e for e in climate.all_vars if e not in measured]
-            if 'vwind' in re_vars and not 'uwind' in re_vars:
+            re_vars = [e for e in params.climate_all_vars if e not in measured]
+            if 'vwind' in re_vars and 'uwind' not in re_vars:
                 re_vars.remove('vwind')
-            if 'uwind' in re_vars and not 'vwind' in re_vars:
+            if 'uwind' in re_vars and 'vwind' not in re_vars:
                 re_vars.remove('uwind')
-            re_str += ', '.join(re_vars)
+            if 'NR' in measured and 'LWin' in re_vars:
+                re_vars.remove('LWin')
+            re_str = ', '.join(re_vars)
+            corr_vars = [v for v in params.bias_vars if v not in measured]
         else:
-            re_str += 'all'
+            re_str = 'all'
             AWS_str = 'none'
             AWS_elev = '-'
             which_AWS = 'none'
+            corr_vars = list(params.bias_vars)
 
-        # get information about bias correction
-        if params.use_aws:
-            corr_vars = [v for v in climate.bias_vars if v not in measured]
-        else:
-            corr_vars = climate.bias_vars
         corr_str = ', '.join(corr_vars)
         corr_str = 'none' if corr_str == '' else corr_str
 
@@ -354,7 +362,7 @@ class Output():
 
         # list variables from config that can be skipped
         skip = ['rgi_ids', 'store_data','progress_bar','debug',
-                    'start_date','end_date','output_fn','testing']
+                    'start_date','end_date','testing']
 
         # values that vary per point become per-point data variables
         per_point_vars = {}
