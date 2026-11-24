@@ -128,11 +128,18 @@ class MassBalanceDriver:
             (N_POINTS,) water that no longer has 
             pore space due to densification
         """
-        # densification is only run daily
+        # densification is only run daily, at each point's local midnight
         is_day_start = forcings.local_hour == 0
+        def densify(s):
+            new_s, squeezed = self.densification(s)
+            def keep(new, old):
+                if new.ndim == 0 or new.shape[0] != is_day_start.shape[0]:
+                    return new
+                return jnp.where(is_day_start.reshape((-1,) + (1,) * (new.ndim - 1)), new, old)
+            return jax.tree_util.tree_map(keep, new_s, s), jnp.where(is_day_start, squeezed, 0.0)
         state, water_squeezed_out = jax.lax.cond(
             jnp.any(is_day_start),
-            lambda s: self.densification(s),
+            densify,
             lambda s: (s, jnp.zeros_like(state.albedo)),
             state
         )
@@ -1465,8 +1472,8 @@ class MassBalanceDriver:
                 1, state.ltype
             )
         
-            # reset cumulative refreeze and annual albedo
-            new_lrefreeze = jnp.zeros_like(state.lrefreeze)
+            # reset cumulative refreeze and annual albedo (only on the converting glaciers)
+            new_lrefreeze = jnp.where(convert_firn_pt[:, None], 0.0, state.lrefreeze)
             new_firn_converted = jnp.where(
                 convert_firn_pt, True, annual_firn_converted
             )
