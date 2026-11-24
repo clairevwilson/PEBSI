@@ -68,7 +68,7 @@ class Terrain:
             self.elev_n = self.slope_n = self.aspect_n = self.weight_n = None
             return
 
-        if self.params.method_distribute in ('grid', 'adaptive', 'relief', 'mesh'):
+        if self.params.method_distribute in ('grid', 'relief', 'mesh'):
             # every distribution reads elevation, slope and aspect
             # off the DEM later, in run_dem_functions
             self.elev_n = None
@@ -81,13 +81,6 @@ class Terrain:
             if self.params.method_distribute == 'grid':
                 lats, lons, glaciers, weights = mesh.distribute_grid(
                     *args, self.params.n_points)
-
-            elif self.params.method_distribute == 'adaptive':
-                lats, lons, glaciers, weights = mesh.distribute_rule(
-                    *args, self.params.sigma_table_fn,
-                    self.params.point_error_tolerance,
-                    self.params.point_error_coefficient,
-                    confidence=self.params.point_error_confidence)
 
             elif self.params.method_distribute == 'relief':
                 lats, lons, glaciers, weights = mesh.distribute_relief(

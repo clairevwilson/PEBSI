@@ -252,8 +252,8 @@ class Config():
 
         # POINT DISTRIBUTION
         method_distribute = getattr(self.args, 'method_distribute')
-        assert method_distribute in ('sites', 'grid', 'adaptive', 'relief', 'mesh'), \
-            f"method_distribute must be 'sites', 'grid', 'adaptive', 'relief' or 'mesh', got {method_distribute!r}"
+        assert method_distribute in ('sites', 'grid', 'relief', 'mesh'), \
+            f"method_distribute must be 'sites', 'grid', 'relief' or 'mesh', got {method_distribute!r}"
 
         if method_distribute == 'mesh':
             point_spacing = getattr(self.args, 'point_spacing')
@@ -264,8 +264,6 @@ class Config():
             spread_per_km = getattr(self.args, 'point_spread_per_km')
             assert spread_per_km > 0, \
                 f'point_spread_per_km must be positive [cm w.e. a-1 km-1], got {spread_per_km!r}'
-
-        if method_distribute in ('adaptive', 'relief'):
             tolerance = getattr(self.args, 'point_error_tolerance')
             confidence = getattr(self.args, 'point_error_confidence')
             coefficient = getattr(self.args, 'point_error_coefficient')

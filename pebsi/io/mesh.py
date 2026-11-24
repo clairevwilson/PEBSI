@@ -5,7 +5,7 @@ Holds the computational geometry that breaks a glacier
 outline into model points and assigns each point the
 share of glacier area it represents.
 
-Four distributions are available:
+Three distributions are available:
 
 'grid'      an axis-aligned lattice clipped to the outline,
             weighted by clipped Voronoi cell area
@@ -14,17 +14,15 @@ Four distributions are available:
             an equilateral lattice, the two are triangulated
             together and smoothed, and each point is a triangle
             centroid weighted by its Voronoi cell area
-'adaptive'  the patch-conforming mesh, at whatever spacing
-            each glacier's own sampling error asks for
 'relief'    the patch-conforming mesh, with each glacier's
             sampling error predicted from its RGI elevation
-            range instead of measured by a survey run
+            range
 
 The 'mesh' distribution is controlled by a target element
 edge length in meters rather than a point count, so the same
 setting transfers between glaciers of different size.
 
-'adaptive' starts from a tolerance on glacier-wide mass balance
+'relief' starts from a tolerance on glacier-wide mass balance
 instead, and works back to the point count that holds the error
 inside it. A fixed edge length does not do this: the error comes
 from sampling a spatially varying field at finitely many points,
@@ -33,8 +31,6 @@ not by resolution alone.
 
 Vibe-coded with Claude, but well used and tested.
 """
-# Internal libraries
-import os
 # External libraries
 import numpy as np
 import pandas as pd
@@ -848,8 +844,8 @@ def point_count_for_sigma(sigma, tolerance, coefficient, confidence=1.96):
         Fitted constant relating sigma to the error of the mean
     confidence : float
         Standard normal multiplier for the confidence wanted. Defaults
-        to 1.96, the project's standing choice of 95% (see
-        convergence_summary.md) -- there to be read, not swept per run.
+        to 1.96, the standing choice of 95% -- there to be read, not
+        swept per run.
 
     Returns
     =======
@@ -934,105 +930,6 @@ def spacing_for_target_n(polygon, target_n, tolerance=0.05, max_iter=25, **kwarg
 
     return spacing, n_points
 
-def load_sigma_table(fn):
-    """
-    Reads the per-glacier sigma table that 'adaptive' distributes from.
-
-    Columns: rgiid, sigma_max, and optionally tolerance_cm and
-    point_spacing recording a spacing already solved at that tolerance,
-    so a run does not have to search for it again.
-
-    Parameters
-    ==========
-    fn : str
-        Path to the table
-
-    Returns
-    =======
-    table : pd.DataFrame
-        Indexed by RGI ID without the 'RGI60-' prefix
-    """
-    assert os.path.exists(fn), (
-        f'No sigma table at {fn}. method_distribute=\'adaptive\' sets each '
-        'glacier\'s point count from how much its mass balance varies, which '
-        'has to be measured first -- run point_density_rule.py.')
-
-    table = pd.read_csv(fn, dtype={'rgiid': str})
-    missing = {'rgiid', 'sigma_max'} - set(table.columns)
-    assert not missing, f'{fn} is missing columns {sorted(missing)}'
-    return table.set_index('rgiid')
-
-def distribute_rule(rgi_df, rgi_gdf, rgi_ids, table_fn, tolerance,
-                    coefficient, confidence=1.96, **kwargs):
-    """
-    Meshes each glacier at the resolution its own mass balance variance
-    asks for, rather than at a shared edge length or a point count fit
-    to area.
-
-    A glacier needs more points when its mass balance varies more
-    across its own surface, which is not what area predicts: the
-    largest glacier in a set is not reliably the one that needs the
-    most points. sigma_max in the table is the largest sigma measured
-    anywhere in the parameter range being calibrated over, so one mesh
-    holds the tolerance everywhere in that range.
-
-    Parameters
-    ==========
-    rgi_df : pd.DataFrame
-        RGI attributes for the region
-    rgi_gdf : gpd.GeoDataFrame
-        RGI outlines for the region
-    rgi_ids : list
-        Glacier IDs without the 'RGI60-' prefix
-    table_fn : str
-        Path to the sigma table
-    tolerance : float
-        Allowed error on each glacier-wide mean [cm w.e. a-1]
-    coefficient : float
-        Fitted constant relating sigma to the error of the mean
-    confidence : float
-        Standard normal multiplier for the confidence wanted
-    **kwargs
-        Passed through to mesh_polygon
-
-    Returns
-    =======
-    lats, lons, glaciers, weights : lists
-        Per-point latitude, longitude, glacier ID, and area
-        weight (normalized to sum to 1 within each glacier)
-    """
-    table = load_sigma_table(table_fn)
-
-    lats, lons, glaciers, weights = [], [], [], []
-    for gid in np.unique(rgi_ids):
-        assert gid in table.index, (
-            f'{gid} is not in {table_fn}. Its point count depends on how '
-            'much its mass balance varies across the glacier, which has to '
-            'be measured -- run point_density_rule.py for it first.')
-
-        row = table.loc[gid]
-        target_n = point_count_for_sigma(
-            float(row['sigma_max']), tolerance, coefficient, confidence)
-        polygon, metric_crs = glacier_polygon(rgi_gdf, gid)
-
-        # reuse a spacing already solved at this tolerance; searching for
-        # one costs a dozen meshes of a glacier that may be large
-        solved = np.nan
-        if {'tolerance_cm', 'point_spacing'} <= set(table.columns):
-            if np.isclose(float(row['tolerance_cm']), tolerance):
-                solved = float(row['point_spacing'])
-        spacing = solved if np.isfinite(solved) else \
-            spacing_for_target_n(polygon, target_n, **kwargs)[0]
-
-        xs, ys, ws, _ = mesh_polygon(polygon, spacing, **kwargs)
-        point_lons, point_lats = to_latlon(xs, ys, metric_crs)
-        for lon, lat, w in zip(point_lons, point_lats, ws):
-            lons.append(lon)
-            lats.append(lat)
-            glaciers.append(gid)
-            weights.append(float(w))
-
-    return lats, lons, glaciers, weights
 def distribute_relief(rgi_df, rgi_gdf, rgi_ids, spread_per_km, tolerance,
                       coefficient, confidence=1.96, **kwargs):
     """
@@ -1041,7 +938,7 @@ def distribute_relief(rgi_df, rgi_gdf, rgi_ids, spread_per_km, tolerance,
 
     The spread of mass balance across a glacier comes mostly from its
     elevation range, so sigma is predicted as spread_per_km times the
-    RGI Zmax - Zmin and passed to the same rule 'adaptive' uses. The
+    RGI Zmax - Zmin and passed to point_count_for_sigma. The
     default spread_per_km is the high end of the five calibration
     glaciers at their calibrated parameters, so the prediction errs
     toward too many points; it overshoots large glaciers, where a small
