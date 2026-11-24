@@ -774,10 +774,14 @@ class Terrain:
             zen = self.solar_zenith[gid_idx[0], :]
             az = self.solar_azimuth[gid_idx[0], :]
 
-            ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
-                   .to_crs(ds.rio.crs).union_all())
             grid_x, grid_y = np.meshgrid(ds.x.values, ds.y.values)
-            on_ice = shapely.contains_xy(ice, grid_x, grid_y)
+            if self.rgi_gdf is None:
+                # test glacier has no outline
+                on_ice = np.zeros(grid_x.shape, dtype=bool)
+            else:
+                ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                       .to_crs(ds.rio.crs).union_all())
+                on_ice = shapely.contains_xy(ice, grid_x, grid_y)
 
             if 'pixel_slope' not in ds:
                 slope_r = np.deg2rad(self.slope_n[unique_first[gid_idx]])
@@ -910,10 +914,14 @@ class Terrain:
             zenith[gid_idx, :] = ds['solar_zenith'].values
 
             # average shade and sky-view factor over voronoi cells
-            ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
-                   .to_crs(ds.rio.crs).union_all())
             grid_x, grid_y = np.meshgrid(ds.x.values, ds.y.values)
-            on_ice = shapely.contains_xy(ice, grid_x, grid_y)
+            if self.rgi_gdf is None:
+                # test glacier has no outline: falls back on nearest pixel
+                on_ice = np.zeros(grid_x.shape, dtype=bool)
+            else:
+                ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                       .to_crs(ds.rio.crs).union_all())
+                on_ice = shapely.contains_xy(ice, grid_x, grid_y)
 
             if on_ice.any():
                 pixels = np.column_stack([grid_x[on_ice], grid_y[on_ice]])
