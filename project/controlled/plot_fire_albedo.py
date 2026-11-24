@@ -11,9 +11,12 @@ Per glacier-season:
   d_alb_area   the part from days snow-covered without fires but bare with them (snow lost early)
   d_min_sca    change in the season's minimum snow-covered area fraction
   d_min_snow   change in the season's minimum glacier-mean snow albedo (snow-covered points, noon)
-The figure (in figs/) shows d_alb; the CSV holds every column.
-Daily per-point inputs (DAILY_FN: May-Sep daily SWin and SWnet sums and 21 UTC albedo) were extracted
-from the hourly output.zarr of each run.
+  rf           May-Sep mean radiative forcing [W m-2, glacier mean]: the albedo change times Base's SWin
+  d_alb_acc    change in the May-Sep mean noon albedo over the accumulation area only, taken roughly as
+               the points above the highest yearly-max SAR snowline (SAR_FP, 2017-2024, any track)
+The figure (in figs_current/) shows rf (left) and d_alb_acc (right); the CSV holds every column.
+Daily per-point inputs (DAILY_FN: May-Sep daily SWin and SWnet sums and 21 UTC albedo) are extracted
+from the hourly output.zarr of each run by shop/postprocessing/aggregate_per_glacier.py.
 """
 import os
 import numpy as np
@@ -27,8 +30,9 @@ from plot_event_grid import MERRA2_FP, MERRA2_VARS, merra2_ratio, GLACIERS, tran
 
 OUT = '/home/claire/Research/Output/controlled/'
 DAILY_FN = OUT + '{}_0/per_point_daily.nc'
-CSV_FN = OUT + 'fire_albedo.csv'
-FIG_FN = OUT + 'figs/fire_albedo.png'
+CSV_FN = OUT + 'fire_albedo_current.csv'
+FIG_FN = OUT + 'figs_current/fire_albedo.png'
+SAR_FP = '/home/claire/Research/data/sar/sar_by_elevation/{}/'
 # the shared glacier colors (shop/plotting/plot_summer_anomaly_2004.py) and one marker per glacier
 GLACIER_COLORS = {'wolverine': '#63c4c7', 'kennicott': '#fcc02e', 'kahiltna': '#4D559C',
                   'lemon_creek': '#60C252', 'gulkana': '#BF1F6A'}
@@ -49,6 +53,13 @@ def fire_bc(lat, lon):
     return total.groupby(total.index.year).sum()
 
 
+def accumulation_elev(glacier):
+    """Highest yearly-max SAR snowline [m] over all tracks (per-scene median snowline)."""
+    folder = SAR_FP.format(translate_rgi[glacier]['7'])
+    return max(pd.read_csv(folder + fn, index_col=0)['snowline_elev_m'].max() for fn in os.listdir(folder)
+               if 'snowline_elev_percentile' in fn and 'ea' not in fn and 'eos' not in fn)
+
+
 def snow_mask(alb_b, alb_n):
     """Snow-covered point-days of both runs: noon albedo above the point's recurring bare value."""
     both = np.concatenate([alb_b, alb_n])
@@ -59,7 +70,7 @@ def snow_mask(alb_b, alb_n):
 
 
 def main():
-    b, n = (xr.open_dataset(DAILY_FN.format(r)).load() for r in ['base_merra2', 'no_fires_merra2'])
+    b, n = (xr.open_dataset(DAILY_FN.format(r)).load() for r in ['base_current', 'no_fires_current'])
     # incoming shortwave differs slightly between runs (0.07% on average), so changes are weighted by Base's
     swin = b['shortwave_in'].values
     a_b = 1 - b['shortwave_net'].values / np.where(swin > 0, swin, np.nan)
@@ -67,15 +78,19 @@ def main():
     a_n = 1 - n['shortwave_net'].values / np.where(swin_n > 0, swin_n, np.nan)
     snow_b, snow_n = snow_mask(b['albedo'].values, n['albedo'].values)
     years = b.time.dt.year.values
-    rgiid, weight = b['rgiid'].values.astype(str), b['weight'].values
+    rgiid, weight, elev = b['rgiid'].values.astype(str), b['weight'].values, b['elev'].values
 
-    zarr = xr.open_zarr(OUT + 'base_merra2_0/output.zarr', consolidated=False)
+    zarr = xr.open_zarr(OUT + 'base_current_0/output.zarr', consolidated=False)
     plat, plon = zarr['lat'].values, zarr['lon'].values
     rows = []
     for g in GLACIERS:
         m = rgiid == translate_rgi[g]['6']
         w = weight[m]
         bc = fire_bc(float(np.average(plat[m], weights=w)), float(np.average(plon[m], weights=w)))
+        acc_elev = accumulation_elev(g)
+        acc = elev[m] > acc_elev
+        print(f'{g}: accumulation area above {acc_elev:.0f} m, {acc.sum()}/{m.sum()} points, '
+              f'{w[acc].sum() / w.sum():.2f} of area')
         for y in range(2000, 2026):
             t = years == y
             sw = swin[t][:, m] * w
@@ -90,26 +105,29 @@ def main():
                              d_alb_area=d[~sb & sn].sum() / sw.sum(),
                              d_min_sca=sca_b.min() - sca_n.min(),
                              d_min_snow=np.nanmin(snow_alb[0]) - np.nanmin(snow_alb[1]),
-                             min_sca=sca_n.min()))
+                             min_sca=sca_n.min(),
+                             rf=-d.sum() / (t.sum() * 24),  # daily values are sums of hourly W m-2
+                             d_alb_acc=((alb_b - alb_n)[:, acc] * w[acc]).sum() / (t.sum() * w[acc].sum())))
     df = pd.DataFrame(rows)
     df.to_csv(CSV_FN, index=False)
     print(f'Saved {CSV_FN}')
-    cols = ['d_alb', 'd_alb_snow', 'd_alb_area', 'd_min_sca', 'd_min_snow']
+    cols = ['d_alb', 'd_alb_snow', 'd_alb_area', 'd_min_sca', 'd_min_snow', 'rf', 'd_alb_acc']
     print(df.groupby('glacier').apply(lambda d: d[cols].corrwith(d['fire_bc'])).round(2))
     print(df.sort_values('fire_bc', ascending=False).head(12).round(4).to_string())
 
-    fig, ax = plt.subplots(figsize=(4, 4))
-    for g in GLACIERS:
-        d = df[df['glacier'] == g]
-        ax.scatter(d['fire_bc'], d['d_alb'], s=16, marker=MARKERS[g], color=GLACIER_COLORS[g],
-                   label=g.replace('_', ' ').title())
-    ax.axhline(0, color='k', lw=0.5)
-    ax.set_xlim(right=62)  # room for the legend clear of the points
-    ax.set_xlabel('Season fire BC deposition (mg m$^{-2}$)', fontsize=9)
-    ax.set_ylabel('Change in effective albedo from fires', fontsize=9)
-    ax.tick_params(labelsize=9)
-    ax.legend(fontsize=9, loc='upper right', bbox_to_anchor=(1, 0.88), handletextpad=0.1,
-              borderaxespad=0.2)
+    fig, axes = plt.subplots(1, 2, figsize=(7, 3.5))
+    for ax, col, label in zip(axes, ['rf', 'd_alb_acc'],
+                              ['Radiative forcing from fires (W m$^{-2}$)',
+                               'Change in accumulation-area\nalbedo from fires']):
+        for g in GLACIERS:
+            d = df[df['glacier'] == g]
+            ax.scatter(d['fire_bc'], d[col], s=16, marker=MARKERS[g], color=GLACIER_COLORS[g],
+                       label=g.replace('_', ' ').title())
+        ax.axhline(0, color='k', lw=0.5)
+        ax.set_xlabel('Season fire BC deposition (mg m$^{-2}$)', fontsize=9)
+        ax.set_ylabel(label, fontsize=9)
+        ax.tick_params(labelsize=9)
+    axes[1].legend(fontsize=9, loc='lower left', handletextpad=0.1, borderaxespad=0.2)
     plt.tight_layout()
     plt.savefig(FIG_FN, dpi=300)
     print(f'Saved {FIG_FN}')

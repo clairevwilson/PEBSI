@@ -42,7 +42,9 @@ if wind_scale is not None:
 deposition = os.environ.get('DEPOSITION', 'UKESM')
 MERRA2_DEP_VARS = ['bcdry', 'bcwet', 'ocdry', 'ocwet']
 if deposition == 'MERRA2':
-    run_name += '_merra2'
+    # the runs at the current calibration; project/recalibration_and_extremes_analysis.sh renames them
+    # _iter<n> when it reruns
+    run_name += '_current'
     # the SSP runs only have UKESM future deposition
     assert sim_type not in ('ssp245_mpi', 'ssp245_gfdl'), \
         f'DEPOSITION=MERRA2 is not set up for {sim_type}'
@@ -51,10 +53,10 @@ START_DATE = '2000-01-01'
 END_DATE = '2025-09-30'
 STORE_VARS = ['MB', 'EB', 'climate', 'surftype']  # surftype: 0 snow, 1 firn, 2 ice
 if host == 'forge':
-    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
+    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_current.yaml'
     output_fp = f'/home/claire/Research/Output/controlled/{run_name}/'
 else:
-    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
+    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_current.yaml'
     output_fp = f'/ocean/projects/ees260009p/cwilson4/Output/controlled/{run_name}/'
 out_config_fn = f'controlled_{run_name}.yaml'
 

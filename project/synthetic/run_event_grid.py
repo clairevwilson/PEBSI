@@ -13,6 +13,9 @@ EVENT in the environment selects the experiment ('heatwave' or 'wildfire'), and 
   RUN=65-80   heatwaves only: every center x duration at PRECIP_INTENSITY, precipitation removed
   then        each glacier's largest real event (REAL_EVENTS), heatwaves 81-85, wildfires 97-101,
               then its most damaging one where different (DAMAGING_EVENTS, none yet)
+  RUN=split_0-11  heatwaves only, in split_<n>/: the average heatwave (1x, SPLIT_DURATION days) at each
+              center with all its anomalies, only temperature, or only shortwave (split_design), from a
+              copy of the anomaly file with the other anomalies zeroed
 Each event run copies the spin-up's folder into its own and resumes from it, so its
 output.zarr holds the spin-up followed by May-Sep YEAR.
 
@@ -27,10 +30,12 @@ import itertools
 import yaml
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import simulation as sim
+from pebsi.defaults import heatwave_anomaly_fn
 from pebsi.io.terrain import Terrain
 from project.parameters import host, HOST_PATHS, BASE_CONFIG, GLACIERS, translate_rgi, baseline
 
@@ -49,6 +54,8 @@ if EVENT == 'heatwave':
     DURATIONS = [5, 10, 15, 20]  # days
     INTENSITIES = [0.5, 0.8, 1.1, 1.4]  # multiple of each cell's average heatwave; real events reached 0.49-1.37
     PRECIP_INTENSITY = 1.1  # intensity of the precipitation-removed runs
+    SPLIT_DURATION = 10  # days, of the split runs
+    SPLIT_KEEP = {'all': None, 'temp': 'T2M', 'sw': 'SWGDN'}  # anomaly each split run keeps (None: all)
     # no-heatwave weather on the MERRA-2 deposition (fires kept)
     SECONDARY = dict(secondary_climate_string='_no_heatwaves', secondary_vars=['temp', 'SWin', 'LWin', 'rh'])
 elif EVENT == 'wildfire':
@@ -61,11 +68,11 @@ elif EVENT == 'wildfire':
                      wildfire_anomaly_fn='MERRA2/reg01_no_wildfires/wildfire_anomaly.nc')
 
 if host == 'forge':
-    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
-    OUT_DIR = f'/home/claire/Research/Output/{EVENT}_grid_merra2/'
+    RESULT_FN = '/home/claire/Research/Output/AD_optimize/AD_optimize_result_current.yaml'
+    OUT_DIR = f'/home/claire/Research/Output/{EVENT}_grid_current/'
 else:
-    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_kappa_kp2.yaml'
-    OUT_DIR = f'/ocean/projects/ees260009p/cwilson4/Output/{EVENT}_grid_merra2/'
+    RESULT_FN = '/ocean/projects/ees260009p/cwilson4/Output/AD_optimize/AD_optimize_result_current.yaml'
+    OUT_DIR = f'/ocean/projects/ees260009p/cwilson4/Output/{EVENT}_grid_current/'
 # og_kappa is held fixed during the fit, so it is not in the result YAML (see CALIBRATION_NOTES.md)
 OG_KAPPA_FN = os.path.join(os.path.dirname(RESULT_FN), 'og_kappa_kp2.yaml')
 SPINUP_FP = OUT_DIR + 'spinup_0/'  # PEBSI appends _0 to a new output_fp
@@ -109,7 +116,32 @@ def design():
     return runs
 
 
-def build_config(config_fn, end_date, output_fp, params=None, event=None):
+def split_design():
+    """(center, part) of each split run: every center with all anomalies, then only temperature, then only
+    shortwave."""
+    return [(c, p) for p in SPLIT_KEEP for c in CENTERS]
+
+
+def split_anomaly_fn(part):
+    """heatwave_anomaly_fn of a split run: the average heatwave, or a copy next to it (written if missing)
+    keeping only part's anomaly. The temperature-only copy has no shortwave cap, so the baseline shortwave
+    stays untouched."""
+    if SPLIT_KEEP[part] is None:
+        return heatwave_anomaly_fn
+    fn = heatwave_anomaly_fn.replace('.nc', f'_{part}_only.nc')
+    path = HOST_PATHS[host]['climate_fp'] + fn
+    if not os.path.exists(path):
+        ds = xr.load_dataset(HOST_PATHS[host]['climate_fp'] + heatwave_anomaly_fn)
+        for v in ['T2M', 'SWGDN', 'LWGAB', 'QV2M']:
+            if v != SPLIT_KEEP[part]:
+                ds[v] = ds[v] * 0
+        if part == 'temp':
+            ds['SWGDN_cap'] = ds['SWGDN_cap'] * 0 + np.inf
+        ds.to_netcdf(path)
+    return fn
+
+
+def build_config(config_fn, end_date, output_fp, params=None, event=None, anomaly_fn=None):
     """Writes the run's config: calibrated parameters (kp, wind_factor, precgrad, og_kappa per point),
     no-heatwave forcing, MERRA-2 deposition and the event."""
     configs = dict(BASE_CONFIG)
@@ -140,6 +172,8 @@ def build_config(config_fn, end_date, output_fp, params=None, event=None):
         if EVENT == 'heatwave':
             configs.update(heatwave_start=start, heatwave_duration=duration,
                            heatwave_intensity=intensity, heatwave_remove_precip=remove_precip)
+            if anomaly_fn is not None:
+                configs.update(heatwave_anomaly_fn=anomaly_fn)
         else:
             configs.update(wildfire_start=start, wildfire_duration=duration, wildfire_intensity=intensity)
     with open(config_fn, 'w') as f:
@@ -169,14 +203,21 @@ def main():
         run_fp, end_date, event = OUT_DIR + 'spinup', SPINUP_END, None
         config_fn = f'{EVENT}_grid_{RUN}.yaml'
     else:
-        run_fp, end_date, event = OUT_DIR + f'run_{int(RUN):03d}/', END_DATE, design()[int(RUN)]
+        anomaly_fn, end_date = None, END_DATE
+        if RUN.startswith('split_'):
+            center, part = split_design()[int(RUN.split('_')[1])]
+            run_fp, event = OUT_DIR + f'{RUN}/', (center, SPLIT_DURATION, 1.0, False)
+            anomaly_fn = split_anomaly_fn(part)
+        else:
+            run_fp, event = OUT_DIR + f'run_{int(RUN):03d}/', design()[int(RUN)]
         assert not os.path.exists(run_fp), f'{run_fp} exists; delete it to rerun'
         shutil.copytree(SPINUP_FP, run_fp)
         # PEBSI reads <resume_from>/config.yaml when resuming, so this run's config goes there
         config_fn = os.path.join(run_fp, 'config.yaml')
 
     build_config(config_fn, end_date, run_fp)
-    build_config(config_fn, end_date, run_fp, calibrated_params(config_fn), event)
+    build_config(config_fn, end_date, run_fp, calibrated_params(config_fn), event,
+                 None if RUN == 'spinup' else anomaly_fn)
     print(f'{EVENT} run {RUN}  event {event}', flush=True)
 
     args = sim.get_args(parse=False).parse_args([])

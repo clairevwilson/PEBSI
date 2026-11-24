@@ -77,6 +77,7 @@ class Albedo():
 
         # open dataframes
         self.albedo_fp = base_fp + 'data/albedo/'
+        self.max_slope = 10 # degrees; steeper pixels are cropped out
 
         # grab the distributed data
         self.get_glacier_albedo()
@@ -97,7 +98,7 @@ class Albedo():
                 use_list = self.use
 
         # get filename for this glac_no
-        albedo_fns = [self.albedo_fp + f'{num}/RGI2000-v7.0-G-01-{num}_{data}.nc' for data in use_list]
+        albedo_fns = [self.albedo_fp + f'{data}/RGI2000-v7.0-G-01-{num}.nc' for data in use_list]
 
         # build dataset
         self.time = []
@@ -107,6 +108,9 @@ class Albedo():
             # open the dataset and get the proper CRS
             ds = xr.open_dataset(albedo_fn)
             self.crs = ds.spatial_ref.attrs['crs_wkt']
+
+            # crop out steep pixels
+            ds['albedo'] = ds['albedo'].where(ds['slope'] <= self.max_slope)
 
             # convert coordinates
             ds = ds['albedo'].rio.write_crs(self.crs).reset_coords(drop=True).to_dataset()
@@ -344,6 +348,9 @@ class Wet():
         if direction is not None:
             ds = ds.sel(time=ds['pass_direction'].str.lower() == direction.lower())
             assert ds.time.size, f'no {direction} passes for {name}'
+
+        # melt season only (March 1 - November 30)
+        ds = ds.sel(time=ds.time.dt.month.isin(range(3, 12)))
 
         self.crs = ds.attrs['projection']
         self.dem = ds['dem']

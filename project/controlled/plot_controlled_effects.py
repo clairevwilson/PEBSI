@@ -1,11 +1,13 @@
 """
 Figures comparing the controlled wildfire/heatwave experiments (base,
-no_fires, no_heatwaves, no_either): cumulative divergence, synergy,
-elevation profiles, energy-balance attribution, seasonal timing,
-the effects as a share of observed loss, and a single-summer case study.
+no_fires, no_heatwaves, no_either): synergy against the Hugonnet uncertainty,
+the effects as a share of observed loss, elevation profiles, energy-balance
+attribution and the loss by year. Cumulative divergence, the staged synergy
+bars, seasonal timing and the single-summer case study are commented out.
 
 Reads per_glacier.nc and per_point_annual.nc written by
-shop/postprocessing/aggregate_per_glacier.py and saves PNGs into base_fp/figs/.
+shop/postprocessing/aggregate_per_glacier.py for the runs at the current
+calibration (*_current_0) and saves PNGs into base_fp/figs_current/.
 """
 import os
 import sys
@@ -18,16 +20,17 @@ import xarray as xr
 
 sys.path.append('/jet/home/cwilson4/PEBSI/')
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from glacierwide_loss import MassBalance, translate_rgi
 
 base_fp = '/home/claire/Research/Output/controlled/'
-fig_fp = base_fp + 'figs/'
+fig_fp = base_fp + 'figs_current/'
 
 # Inputs for the figures below. The effect of a forcing is Base minus the run with
 # that forcing removed, so a negative effect means the forcing caused extra loss.
 i = 0
-runs = {'Base': 'base_merra2', 'No fires': 'no_fires_merra2', 'No heatwaves': 'no_heatwaves_merra2',
-        'Neither': 'no_either_merra2'}
+runs = {'Base': 'base_current', 'No fires': 'no_fires_current', 'No heatwaves': 'no_heatwaves_current',
+        'Neither': 'no_either_current'}
 glac = {sim: xr.open_dataset(base_fp + f'{run}_{i}/per_glacier.nc').load() for sim, run in runs.items()}
 pts = {sim: xr.open_dataset(base_fp + f'{run}_{i}/per_point_annual.nc').load() for sim, run in runs.items()}
 glaciers = glac['Base'].glacier.values
@@ -55,42 +58,45 @@ def daily_albedo(ds):
     daily = ds[['shortwave_net', 'shortwave_in']].resample(time='D').sum()
     return (1 - daily['shortwave_net'] / daily['shortwave_in']).to_dataset(name='albedo')
 
-alb = {sim: daily_albedo(ds) for sim, ds in glac.items()}
+# Only used by the commented-out seasonal_timing and case-study figures
+# alb = {sim: daily_albedo(ds) for sim, ds in glac.items()}
 
-# daily heatwave/wildfire flags and BC+OC deposition (May-Sep only) at each glacier's centroid
-events = xr.open_dataset(base_fp + '../../climate_data/extreme_events_daily_ukesm.nc')
-ev = events.sel(x=glac['Base'].lon, y=glac['Base'].lat, method='nearest').load()
-# fill the winters so fill_between never spans the gap between Sep 30 and May 1
-ev = ev.reindex(time=pd.date_range(ev.time.values[0], ev.time.values[-1], freq='D'),
-                fill_value={'heatwave': False, 'wildfire': False})
+# Only used by the commented-out cumulative_divergence and case-study figures
+# # daily heatwave/wildfire flags and BC+OC deposition (May-Sep only) at each glacier's centroid
+# events = xr.open_dataset(base_fp + '../../climate_data/extreme_events_daily_ukesm.nc')
+# ev = events.sel(x=glac['Base'].lon, y=glac['Base'].lat, method='nearest').load()
+# # fill the winters so fill_between never spans the gap between Sep 30 and May 1
+# ev = ev.reindex(time=pd.date_range(ev.time.values[0], ev.time.values[-1], freq='D'),
+#                 fill_value={'heatwave': False, 'wildfire': False})
 
-# Cumulative divergence: running effect on glacier-wide mass balance, with event days shaded
-fig, axes_2d = plt.subplots(2, 3, figsize=(8, 4.5), layout='constrained', sharex=True)
-axes = axes_2d.flatten()[:-1]
-secondary = axes_2d.flatten()[-1]
+# Not made for now; uncomment to make cumulative_divergence.png
+# # Cumulative divergence: running effect on glacier-wide mass balance, with event days shaded
+# fig, axes_2d = plt.subplots(2, 3, figsize=(8, 4.5), layout='constrained', sharex=True)
+# axes = axes_2d.flatten()[:-1]
+# secondary = axes_2d.flatten()[-1]
 
-for ax, glacier in zip(axes, glaciers):
-    ev_glacier = ev.sel(glacier=glacier)
-    for flag, color in [('wildfire', 'r'), ('heatwave', 'b')]:
-        ax.fill_between(ev_glacier.time, 0, 1, where=ev_glacier[flag].values, color=color,
-                        alpha=0.15, linewidth=0, transform=ax.get_xaxis_transform())
-    for name in ['Wildfires', 'Heatwaves', 'Both']:
-        cumulative = effect(glac, name).sel(glacier=glacier).resample(time='D').sum().cumsum()
-        ax.plot(cumulative.time, cumulative, color=effect_colors[name], linewidth=1)
-    ax.axhline(0, linewidth=0.5, c='k')
-    ax.set_title(fmt_name(glacier), fontsize=10)
-    ax.tick_params(axis='x', labelrotation=45)
+# for ax, glacier in zip(axes, glaciers):
+#     ev_glacier = ev.sel(glacier=glacier)
+#     for flag, color in [('wildfire', 'r'), ('heatwave', 'b')]:
+#         ax.fill_between(ev_glacier.time, 0, 1, where=ev_glacier[flag].values, color=color,
+#                         alpha=0.15, linewidth=0, transform=ax.get_xaxis_transform())
+#     for name in ['Wildfires', 'Heatwaves', 'Both']:
+#         cumulative = effect(glac, name).sel(glacier=glacier).resample(time='D').sum().cumsum()
+#         ax.plot(cumulative.time, cumulative, color=effect_colors[name], linewidth=1)
+#     ax.axhline(0, linewidth=0.5, c='k')
+#     ax.set_title(fmt_name(glacier), fontsize=10)
+#     ax.tick_params(axis='x', labelrotation=45)
 
-for name in ['Wildfires', 'Heatwaves', 'Both']:
-    secondary.plot(np.nan, np.nan, color=effect_colors[name], label=f'{name} effect')
-secondary.bar(np.nan, np.nan, color='r', alpha=0.15, label='Wildfire days')
-secondary.bar(np.nan, np.nan, color='b', alpha=0.15, label='Heatwave days')
-secondary.axis('off')
-secondary.legend(loc='center')
+# for name in ['Wildfires', 'Heatwaves', 'Both']:
+#     secondary.plot(np.nan, np.nan, color=effect_colors[name], label=f'{name} effect')
+# secondary.bar(np.nan, np.nan, color='r', alpha=0.15, label='Wildfire days')
+# secondary.bar(np.nan, np.nan, color='b', alpha=0.15, label='Heatwave days')
+# secondary.axis('off')
+# secondary.legend(loc='center')
 
-fig.supylabel('Cumulative change in mass balance (m w.e.)')
-plt.savefig(fig_fp + 'cumulative_divergence.png', dpi=300, bbox_inches='tight')
-plt.close()
+# fig.supylabel('Cumulative change in mass balance (m w.e.)')
+# plt.savefig(fig_fp + 'cumulative_divergence.png', dpi=300, bbox_inches='tight')
+# plt.close()
 
 # Synergy: does removing both forcings do more than the sum of removing each one?
 names = ['Wildfires', 'Heatwaves', 'Both', 'Interaction']
@@ -121,7 +127,7 @@ def effect_bars(values, ylabel, fn, sigma=None):
         ax.set_xticklabels([fmt_name(g) for g in glaciers])
         ax.axhline(0, linewidth=0.5, c='k')
         ax.set_ylabel(ylabel)
-        fig.legend(loc='outside upper center', ncol=len(names) + (sigma is not None), fontsize=11, frameon=False)
+        fig.legend(loc='outside upper center', ncol=3, fontsize=11, frameon=False)
         plt.savefig(fig_fp + fn.replace('.png', f'_{stage}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
@@ -131,7 +137,8 @@ for glacier, r in rates.items():
     print(f'{glacier:<12} fires {r["Wildfires"]:.2f}, heatwaves {r["Heatwaves"]:.2f}, '
           f'both {r["Both"]:.2f}, interaction {r["Interaction"]:.2f} cm w.e. a-1 '
           f'({r["Interaction"] / r["Both"] * 100:.0f}% of both)')
-effect_bars(rates, r'Change in mass balance (cm w.e. a$^{-1}$)', 'synergy.png')
+# Not made for now; uncomment to make synergy_fires/_fires_heatwaves/_all.png
+# effect_bars(rates, r'Change in mass balance (cm w.e. a$^{-1}$)', 'synergy.png')
 
 # same bars against the 2000-2020 Hugonnet uncertainty in the glacier-wide rate
 hugonnet_sigma = {glacier: MassBalance(glacier).sigma * 100 for glacier in glaciers}
@@ -143,28 +150,77 @@ totals = {glacier: {sim: float(glac[sim]['mass_balance'].sel(glacier=glacier).su
           for glacier in glaciers}
 parts = {glacier: {name: float(effect(glac, name).sel(glacier=glacier).sum()) for name in names}
          for glacier in glaciers}
-stack_names = ['Wildfires', 'Heatwaves']
-stack_colors = {'Other': '0.8', **effect_colors}
+# Base mass balance over the Hugonnet period (2000-01-01 to 2020-01-01): the non-extreme part as one wide bar
+# on top, and below it two bars of the extreme-driven part: left, the extreme-driven part split into heatwaves and wildfires; right, the same
+# extreme-driven part split into water years 2004, 2019 and every other year (the partial water years at
+# either end go into the other years)
+HUGONNET = slice('2000-01-01', '2019-12-31 23:00')
+SPLIT_YEARS = [2004, 2019]
+by_forcing_colors = {'Heatwaves': effect_colors['Heatwaves'], 'Wildfires': effect_colors['Wildfires']}
+by_year_colors = {'Other years': '0.75', '2004': '#63c4c7', '2019': '#fcc02e'}
+BAR_WIDTH = 0.38
+SIDE_GAP = 0.9  # m w.e.
 
-for stage in ['fires', 'fires_heatwaves']:
-    shown = stages[stage]
-    fig, ax = plt.subplots(figsize=(7, 3.5), layout='constrained')
-    for j, glacier in enumerate(glaciers):
-        other = totals[glacier]['Base'] - sum(parts[glacier][name] for name in shown)
-        bottom = 0
-        for name in ['Other'] + shown:
-            height = other if name == 'Other' else parts[glacier][name]
-            ax.bar(j, height, 0.6, bottom=bottom, facecolor=stack_colors[name], edgecolor='k',
-                   linewidth=0.5, label=name if j == 0 else None)
-            bottom += height
-    ax.set_xticks(range(len(glaciers)))
-    ax.set_xticklabels([fmt_name(g) for g in glaciers])
-    ax.axhline(0, linewidth=0.5, c='k')
-    ax.set_ylim(1.05 * min(t['Base'] for t in totals.values()), 0)
-    ax.set_ylabel('Mass balance, 2000$-$2025 (m w.e.)')
-    fig.legend(loc='outside upper center', ncol=len(stack_names) + 1, fontsize=11, frameon=False)
-    plt.savefig(fig_fp + f'familiar_units_{stage}.png', dpi=300, bbox_inches='tight')
-    plt.close()
+def stack(ax, x, heights, colors, legend, side, start, total):
+    """One stacked bar at x; negative parts stack down from 0, positive parts up. Each part is labeled
+    with its share of the bar's total, inside it where there is room; a thin part is labeled below the bar
+    if it is the last part (side 0), otherwise beside it (side -1 left, 1 right). Parts named in `legend`
+    get a legend entry. The bar starts at `start` and shares are of `total`."""
+    up = down = start
+    names = list(heights)
+    last_side_y = np.inf  # side labels of a downward stack keep at least SIDE_GAP apart
+    for name, h in heights.items():
+        base = up if h > 0 else down
+        ax.bar(x, h, BAR_WIDTH, bottom=base, facecolor=colors[name], edgecolor='k', linewidth=0.5,
+               label=name if name in legend else None)
+        label = f'{h / total * 100:.0f}%'
+        if abs(h) > 1.2:  # m w.e.: room for the label inside
+            ax.text(x, base + h / 2, label, ha='center', va='center', fontsize=9,
+                    color='w' if colors[name] in ('r', 'b') else 'k')
+        elif side == 0 and name == names[-1]:
+            ax.text(x, base + h + 0.3 * np.sign(h), label, ha='center', fontsize=9,
+                    va='top' if h < 0 else 'bottom')
+        else:
+            y = min(base + h / 2, last_side_y - SIDE_GAP)
+            last_side_y = y
+            ax.text(x + side * (BAR_WIDTH / 2 + 0.02), y, label, va='center', fontsize=9,
+                    ha='left' if side > 0 else 'right')
+        if h > 0:
+            up += h
+        else:
+            down += h
+
+fig, ax = plt.subplots(figsize=(7, 4))
+for j, glacier in enumerate(glaciers):
+    total = float(glac['Base']['mass_balance'].sel(glacier=glacier, time=HUGONNET).sum())
+    fire_da, heat_da = (effect(glac, name).sel(glacier=glacier, time=HUGONNET) for name in ['Wildfires', 'Heatwaves'])
+    fire, heat = float(fire_da.sum()), float(heat_da.sum())
+    # the non-extreme part is shared, so one double-width bar on top
+    other = total - fire - heat
+    ax.bar(j, other, 2 * BAR_WIDTH, facecolor='w', edgecolor='k', linewidth=0.5,
+           label='Non-extreme' if j == 0 else None)
+    ax.text(j, other / 2, f'{other / total * 100:.0f}%', ha='center', va='center', fontsize=9)
+    stack(ax, j - BAR_WIDTH / 2, {'Heatwaves': heat, 'Wildfires': fire}, by_forcing_colors,
+          legend=['Heatwaves', 'Wildfires'] if j == 0 else [], side=0, start=other, total=total)
+    extreme = fire_da + heat_da
+    water_year = (extreme.time.dt.year + (extreme.time.dt.month >= 10)).rename('water_year')
+    annual = extreme.groupby(water_year).sum()
+    years = {str(y): float(annual.sel(water_year=y)) for y in SPLIT_YEARS}
+    stack(ax, j + BAR_WIDTH / 2, {'Other years': fire + heat - sum(years.values()), **years},
+          by_year_colors, legend=['Other years', *years] if j == 0 else [], side=1, start=other, total=total)
+    print(f'{glacier:<12} 2000-2019 total {total:.2f} m w.e.: fires {fire:.2f}, heatwaves {heat:.2f}, '
+          + ', '.join(f'extreme-driven WY{y} {v:.2f}' for y, v in years.items()))
+ax.axhline(0, linewidth=0.5, c='k')
+ax.tick_params(labelsize=9)
+ax.set_ylabel('Mass balance, 2000$-$2019 (m w.e.)', fontsize=9)
+ax.set_xticks(range(len(glaciers)))
+ax.set_xticklabels([fmt_name(g) for g in glaciers])
+# under the short Kennicott bars
+ax.legend(fontsize=9, frameon=False, ncol=2, loc='lower center', bbox_to_anchor=(0.66, 0.0),
+          labelspacing=0.3, columnspacing=1)
+plt.tight_layout()
+plt.savefig(fig_fp + 'mass_loss_attribution_hugonnet.png', dpi=300)
+plt.close()
 
 shares = {name: {glacier: parts[glacier][name] / totals[glacier]['Base'] * 100 for glacier in glaciers}
           for name in names}
@@ -202,7 +258,7 @@ def ela(centers, profile):
 def mean_annual(da):
     return da.sel(water_year=slice(first_full_wy, None)).mean('water_year').values
 
-fig, axes_2d = plt.subplots(2, 3, figsize=(8, 6), layout='constrained')
+fig, axes_2d = plt.subplots(2, 3, figsize=(7.5, 6), layout='constrained')
 axes = axes_2d.flatten()[:-1]
 secondary = axes_2d.flatten()[-1]
 
@@ -239,7 +295,7 @@ secondary.legend(loc='center')
 
 fig.supxlabel(r'Change in mass balance (cm w.e. a$^{-1}$)')
 fig.supylabel('Elevation (m a.s.l.)')
-plt.savefig(fig_fp + 'elevation_profile.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'elevation_profile.png', dpi=300)
 plt.close()
 
 # Energy-balance attribution: mean change in each surface flux over May-Sep
@@ -248,7 +304,7 @@ fluxes = {'shortwave_net': 'SW$_{net}$', 'longwave_net': 'LW$_{net}$', 'sensible
 melt_season = glac['Base'].time.dt.month.isin([5, 6, 7, 8, 9])
 names = ['Wildfires', 'Heatwaves', 'Both']
 
-fig, axes_2d = plt.subplots(2, 3, figsize=(9, 5.5), layout='constrained', sharey=True)
+fig, axes_2d = plt.subplots(2, 3, figsize=(7.5, 5.5), layout='constrained', sharey=True)
 axes = axes_2d.flatten()[:-1]
 secondary = axes_2d.flatten()[-1]
 
@@ -258,7 +314,7 @@ for ax, glacier in zip(axes, glaciers):
             change = float(effect(glac, name, flux).sel(glacier=glacier, time=melt_season).mean())
             ax.bar(f + (k - 1) * 0.27, change, 0.27, color=effect_colors[name])
     ax.set_xticks(range(len(fluxes)))
-    ax.set_xticklabels(fluxes.values(), rotation=60, fontsize=8)
+    ax.set_xticklabels(fluxes.values(), rotation=60, fontsize=9)
     ax.axhline(0, linewidth=0.5, c='k')
     ax.set_title(fmt_name(glacier), fontsize=10)
 
@@ -268,72 +324,74 @@ secondary.axis('off')
 secondary.legend(loc='center')
 
 fig.supylabel(r'May$-$Sep mean flux change (W m$^{-2}$)')
-plt.savefig(fig_fp + 'energy_balance_attribution.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'energy_balance_attribution.png', dpi=300)
 plt.close()
 
-# Seasonal timing: day-of-year climatology of the daily effect on mass balance and albedo
-doy_range = (120, 280)
-smooth_days = 7
-names = ['Wildfires', 'Heatwaves', 'Both']
+# Not made for now; uncomment to make seasonal_timing.png
+# # Seasonal timing: day-of-year climatology of the daily effect on mass balance and albedo
+# doy_range = (120, 280)
+# smooth_days = 7
+# names = ['Wildfires', 'Heatwaves', 'Both']
 
-def climatology(da):
-    da = da.sel(time=slice(f'{first_full_wy - 1}-10-01', None))
-    clim = da.groupby('time.dayofyear').mean()
-    return clim.rolling(dayofyear=smooth_days, center=True).mean().sel(dayofyear=slice(*doy_range))
+# def climatology(da):
+#     da = da.sel(time=slice(f'{first_full_wy - 1}-10-01', None))
+#     clim = da.groupby('time.dayofyear').mean()
+#     return clim.rolling(dayofyear=smooth_days, center=True).mean().sel(dayofyear=slice(*doy_range))
 
-fig, axes = plt.subplots(2, len(glaciers), figsize=(11, 4.5), layout='constrained', sharex=True, sharey='row')
-for j, glacier in enumerate(glaciers):
-    for name in names:
-        daily_mb = effect(glac, name).sel(glacier=glacier).resample(time='D').sum() * 1000
-        mb_clim = climatology(daily_mb)
-        alb_clim = climatology(effect(alb, name, 'albedo').sel(glacier=glacier))
-        axes[0, j].plot(mb_clim.dayofyear, mb_clim, color=effect_colors[name], linewidth=1, label=name)
-        axes[1, j].plot(alb_clim.dayofyear, alb_clim, color=effect_colors[name], linewidth=1)
-    axes[0, j].set_title(fmt_name(glacier), fontsize=10)
-    for ax in axes[:, j]:
-        ax.axhline(0, linewidth=0.5, c='k')
+# fig, axes = plt.subplots(2, len(glaciers), figsize=(11, 4.5), layout='constrained', sharex=True, sharey='row')
+# for j, glacier in enumerate(glaciers):
+#     for name in names:
+#         daily_mb = effect(glac, name).sel(glacier=glacier).resample(time='D').sum() * 1000
+#         mb_clim = climatology(daily_mb)
+#         alb_clim = climatology(effect(alb, name, 'albedo').sel(glacier=glacier))
+#         axes[0, j].plot(mb_clim.dayofyear, mb_clim, color=effect_colors[name], linewidth=1, label=name)
+#         axes[1, j].plot(alb_clim.dayofyear, alb_clim, color=effect_colors[name], linewidth=1)
+#     axes[0, j].set_title(fmt_name(glacier), fontsize=10)
+#     for ax in axes[:, j]:
+#         ax.axhline(0, linewidth=0.5, c='k')
 
-axes[0, 0].set_ylabel(r'$\Delta$ mass balance' + '\n' + r'(mm w.e. d$^{-1}$)')
-axes[1, 0].set_ylabel(r'$\Delta$ albedo')
-axes[0, 0].legend(fontsize=7)
-fig.supxlabel('Day of year')
-plt.savefig(fig_fp + 'seasonal_timing.png', dpi=300, bbox_inches='tight')
-plt.close()
+# axes[0, 0].set_ylabel(r'$\Delta$ mass balance' + '\n' + r'(mm w.e. d$^{-1}$)')
+# axes[1, 0].set_ylabel(r'$\Delta$ albedo')
+# axes[0, 0].legend(fontsize=7)
+# fig.supxlabel('Day of year')
+# plt.savefig(fig_fp + 'seasonal_timing.png', dpi=300, bbox_inches='tight')
+# plt.close()
 
-# Case study of one fire summer at one glacier
-case_glacier = 'gulkana'
-case_year = 2004
+# Not made for now; uncomment to make case_study_<glacier>_<year>.png
+# # Case study of one fire summer at one glacier
+# case_glacier = 'gulkana'
+# case_year = 2004
 
-season = slice(f'{case_year}-05-01', f'{case_year}-09-30')
-ev_case = ev.sel(glacier=case_glacier, time=season)
+# season = slice(f'{case_year}-05-01', f'{case_year}-09-30')
+# ev_case = ev.sel(glacier=case_glacier, time=season)
 
-fig, axes = plt.subplots(4, 1, figsize=(6, 7), sharex=True, layout='constrained')
-for ax in axes:
-    for flag, color in [('wildfire', 'r'), ('heatwave', 'b')]:
-        ax.fill_between(ev_case.time, 0, 1, where=ev_case[flag].values, color=color,
-                        alpha=0.15, linewidth=0, transform=ax.get_xaxis_transform())
+# fig, axes = plt.subplots(4, 1, figsize=(6, 7), sharex=True, layout='constrained')
+# for ax in axes:
+#     for flag, color in [('wildfire', 'r'), ('heatwave', 'b')]:
+#         ax.fill_between(ev_case.time, 0, 1, where=ev_case[flag].values, color=color,
+#                         alpha=0.15, linewidth=0, transform=ax.get_xaxis_transform())
 
-axes[0].plot(ev_case.time, ev_case['bc'] * 1e6, c='k', label='Base')
-axes[0].plot(ev_case.time, ev_case['bc_nofire'] * 1e6, c='r', label='No fires')
-for sim, color in [('Base', 'k'), ('No fires', 'r')]:
-    albedo = alb[sim]['albedo'].sel(glacier=case_glacier, time=season)
-    melt = glac[sim]['melt'].sel(glacier=case_glacier, time=season).resample(time='D').sum() * 1000
-    axes[1].plot(albedo.time, albedo, c=color)
-    axes[2].plot(melt.time, melt, c=color)
-for name in ['Wildfires', 'Heatwaves']:
-    cumulative = effect(glac, name).sel(glacier=case_glacier, time=season).resample(time='D').sum().cumsum() * 100
-    axes[3].plot(cumulative.time, cumulative, c=effect_colors[name], label=f'{name} effect')
+# axes[0].plot(ev_case.time, ev_case['bc'] * 1e6, c='k', label='Base')
+# axes[0].plot(ev_case.time, ev_case['bc_nofire'] * 1e6, c='r', label='No fires')
+# for sim, color in [('Base', 'k'), ('No fires', 'r')]:
+#     albedo = alb[sim]['albedo'].sel(glacier=case_glacier, time=season)
+#     melt = glac[sim]['melt'].sel(glacier=case_glacier, time=season).resample(time='D').sum() * 1000
+#     axes[1].plot(albedo.time, albedo, c=color)
+#     axes[2].plot(melt.time, melt, c=color)
+# for name in ['Wildfires', 'Heatwaves']:
+#     cumulative = effect(glac, name).sel(glacier=case_glacier, time=season).resample(time='D').sum().cumsum() * 100
+#     axes[3].plot(cumulative.time, cumulative, c=effect_colors[name], label=f'{name} effect')
 
-axes[0].set_ylabel('BC+OC deposition\n' + r'(mg m$^{-2}$ d$^{-1}$)')
-axes[1].set_ylabel('Albedo')
-axes[2].set_ylabel('Melt\n' + r'(mm w.e. d$^{-1}$)')
-axes[3].set_ylabel('Cumulative change\n(cm w.e.)')
-axes[3].axhline(0, linewidth=0.5, c='k')
-axes[0].legend(fontsize=8)
-axes[3].legend(fontsize=8)
-axes[0].set_title(f'{fmt_name(case_glacier)} {case_year}', fontsize=10)
-plt.savefig(fig_fp + f'case_study_{case_glacier}_{case_year}.png', dpi=300, bbox_inches='tight')
-plt.close()
+# axes[0].set_ylabel('BC+OC deposition\n' + r'(mg m$^{-2}$ d$^{-1}$)')
+# axes[1].set_ylabel('Albedo')
+# axes[2].set_ylabel('Melt\n' + r'(mm w.e. d$^{-1}$)')
+# axes[3].set_ylabel('Cumulative change\n(cm w.e.)')
+# axes[3].axhline(0, linewidth=0.5, c='k')
+# axes[0].legend(fontsize=8)
+# axes[3].legend(fontsize=8)
+# axes[0].set_title(f'{fmt_name(case_glacier)} {case_year}', fontsize=10)
+# plt.savefig(fig_fp + f'case_study_{case_glacier}_{case_year}.png', dpi=300, bbox_inches='tight')
+# plt.close()
 
 # Extra mass loss per water year, stacked by forcing (Wildfires, Heatwaves, Both). WY2004 and WY2019
 # get their own colors. Other years are gray, unless they are most of a glacier's total, in which
@@ -390,7 +448,7 @@ legend_ax.legend(handles=handles, loc='center', fontsize=9, frameon=False)
 legend_ax.axis('off')
 
 fig.supylabel('Extra mass loss per water year (cm w.e.)')
-plt.savefig(fig_fp + 'top_loss_years.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'top_loss_years.png', dpi=300)
 plt.close()
 
 # Heatmap of extra loss by water year: rows are glaciers, panels are forcings stacked vertically.
@@ -416,7 +474,7 @@ for ax, name in zip(axes, top_names):
 axes[-1].set_xticks(range(0, len(years), 4))
 axes[-1].set_xticklabels(years[::4], fontsize=9)
 fig.colorbar(im, ax=axes, label="Share of glacier's total extra loss (per forcing)", shrink=0.9)
-plt.savefig(fig_fp + 'loss_year_heatmap.png', dpi=300, bbox_inches='tight')
+plt.savefig(fig_fp + 'loss_year_heatmap.png', dpi=300)
 plt.close()
 for name in top_names:
     print(f'{name:<10} totals (cm w.e.): ' + ', '.join(f'{g} {t:.0f}' for g, t in zip(glaciers, totals[name])))
@@ -480,4 +538,22 @@ sm.set_array([])
 fig.colorbar(sm, ax=axes, label='Extra mass loss (cm w.e.)')
 fig.supylabel("Share of glacier's total extra loss")
 plt.savefig(fig_fp + 'loss_year_bars_both.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# The same bars with height and color swapped: height is each year's extra loss (cm w.e.); color is
+# the year's share of that glacier's total extra loss, on the heatmap's scale.
+fig, axes = plt.subplots(len(glaciers), 1, figsize=(6, 6), layout='constrained', sharex=True, sharey=True)
+for ax, gi in zip(axes, order[::-1]):
+    share = shares['Both'][gi]
+    magnitude = share * totals['Both'][gi]
+    ax.bar(np.arange(n_years), magnitude, width=1.0, color=heat_cmap(share / vmax), edgecolor='none')
+    ax.set_title(fmt_name(glaciers[gi]), loc='left', fontsize=9)
+    ax.tick_params(labelsize=9)
+axes[-1].set_xticks(range(0, n_years, 4))
+axes[-1].set_xticklabels(years[::4], fontsize=9)
+sm = mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(0, vmax), cmap=heat_cmap)
+sm.set_array([])
+fig.colorbar(sm, ax=axes, label="Share of glacier's total extra loss")
+fig.supylabel('Extra mass loss (cm w.e.)')
+plt.savefig(fig_fp + 'loss_year_bars_both_cm.png', dpi=300, bbox_inches='tight')
 plt.close()

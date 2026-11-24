@@ -1,0 +1,14 @@
+# 2x2 grid search on kp and wind_factor at Gulkana site B.
+# Run: python simulation.py -cf config_gridsearch_sample.yaml
+
+output_fp: '../Output/gridsearch_sample/'
+start_date: '2024-04-20 00:00'
+end_date: '2024-09-30 23:00'
+
+# same site repeated once per combination (4 points)
+rgi_ids: ['01.00570', '01.00570', '01.00570', '01.00570']
+sites:   ['B',        'B',        'B',        'B']
+
+# one value per point, in the same order
+kp:          [2.0, 2.0, 3.0, 3.0]
+wind_factor: [1.0, 3.0, 1.0, 3.0]

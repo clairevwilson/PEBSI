@@ -532,7 +532,8 @@ class Albedo():
             self.glac_no = '01.06469'
 
         # open dataframes
-        self.albedo_fp = base_fp + 'data/albedo/' # updated/
+        self.albedo_fp = base_fp + 'data/albedo/' # <sensor>/RGI2000-v7.0-G-01-XXXXX.nc
+        self.max_slope = 10 # degrees; steeper pixels are cropped out
 
         # find the site location lat/lon
         glac_no_6 = translate_rgi[name]['6']
@@ -565,7 +566,7 @@ class Albedo():
                 use_list = self.use
 
         # get filename for this glac_no
-        albedo_fns = [self.albedo_fp + f'{num}/RGI2000-v7.0-G-01-{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
+        albedo_fns = [self.albedo_fp + f'{data}/RGI2000-v7.0-G-01-{num}.nc' for data in use_list]
 
         # build dataset
         self.data = []
@@ -581,6 +582,9 @@ class Albedo():
             # filter to the glacier extent
             # self.mask = ds['dem_shadow_mask'].astype(bool)
             # ds = ds.where(self.mask)
+
+            # crop out steep pixels
+            ds['albedo'] = ds['albedo'].where(ds['slope'] <= self.max_slope)
 
             # convert coordinates
             ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True).to_dataset()
@@ -602,7 +606,8 @@ class Albedo():
         self.time = np.array(self.time)
         self.dtype = np.array(self.dtype)
 
-        self.ds = self.ds.squeeze('band')
+        if 'band' in self.ds.variables:
+            self.ds = self.ds.squeeze('band')
 
         # get rid of duplicates
         ds_mean = self.ds.groupby("time").mean()
@@ -631,7 +636,7 @@ class Albedo():
                 use_list = self.use
 
         # get filename for this glac_no
-        albedo_fns = [self.albedo_fp + f'{num}/RGI2000-v7.0-G-01-{num}_{data}.nc' for data in use_list] # 'RGI2000-v7.0-G-01-
+        albedo_fns = [self.albedo_fp + f'{data}/RGI2000-v7.0-G-01-{num}.nc' for data in use_list]
 
         # build dataset
         self.data = []
@@ -647,6 +652,9 @@ class Albedo():
             # filter to the glacier extent
             # self.mask = ds['dem_shadow_mask'].astype(bool)
             # ds = ds.where(self.mask)
+
+            # crop out steep pixels
+            ds['albedo'] = ds['albedo'].where(ds['slope'] <= self.max_slope)
 
             # convert coordinates
             ds = ds['albedo'].rio.write_crs(crs).reset_coords(drop=True).to_dataset()
@@ -674,7 +682,8 @@ class Albedo():
         self.time = np.array(self.time)
         self.dtype = np.array(self.dtype)
 
-        self.ds = self.ds.squeeze('band')
+        if 'band' in self.ds.variables:
+            self.ds = self.ds.squeeze('band')
 
         # get rid of duplicates
         ds_mean = self.ds.groupby("time").mean()

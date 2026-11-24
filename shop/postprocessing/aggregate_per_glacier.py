@@ -16,6 +16,11 @@ per_point_annual.nc
     point coordinates for elevation profiles. The first and last water
     years are partial if the run does not start/end on Oct 1.
 
+per_point_daily.nc
+    May-Sep daily sums of hourly shortwave_in and shortwave_net, and the
+    ~local-noon (21 UTC) albedo, at every point (hourly runs only), for
+    project/controlled/plot_fire_albedo.py and plot_heatwave_energy.py.
+
 By default every run directory under Output/controlled/ that holds an
 output.zarr is processed.
 
@@ -36,6 +41,7 @@ from project.parameters import translate_names
 ROOT = '/ocean/projects/ees260009p/cwilson4/Output/controlled/'
 OUT_NAME = 'per_glacier.nc'
 POINT_OUT_NAME = 'per_point_annual.nc'
+DAILY_OUT_NAME = 'per_point_daily.nc'
 GLACIER_VARS = ['mass_balance', 'melt', 'refreeze', 'airtemp',
                 'shortwave_in', 'shortwave_net', 'longwave_net',
                 'sensible_heat', 'latent_heat', 'ground_heat', 'rain_heat',
@@ -88,17 +94,31 @@ def aggregate_points(ds, var_names):
                                  for v in ['rgiid', 'elev', 'weight', 'lat', 'lon']})
 
 
+def daily_points(ds):
+    season = ds.sel(time=ds.time.dt.month.isin(range(5, 10)))
+    # each May-Sep is whole days from 00 UTC, so blocks of 24 hours are days; trim drops a partial last day
+    with xr.set_options(keep_attrs=True):
+        daily = season[['shortwave_in', 'shortwave_net']].coarsen(time=24, boundary='trim').sum()
+    noon = season['albedo'].isel(time=slice(21, 24 * daily.sizes['time'], 24))
+    daily['albedo'] = noon.assign_coords(time=daily.time)
+    return daily.assign_coords({v: ds[v].astype(str) if v == 'rgiid' else ds[v]
+                                for v in ['rgiid', 'elev', 'weight']})
+
+
 def aggregate(run_dir, var_names, point_var_names):
     ds = xr.open_zarr(os.path.join(run_dir, 'output.zarr'), consolidated=False)
     agg = aggregate_glaciers(ds, var_names)
     annual = aggregate_points(ds, point_var_names)
+    daily = daily_points(ds)
     source = os.path.join(run_dir, 'output.zarr')
     agg.attrs = dict(ds.attrs, source=source,
                      aggregation='area-weighted sum over points (ds.weight)')
     annual.attrs = dict(ds.attrs, source=source,
                         aggregation='water-year (Oct-Sep) sum at each point')
-    # one compute so each zarr chunk is read once for both outputs
-    return dask.compute(agg, annual)
+    daily.attrs = dict(ds.attrs, source=source,
+                       aggregation='May-Sep daily sum of hourly shortwave, albedo at 21 UTC, at each point')
+    # one compute so each zarr chunk is read once for all outputs
+    return dask.compute(agg, annual, daily)
 
 
 def main():
@@ -107,8 +127,8 @@ def main():
                                        glob.glob(os.path.join(ROOT, '*', 'output.zarr')))
     for run_dir in run_dirs:
         print(f'Aggregating {run_dir}...', flush=True)
-        agg, annual = aggregate(run_dir, args.vars, args.point_vars)
-        for ds, name in [(agg, OUT_NAME), (annual, POINT_OUT_NAME)]:
+        agg, annual, daily = aggregate(run_dir, args.vars, args.point_vars)
+        for ds, name in [(agg, OUT_NAME), (annual, POINT_OUT_NAME), (daily, DAILY_OUT_NAME)]:
             out_fn = os.path.join(run_dir, name)
             # write then swap in, since an open notebook's HDF5 lock on
             # the old file blocks overwriting it in place

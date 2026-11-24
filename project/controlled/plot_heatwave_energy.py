@@ -7,9 +7,10 @@ into
   darker snow      lower albedo on point-days snow-covered in both runs
   other SW         the rest (point-days snow-covered only with heatwaves, and bare in both)
 Snow cover is from noon albedo as in plot_fire_albedo.py. The per-glacier fluxes are per_glacier.nc;
-the shortwave split uses each run's per_point_daily.nc. Every year goes to CSV_FN; the figure is the
-2004 and 2019 seasons side by side as May-Sep totals [MJ m-2], without ground heat and other SW (both about
-zero).
+the shortwave split uses each run's per_point_daily.nc. Every year goes to CSV_FN, with the change in air
+temperature and incoming shortwave as May-Sep means and as means during heatwaves (all hours of the local
+days whose temperature was replaced; hw_*); the figure is the 2004 and 2019 seasons side by side as May-Sep
+mean changes [W m-2], without ground heat and other SW (both about zero), above the May-Sep mean forcing changes.
 """
 import os
 import sys
@@ -17,14 +18,15 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 sys.path.insert(0, os.path.dirname(__file__))
 from plot_fire_albedo import snow_mask  # also puts project/synthetic on the path
 from plot_event_grid import GLACIERS, translate_rgi
 
 OUT = '/home/claire/Research/Output/controlled/'
-RUNS = {'b': 'base_merra2', 'n': 'no_heatwaves_merra2'}
-CSV_FN = OUT + 'heatwave_energy_partition.csv'
-FIG_FN = OUT + 'figs/heatwave_energy_2004_2019.png'
+RUNS = {'b': 'base_current', 'n': 'no_heatwaves_current'}
+CSV_FN = OUT + 'heatwave_energy_partition_current.csv'
+FIG_FN = OUT + 'figs_current/heatwave_energy_2004_2019.png'
 CASE_YEARS = [2004, 2019]
 FLUXES = {'sensible_heat': 'Sensible', 'latent_heat': 'Latent', 'longwave_net': 'Net longwave',
           'rain_heat': 'Rain', 'ground_heat': 'Ground'}
@@ -63,8 +65,13 @@ def partition():
                        sw_snowloss=mean(darken, snow_n & ~snow_b), sw_darker=mean(darken, snow_n & snow_b))
             row['sw_other'] = mean(total_sw) - row['sw_sun'] - row['sw_snowloss'] - row['sw_darker']
             s = slice(f'{y}-05-01', f'{y}-09-30')
-            for f in FLUXES:
+            for f in list(FLUXES) + ['airtemp', 'shortwave_in']:
                 row[f] = float((glac['b'][f] - glac['n'][f]).sel(glacier=g, time=s).mean())
+            # anomaly during heatwaves: every hour of the local (UTC-8) days whose temperature was replaced
+            dT = (glac['b']['airtemp'] - glac['n']['airtemp']).sel(glacier=g, time=s).to_series()
+            hw = (dT.abs() > 1e-3).groupby((dT.index - pd.Timedelta(hours=8)).normalize()).transform('any')
+            for f in ['airtemp', 'shortwave_in']:
+                row[f'hw_{f}'] = (glac['b'][f] - glac['n'][f]).sel(glacier=g, time=s).to_series()[hw].mean()
             row['melt_energy'] = float((glac['b']['melt_energy'] - glac['n']['melt_energy']).sel(glacier=g, time=s).mean())
             row['shortwave_net'] = float((glac['b']['shortwave_net'] - glac['n']['shortwave_net']).sel(glacier=g, time=s).mean())
             rows.append(row)
@@ -78,7 +85,7 @@ def main():
     # the point-day split should add up to the glacier-level net shortwave change
     split = df[list(SW_PARTS)].sum(axis=1)
     print('max |SW split - per_glacier SW| [W m-2]:', round(float((split - df['shortwave_net']).abs().max()), 3))
-    cols = list(FLUXES) + list(SW_PARTS) + ['melt_energy']
+    cols = list(FLUXES) + list(SW_PARTS) + ['melt_energy', 'airtemp', 'shortwave_in', 'hw_airtemp', 'hw_shortwave_in']
     pd.set_option('display.width', 220)
     print(df[df['year'].isin(CASE_YEARS)].set_index(['year', 'glacier'])[cols].round(1).to_string())
     print('\nall-years mean\n', df.groupby('glacier')[cols].mean().round(1).to_string())
@@ -86,12 +93,19 @@ def main():
     # stacked from the bottom; ground heat and the leftover shortwave are about zero, so only the CSV has them
     parts = ['sensible_heat', 'latent_heat', 'sw_sun', 'sw_snowloss', 'sw_darker', 'rain_heat', 'longwave_net']
     labels = {**FLUXES, **SW_PARTS}
-    fig, axes = plt.subplots(1, 2, figsize=(7.5, 4), sharey=True)
-    for ax, y in zip(axes, CASE_YEARS):
-        # May-Sep totals [MJ m-2]: the seasonal mean flux times the season's length
-        n_seconds = (pd.Timestamp(f'{y}-10-01') - pd.Timestamp(f'{y}-05-01')).total_seconds()
-        d = df[df['year'] == y].set_index('glacier').loc[GLACIERS][parts] * n_seconds / 1e6
+    # energy bars on top, then the forcing changes behind them, sharing the glacier axis with no gaps
+    fig, axes = plt.subplots(3, 2, figsize=(7.5, 5.5), sharex=True, sharey='row',
+                             gridspec_kw=dict(height_ratios=[5, 1, 1]))
+    # May-Sep means like the bars above; the hw_ columns are the anomalies during heatwaves instead
+    forcing = {'airtemp': 'ΔTemperature\n(°C)', 'shortwave_in': 'ΔSW\n(W m$^{-2}$)'}
+    for col, y in enumerate(CASE_YEARS):
+        ax = axes[0, col]
         x = np.arange(len(GLACIERS))
+        f = df[df['year'] == y].set_index('glacier').loc[GLACIERS]
+        for fax, v in zip(axes[1:, col], forcing):
+            fax.bar(x, f[v], 0.6, color='grey')
+            fax.tick_params(labelsize=9)
+        d = f[parts]
         up, down = np.zeros(len(x)), np.zeros(len(x))
         for p in parts:
             v = d[p].values
@@ -100,16 +114,27 @@ def main():
             up += np.where(v > 0, v, 0)
             down += np.where(v < 0, v, 0)
         ax.axhline(0, color='k', lw=0.5)
-        ax.set_xticks(x)
-        ax.set_xticklabels([g.replace('_', ' ').title() for g in GLACIERS], rotation=45, ha='right', fontsize=9)
+        axes[-1, col].set_xticks(x)
+        axes[-1, col].set_xticklabels([g.replace('_', ' ').title() for g in GLACIERS], rotation=45, ha='right',
+                                      fontsize=9)
         ax.set_title(str(y), fontsize=9)
         ax.tick_params(labelsize=9)
-    axes[0].set_ylim(top=1.1 * axes[0].get_ylim()[1])
-    axes[0].set_ylabel('Change in energy fluxes from heatwaves (MJ m$^{-2}$)', fontsize=9)
-    handles, labs = axes[0].get_legend_handles_labels()
+    for ax in axes[:-1].flat:
+        ax.tick_params(bottom=False)  # no x ticks poking into the panel below
+    axes[0, 0].set_ylim(top=1.1 * axes[0, 0].get_ylim()[1])
+    axes[0, 0].set_ylabel('Change in energy fluxes\nfrom heatwaves (W m$^{-2}$)', fontsize=9)
+    for fax, (v, flabel) in zip(axes[1:, 0], forcing.items()):
+        fax.set_ylabel(flabel, fontsize=9)
+        fax.set_ylim(0, 1.25 * df.loc[df['year'].isin(CASE_YEARS), v].max())
+    # no 0 label on the temperature row, where it would sit against the top of the shortwave row
+    axes[1, 0].yaxis.set_major_locator(MaxNLocator(3, prune='lower'))
+    axes[2, 0].yaxis.label.set_y(0.35)  # down a little, clear of the longer temperature label above
+    fig.align_ylabels(axes[:, 0])
+    handles, labs = axes[0, 0].get_legend_handles_labels()
     # top to bottom in the same order as the bars
-    fig.legend(handles[::-1], labs[::-1], loc='center left', bbox_to_anchor=(0.79, 0.5), fontsize=9, frameon=False)
+    fig.legend(handles[::-1], labs[::-1], loc='center left', bbox_to_anchor=(0.79, 0.6), fontsize=9, frameon=False)
     plt.tight_layout(rect=(0, 0, 0.8, 1))
+    fig.subplots_adjust(hspace=0, wspace=0.05)
     plt.savefig(FIG_FN, dpi=300)
     print(f'Saved {FIG_FN}')
 
