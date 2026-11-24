@@ -3,7 +3,7 @@ Climate class for PEBSI
 
 Loads the climate dataset and processes it
 for the simulation, including:
-- Bias correction (i.e., quantile mapping)
+- Bias correction (i.e., quantile delta mapping)
 - Elevation adjustments
 - Spatial adjustments (e.g., precipitation factor)
 - Perturbations (e.g., additive temperature factor)
@@ -19,6 +19,11 @@ import numpy as np
 import xarray as xr
 # Internal libraries
 from pebsi.config import ConfigError
+
+# quantile delta mapping applies the station bias at each quantile additively
+# for unbounded variables and multiplicatively for positive ones
+QM_DELTA = {'temp': 'add', 'LWin': 'add', 'rh': 'add',
+            'sp': 'mult', 'wind': 'mult', 'SWin': 'mult'}
 
 class Climate():
     """
@@ -46,10 +51,9 @@ class Climate():
         self.terrain = terrain
 
         # list all required variables
-        self.all_vars = ['temp','tp','rh','uwind','vwind','sp','SWin','LWin',
-                            'bcwet','bcdry','ocwet','ocdry','dustwet','dustdry']
-        self.optional_vars = ['SWout','LWout','tcc','NR','albedo']
-        self.carbon_vars = ['bcwet','bcdry','ocwet','ocdry']
+        self.all_vars = list(params.climate_all_vars)
+        self.optional_vars = list(params.climate_optional_vars)
+        self.carbon_vars = list(params.carbon_vars)
 
         # create dictionary containing reanalysis filenames
         self.get_vardict()
@@ -60,7 +64,6 @@ class Climate():
         # set temporal metadata and shape = (N_UNIQUE, N_TIME)
         self.get_spatial_temporal_info(dates)
 
-        # get any AWS data and store the list of variables still needed
         self.bias_vars = []
         if not self.params.use_aws:
             self.measured_vars = []
@@ -199,16 +202,16 @@ class Climate():
         self.point_lons = xr.DataArray(self.unique_lons, dims='point')
 
         # get GCM geopotential elevation at each unique cell
-        if self.params.testing:
+        if self.params.rgi_region == 0:
+            # test glacier: no MERRA-2 data, so use the AWS elevation
             self.terrain.gcm_elev_n = self.aws_elev
-
         else:
             z_fp = self.GCM_fp + self.var_dict['elev']['fn']
             with xr.open_dataarray(z_fp) as zds:
                 if type(zds) == xr.Dataset:
                     zds = zds['PHIS']
                 zds = zds.sel({self.lat_vn: self.point_lats,
-                            self.lon_vn: self.point_lons}, method='nearest')
+                               self.lon_vn: self.point_lons}, method='nearest')
                 zds = self.check_units('elev', zds)
                 self.terrain.gcm_elev_n = zds.isel(time=0).values  # (N_UNIQUE,)
         
@@ -216,9 +219,93 @@ class Climate():
         for var in self.need_vars:
             # gather data for each var and add to all_data
             region = 'reg' + str(self.params.rgi_region).zfill(2)
+
+            # check if the variable is coming from a secondary folder
+            suffix = self.params.secondary_climate_string
+            if suffix and var in self.params.secondary_vars:
+                region = region + suffix
+
             fn = self.GCM_fp + self.var_dict[var]['fn'].format(r=region)
-            
+
             self.get_var_data(fn, var)
+        return
+
+    def add_heatwave(self, raw_temp):
+        """
+        Adds a synthetic heatwave to the bias-corrected climate: heatwave_intensity x each
+        cell's average heatwave (by local hour) on temperature, shortwave, longwave and
+        specific humidity over heatwave_duration local days from heatwave_start. Shortwave
+        is capped at the highest value observed at that hour and time of year. RH is
+        recomputed from raw_temp (temperature before bias correction, which the baseline
+        RH comes from) plus the anomaly, and the new specific humidity. Precipitation is
+        zeroed if heatwave_remove_precip.
+        """
+        params = self.params
+        SPH = params.seconds_per_hour
+
+        # the average heatwave is by local hour in UTC-8, as in prepare_no_heatwaves.py
+        local = pd.DatetimeIndex(self.dates) - pd.Timedelta(hours=8)
+        start = pd.Timestamp(params.heatwave_start)
+        event = (local >= start) & (local < start + pd.Timedelta(days=params.heatwave_duration))
+        if not event.any():
+            return
+        hours = local.hour[event]
+        doys = local.dayofyear[event]
+
+        ds = xr.open_dataset(params.climate_fp + params.heatwave_anomaly_fn)
+        ds = ds.sel(lat=xr.DataArray(self.unique_lats, dims='cell'),
+                    lon=xr.DataArray(self.unique_lons, dims='cell'), method='nearest')
+        assert np.allclose(ds.lat.values, self.unique_lats) and np.allclose(ds.lon.values, self.unique_lons), \
+            f'{params.heatwave_anomaly_fn} does not cover every cell'
+
+        # (N_UNIQUE, N_EVENT) anomaly for each event hour
+        def anomaly(vn):
+            return params.heatwave_intensity * ds[vn].transpose('local_hour', 'cell').values[hours].T
+
+        # specific humidity from the same folder as RH
+        region = 'reg' + str(params.rgi_region).zfill(2)
+        if params.secondary_climate_string and 'rh' in params.secondary_vars:
+            region += params.secondary_climate_string
+        self.get_var_data(self.GCM_fp + self.var_dict['qv']['fn'].format(r=region), 'qv')
+
+        dtemp = anomaly('T2M')
+        self.temp[:, event] += dtemp
+        self.LWin[:, event] += anomaly('LWGAB') * SPH
+        cap = ds['SWGDN_cap'].transpose('doy', 'local_hour', 'cell').values[doys - 1, hours].T * SPH
+        self.SWin[:, event] = np.clip(self.SWin[:, event] + anomaly('SWGDN') * SPH, 0, cap)
+
+        qv = self.qv[:, event] + anomaly('QV2M')
+        esat = self.sat_vapor_pressure(raw_temp[:, event] + dtemp)
+        ws = 0.622 * esat / (self.sp[:, event] - esat)
+        self.rh[:, event] = qv / (1 - qv) / ws * 100
+
+        if params.heatwave_remove_precip:
+            self.tp[:, event] = 0
+        return
+
+    def add_wildfire(self):
+        """
+        Adds a synthetic wildfire to the UK-ESM or MERRA-2 deposition: wildfire_intensity x each
+        cell's average fire-attributable BC and OC deposition, wet and dry, over wildfire_duration
+        UTC days from wildfire_start (UK-ESM deposition is daily over UTC days). wildfire_anomaly_fn
+        must match the deposition source, since it is added before that source's ratio.
+        """
+        params = self.params
+        start = pd.Timestamp(params.wildfire_start)
+        dates = pd.DatetimeIndex(self.dates)
+        event = (dates >= start) & (dates < start + pd.Timedelta(days=params.wildfire_duration))
+        if not event.any():
+            return
+
+        ds = xr.open_dataset(params.climate_fp + params.wildfire_anomaly_fn)
+        ds = ds.sel(lat=xr.DataArray(self.unique_lats, dims='cell'),
+                    lon=xr.DataArray(self.unique_lons, dims='cell'), method='nearest')
+        assert np.allclose(ds.lat.values, self.unique_lats) and np.allclose(ds.lon.values, self.unique_lons), \
+            f'{params.wildfire_anomaly_fn} does not cover every cell'
+
+        for var in self.carbon_vars:
+            added = params.wildfire_intensity * ds[var].values[:, None]
+            getattr(self, var)[:, event] = np.maximum(getattr(self, var)[:, event] + added, 0)
         return
     
     def get_var_data(self, fn, var):
@@ -329,7 +416,7 @@ class Climate():
         by the model.
 
         - Calculates wind speed and direction vectors from u and v
-        - Corrects biases using quantile mapping
+        - Corrects biases using quantile delta mapping
         - Adjusts elevation-dependent variables
         - Validates that all variables are filled
         """
@@ -344,22 +431,35 @@ class Climate():
         self.winddir = winddir
 
         # bias correction
+        raw_temp = self.temp.copy()
         if params.climate_source == 'MERRA2':
             # do not adjust variables that were measured
             self.bias_vars = [v for v in self.params.bias_vars if v not in self.measured_vars]
 
             for var in self.bias_vars:
                 self.bias_correct_qm(var)
-        
+
+        # synthetic heatwave, on top of the bias-corrected climate
+        if params.heatwave_start:
+            self.add_heatwave(raw_temp)
+
+        # synthetic wildfire, on the UK-ESM or MERRA-2 deposition before its ratio below
+        if params.wildfire_start:
+            self.add_wildfire()
+
         # apply coefficients to adjust deposition
         if params.rgi_region == 0:
             pass  # test glacier: no adjustmenets necessary
-        elif not params.deposition_data:
-            # MERRA-2 representative bin --> total deposition
-            self.apply_merra_dep_ratio()
         else:
-            # UKESM --> MERRA-2
-            self.apply_ukesm_dep_ratio()
+            # dust always comes from MERRA-2: representative bin --> total
+            self.dustdry *= params.ratio_DU3_DUtot
+            self.dustwet *= params.ratio_DU3_DUtot
+            if not params.deposition_data:
+                # MERRA-2 representative bin --> total deposition
+                self.apply_merra_dep_ratio()
+            else:
+                # UKESM --> MERRA-2
+                self.apply_ukesm_dep_ratio()
 
         # apply climatic perturbations
         self.apply_perturbations()
@@ -368,16 +468,15 @@ class Climate():
         if not hasattr(self, 'temp_elev'):
             self.temp_elev = self.terrain.gcm_elev_n  # (N_UNIQUE,)
 
-        # ensure sp_elev and LWin_elev are set: AWS elevation if measured, else GCM elevation
-        if not hasattr(self, 'aws_elev'):
-            self.sp_elev = self.terrain.gcm_elev_n
-            self.LWin_elev = self.terrain.gcm_elev_n
-        else:
-            self.sp_elev = self.aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
-            self.LWin_elev = self.aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
+        # ensure sp_elev and LWin_elev are set: set by bias correction, AWS elevation if measured, else GCM elevation
+        aws_elev = getattr(self, 'aws_elev', None)
+        if not hasattr(self, 'sp_elev'):
+            self.sp_elev = aws_elev if 'sp' in self.measured_vars else self.terrain.gcm_elev_n
+        if not hasattr(self, 'LWin_elev'):
+            self.LWin_elev = aws_elev if 'LWin' in self.measured_vars else self.terrain.gcm_elev_n
 
         # NOTE: apply_parameters (kp, wind_factor, dust_factor) and
-        # adjust_to_elevation are now applied per-point inside the JAX
+        # adjust_to_elevation are applied per-point inside the JAX
         # step function, after expanding (N_UNIQUE) → (N_POINTS).
 
         # check all required variables are full
@@ -425,7 +524,7 @@ class Climate():
 
         # define the units the model needs
         model_units = {'temp':'C','uwind':'m s-1','vwind':'m s-1',
-                       'rh':'%','sp':'Pa','tp':'m','elev':'m',
+                       'rh':'%','sp':'Pa','tp':'m','elev':'m','qv':'kg kg-1',
                        'SWin':'J m-2', 'LWin':'J m-2', 'NR':'J m-2', 'tcc':'1',
                        'bcdry':'kg m-2 s-1', 'bcwet':'kg m-2 s-1',
                        'ocdry':'kg m-2 s-1', 'ocwet':'kg m-2 s-1',
@@ -479,12 +578,10 @@ class Climate():
     
     def apply_merra_dep_ratio(self):
         """
-        Applies pre-computed factors to adjust a
-        representative bin (e.g., dust size bin 3)
-        to total deposition of a given particle type.
+        Applies pre-computed factors to adjust the
+        representative BC/OC bins to total deposition.
         """
         params = self.params
-        RATIO_DUST = params.ratio_DU3_DUtot
 
         # load the pre-computed maps of BC/OC factors
         region = str(self.params.rgi_region).zfill(2)
@@ -510,8 +607,6 @@ class Climate():
         # apply to dry deposition
         self.bcdry *= ratio_bc
         self.ocdry *= ratio_oc
-        self.dustdry *= RATIO_DUST
-        self.dustwet *= RATIO_DUST
 
         # close datasets
         ds_bc.close()
@@ -724,56 +819,85 @@ class Climate():
         self.LWin = new_LWin
         return
     
-    def bias_correct_qm(self,var):
+    def bias_correct_qm(self, var):
         """
-        Applies preprocessed quantile mapping to
+        Applies preprocessed quantile delta mapping to
         reanalysis climate data for a single variable.
         """
-        # open the dataset for this group
         ds = xr.open_dataset(self.params.bias_fn, group=var)
-
-        # load lats/lons from quantile mapping data and unique MERRA-2 cells
-        data_lat = ds.lat.values[None, :]
-        glacier_lat = self.unique_lats[:, None]
-        data_lon = ds.lon.values[None, :]
-        glacier_lon = self.unique_lons[:, None]
-
-        # find nearest station to each unique cell
-        coslat = np.cos(np.deg2rad(glacier_lat))
-        dist = ((data_lat - glacier_lat))**2 + ((data_lon - glacier_lon) * coslat)**2
-        station_idx = dist.argmin(axis=1)          # (N_UNIQUE,) which station each cell uses
-
-        # load data
-        to_correct = getattr(self, var)
-        corrected = np.empty_like(to_correct, dtype=float)
-
-        # storage for elevation (needed for temp)
-        temp_elev = np.empty(self.N_UNIQUE)
-
-        # load CDF from the pre-processed quantile mapping data
+        quantiles = ds['quantile'].values
         merra_cdf = ds.merra_cdf.values     # (N_STATIONS, N_QUANTILES)
         aws_cdf = ds.aws_cdf.values         # (N_STATIONS, N_QUANTILES)
-        elevation = ds.elevation.values     # (N_STATIONS, )
+        station_elev = ds.elevation.values  # (N_STATIONS, )
 
-        # loop through unique stations
-        for s in np.unique(station_idx):
-            m = station_idx == s
-            corrected[m] = np.interp(to_correct[m], merra_cdf[s], aws_cdf[s])
-            temp_elev[m] = elevation[s]
+        # find nearest station to each unique cell
+        coslat = np.cos(np.deg2rad(self.unique_lats[:, None]))
+        dist = (ds.lat.values[None, :] - self.unique_lats[:, None])**2 + \
+               ((ds.lon.values[None, :] - self.unique_lons[:, None]) * coslat)**2
+        station_idx = dist.argmin(axis=1)   # (N_UNIQUE,)
 
-            # make sure zeros stay as zeros in shortwave radiation
-            if var == 'SWin':
-                corrected[m] = np.wnere(to_correct[m] < 5, 0, corrected[m])
+        # MERRA-2 cell each station was trained on, and its elevation
+        z_fp = self.GCM_fp + self.var_dict['elev']['fn']
+        with xr.open_dataarray(z_fp) as zds:
+            train = zds.sel({self.lat_vn: xr.DataArray(ds.lat.values, dims='station'),
+                             self.lon_vn: xr.DataArray(ds.lon.values, dims='station')},
+                            method='nearest')
+            train_lats = train[self.lat_vn].values
+            train_lons = train[self.lon_vn].values
+            train_elev = self.check_units('elev', train).isel(time=0).values
+        is_train = (self.unique_lats == train_lats[station_idx]) & \
+                   (self.unique_lons == train_lons[station_idx])
 
+        # quantile of each value within its own cell's climatology
+        cell_cdf = merra_cdf[station_idx].copy()
+        if not np.all(is_train):
+            cell_cdf[~is_train] = self.climatology_cdf(var, np.where(~is_train)[0], quantiles)
+
+        to_correct = getattr(self, var)
+        corrected = to_correct.astype(float).copy()
+        for c, s in enumerate(station_idx):
+            x = to_correct[c]
+            # SWin CDFs only hold daytime values, so night stays untouched
+            m = x > 100 if var == 'SWin' else np.ones_like(x, dtype=bool)
+            q = np.interp(x[m], cell_cdf[c], quantiles)
+            aws_q = np.interp(q, quantiles, aws_cdf[s])
+            merra_q = np.interp(q, quantiles, merra_cdf[s])
+            if QM_DELTA[var] == 'add':
+                corrected[c, m] = x[m] + aws_q - merra_q
+            else:
+                ratio = np.where(merra_q > 1e-3 * merra_cdf[s, -1], aws_q / np.maximum(merra_q, 1e-10), 1.0)
+                corrected[c, m] = x[m] * ratio
+        if var == 'rh':
+            corrected = np.clip(corrected, 0, 100)
+
+        # corrected values sit at the station's elevation offset from its training cell
+        ref_elev = self.terrain.gcm_elev_n + (station_elev - train_elev)[station_idx]
         if var == 'temp':
-            self.temp_elev = temp_elev
+            self.temp_elev = ref_elev
+        elif var == 'sp':
+            self.sp_elev = ref_elev
+        elif var == 'LWin':
+            self.LWin_elev = ref_elev
 
-        # update values
         setattr(self, var, corrected)
-
         ds.close()
         return
-    
+
+    def climatology_cdf(self, var, cells, quantiles):
+        """
+        Loads the preprocessed CDF of a variable
+        at the given unique cells.
+        """
+        region = 'reg' + str(self.params.rgi_region).zfill(2)
+        fn = self.params.climate_fp + self.params.bias_cell_fn.format(r=region)
+        with xr.open_dataset(fn, group=var) as ds:
+            assert np.allclose(ds['quantile'].values, quantiles), \
+                f'{fn} quantiles do not match {self.params.bias_fn}'
+            cdf = ds.cdf.sel({self.lat_vn: xr.DataArray(self.unique_lats[cells], dims='cell'),
+                              self.lon_vn: xr.DataArray(self.unique_lons[cells], dims='cell')},
+                             method='nearest')
+            return cdf.transpose('cell', 'quantile').values
+
     def create_rh2m_ds(self, fn):
         """
         Calculates 2-m relative humidity in % from
@@ -931,6 +1055,7 @@ class Climate():
                 'bcwet': 'BCWT002', 'bcdry': 'BCDP002',
                 'ocwet': 'OCWT002', 'ocdry': 'OCDP002',
                 'dustwet': 'DUWT003', 'dustdry': 'DUDP003',
+                'qv': 'QV2M',
             }
             for var, vn in merra2_vn.items():
                 self.var_dict[var] = {'vn': vn, 'fn': f'{{r}}/{vn}_{{r}}.zarr'}

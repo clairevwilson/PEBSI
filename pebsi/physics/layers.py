@@ -1,8 +1,9 @@
 """
-Layers class for PEBSI
+Layers class and functionality for PEBSI
 
-Tracks layer properties and contains utility
-functions to maintain layer arrays.
+Layers class initializes the layer properties.
+Routines to maintain layer arrays are separately
+defined and must be passed the state object.
 """
 # Built-in libraries
 import warnings, sys
@@ -30,7 +31,7 @@ class Layers():
         # INPUTS
         self.params = params
         self.N_POINTS = N_POINTS = terrain.N_POINTS
-        self.N_LAYERS = N_LAYERS = params.max_nlayers
+        self.N_LAYERS = N_LAYERS = params.n_layers
         self.shape = (N_POINTS, N_LAYERS)
 
         # load in initial depths of snow, firn and ice in m
@@ -45,7 +46,19 @@ class Layers():
 
         # calculate the layer depths based on initial snow, firn and ice depths
         self.make_layers()
-        
+
+        # set the ice depth the column has to add up to
+        if params.option_dynamics or params.option_ice_thickness_tif:
+            # firn layers are already placed so remove that from our target
+            self.dz_ice = np.maximum(terrain.thickness_n - self.dz_firn, 0.0)
+        elif params.initial_ice_depth.shape == (1, ):
+            self.dz_ice = np.full(N_POINTS, params.initial_ice_depth[0])
+        else:
+            self.dz_ice = params.initial_ice_depth
+
+        # resize the ice layers to the prescribed depth
+        self.apply_initial_ice_thickness()
+
         if params.debug:
             print(f'~ {N_LAYERS} layers initialized ~')
         return
@@ -129,6 +142,38 @@ class Layers():
         self.snow_mask = ltype==0       # type 0 = snow
         self.firn_mask = ltype==1       # type 1 = firn
         self.ice_mask = ltype==2        # type 2 = ice
+        return
+
+    def apply_initial_ice_thickness(self):
+        """
+        Reconciles the ice-typed portion of the column to the target ice
+        depth in self.dz_ice, with every ice layer at dz_icelayer.
+
+        Assumes the ice thickness in the dataset is representative
+        of firn and ice. Since firn layers are initialized separately,
+        this function ONLY applies height changes to ice. Ice layers 
+        are resized such that every layer is the same height and all
+        ice + firn layers add up to the actual initial ice thickness.
+        """
+        DENSITY_ICE = self.params.density_ice
+        DZ_ICE = self.params.dz_icelayer
+        min_height = self.params.min_dz
+
+        heights = np.where(self.ice_mask, DZ_ICE, 0.0)
+        ice_above = np.cumsum(heights, axis=1) - heights
+        target = self.dz_ice[:, np.newaxis]
+
+        # whatever the column cannot hold is banked rather than stretched
+        column = heights.sum(axis=1)
+        self.basal_reservoir = np.maximum(self.dz_ice - column, 0.0) * DENSITY_ICE
+
+        self.lheight = np.where(self.ice_mask,
+                                np.clip(target - ice_above, min_height, heights),
+                                self.lheight)
+
+        # depths need recomputing since ice layer heights have changed
+        cum_height = np.cumsum(self.lheight, axis=1)
+        self.ldepth = cum_height - (self.lheight / 2.0)
         return
 
     def initialize_layers(self):
@@ -219,7 +264,7 @@ class Layers():
             lwater = np.zeros(self.shape)
         elif params.initialize_water == 'saturated':
             porosity = 1 - ldensity / params.density_ice
-            lwater = porosity * params.Sr * self.lheight * params.density_water
+            lwater = porosity * params.Sr[:, None] * self.lheight * params.density_water
         else:
             raise ConfigError('Invalid configuration: initialize_water')
         
@@ -361,12 +406,13 @@ def add_bottom_layer(state, mask, params):
     mass redistributed evenly across the existing ice layers.
 
     For points with ice mass that is too small to safely
-    redistribute across many layers (numerical stability),
+    redistribute across many layers (numerical instability),
     all of the ice mass at that point is instead collapsed
-    into a single ice layer (the topmost ice layer).
-    Snow and firn layers are left untouched in this case --
-    only the ice layers are affected, regardless of how small
-    the total ice mass is.
+    into a single ice layer (the topmost ice layer), and 
+    anything beneath that can be left empty. Snow and firn 
+    layers are left untouched in this case -- only the ice 
+    layers are affected, regardless of how small the total 
+    ice mass is.
 
     For points with no ice layers, a new ice bottom
     layer is pulled up from the basal reservoir.
@@ -470,7 +516,7 @@ def add_bottom_layer(state, mask, params):
             properties[merge_var]
         )
 
-    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    safe_ldensity = jnp.where(properties['ldensity'] > 1e-3, properties['ldensity'], 1e-3)
     properties['lheight'] = jnp.where(
         (redistribute | collapse_to_single)[:, None] & ice_mask,
         properties['lice'] / safe_ldensity,
@@ -645,7 +691,7 @@ def split_layer(state, mask, idx, params):
         )
 
     # recalculate lheight directly
-    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    safe_ldensity = jnp.where(properties['ldensity'] > 1e-3, properties['ldensity'], 1e-3)
     properties['lheight'] = properties['lice'] / safe_ldensity
 
     # write these properties to state
@@ -679,7 +725,9 @@ def merge_existing_layers(state, mask, idx, params):
     m_removed = properties['lice'][:, idx]
     m_target = properties['lice'][:, target_idx]
     m_total = m_removed + m_target
-    m_safe = jnp.where(m_total > 0, m_total, 1.0)
+    
+    # floor at min_layer_mass
+    m_safe = jnp.where(m_total > params.min_layer_mass, m_total, params.min_layer_mass)
 
     # combine point mask with index mask
     target_mask = mask[:, None] & (layers_idx == target_idx)[None, :]
@@ -690,16 +738,19 @@ def merge_existing_layers(state, mask, idx, params):
         removed_vals = data[:, idx]
         target_vals = data[:, target_idx]
 
-        # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + removed_vals * m_removed) / m_safe
-        
-        if var in ['ltype','lage']:
-            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        if var == 'ltype':
+            # merged layer takes the type of whichever side has more mass
+            merged_vals = jnp.where(m_removed > m_target, removed_vals, target_vals).astype(jnp.int32)
+        else:
+            # calculate mass-weighted average of values (N_POINTS)
+            merged_vals = (target_vals * m_target + removed_vals * m_removed) / m_safe
+            if var == 'lage':
+                merged_vals = jnp.round(merged_vals).astype(jnp.int32)
 
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
             target_mask,
-            weighted_avg[:, None],
+            merged_vals[:, None],
             data
         )
 
@@ -720,37 +771,43 @@ def merge_existing_layers(state, mask, idx, params):
     # (layers at or below target index move up one)
     shift_mask = mask[:, None] & (layers_idx >= idx)[None, :]
 
-    for var in params.all_layer_vars:
-        data = properties[var]
+    # only do the shift when needed
+    def _do_shift(props):
+        props = dict(props)
+        for var in params.all_layer_vars:
+            data = props[var]
 
-        # shift everything upwards by one
-        fully_shifted = data.at[:, :-1].set(data[:, 1:])
+            # make sure new bottom layer is filled with no mass
+            if var == 'ltype':
+                fill_value = 2
+            elif var == 'ldensity': # fill with real value to avoid div 0
+                fill_value = params.density_ice
+            else:
+                fill_value = 0.0
 
-        # make sure new bottom layer is filled with no mass
-        if var == 'ltype':
-            fully_shifted = fully_shifted.at[:, -1].set(2)
-        elif var == 'ldensity': # fill with real value to avoid div 0
-            fully_shifted = fully_shifted.at[:, -1].set(params.density_ice)
-        else:
-            fully_shifted = fully_shifted.at[:, -1].set(0.0)
+            # shift everything upwards by one via slice + concatenate
+            fill_col = jnp.full((data.shape[0], 1), fill_value, dtype=data.dtype)
+            fully_shifted = jnp.concatenate([data[:, 1:], fill_col], axis=1)
 
-        # replace it only at points / layers in mask
-        properties[var] = jnp.where(
-            shift_mask, fully_shifted, data
-        )
+            # replace it only at points / layers in mask
+            props[var] = jnp.where(shift_mask, fully_shifted, data)
+        return props
+
+    properties = jax.lax.cond(jnp.any(mask), _do_shift, lambda p: p, properties)
 
     # update ice mask and layer height
     properties['ice_mask'] = properties['ltype'].astype(jnp.int32) == 2
-    safe_ldensity = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    # floor at a small-but-nonzero density
+    safe_ldensity = jnp.where(properties['ldensity'] > 1e-3, properties['ldensity'], 1e-3)
     properties['lheight'] = properties['lice'] / safe_ldensity
 
-    # write these properties to state 
+    # write these properties to state
     state = state._replace(**properties)
-    
+
     # add bottom layer to replaced removed
     state = add_bottom_layer(state, mask, params)
 
-    safe_ldensity = jnp.where(state.ldensity > 0, state.ldensity, 1.0)
+    safe_ldensity = jnp.where(state.ldensity > 1e-3, state.ldensity, 1e-3)
     updated_lheight = state.lice / safe_ldensity
     state = state._replace(lheight=updated_lheight)
 
@@ -758,6 +815,7 @@ def merge_existing_layers(state, mask, idx, params):
     state = update_layer_props(state, params.density_ice)
 
     return state
+
 
 def merge_new_layer(state, mask, new_layer, params):
     """
@@ -779,7 +837,8 @@ def merge_new_layer(state, mask, new_layer, params):
     m_new = new_layer['lice']
     m_target = properties['lice'][:, 0]
     m_total = m_new + m_target
-    m_safe = jnp.where(m_total > 0, m_total, 1.0)
+    # see merge_existing_layers -- floor at min_layer_mass, not just >0
+    m_safe = jnp.where(m_total > params.min_layer_mass, m_total, params.min_layer_mass)
 
     # combine point mask with index mask
     target_mask = mask[:, None] & (layers_idx == 0)[None, :]
@@ -790,16 +849,19 @@ def merge_new_layer(state, mask, new_layer, params):
         new_vals = new_layer[var]
         target_vals = data[:, 0]
 
-        # calculate mass-weighted average of values (N_POINTS)
-        weighted_avg = (target_vals * m_target + new_vals * m_new) / m_safe
-        
-        if var in ['ltype','lage']:
-            weighted_avg = jnp.round(weighted_avg).astype(jnp.int32)
+        if var == 'ltype':
+            # merged layer takes the type of whichever side has more mass
+            merged_vals = jnp.where(m_new > m_target, new_vals, target_vals).astype(jnp.int32)
+        else:
+            # calculate mass-weighted average of values (N_POINTS)
+            merged_vals = (target_vals * m_target + new_vals * m_new) / m_safe
+            if var == 'lage':
+                merged_vals = jnp.round(merged_vals).astype(jnp.int32)
 
         # replace it only at points / layers in mask
         properties[var] = jnp.where(
             target_mask,
-            weighted_avg[:, None],
+            merged_vals[:, None],
             data
         )
 
@@ -819,7 +881,7 @@ def merge_new_layer(state, mask, new_layer, params):
     # write these properties to state 
     state = state._replace(**properties)
 
-    safe_ldensity = jnp.where(state.ldensity > 0, state.ldensity, 1.0)
+    safe_ldensity = jnp.where(state.ldensity > 1e-3, state.ldensity, 1e-3)
     updated_lheight = state.lice / safe_ldensity
     state = state._replace(lheight=updated_lheight)
 
@@ -854,10 +916,19 @@ def check_layer_sizes(state, params):
 
     layer_indices = jnp.arange(n_layers)
     curve_snow = params.dz_toplayer * jnp.exp(layer_indices * params.layer_growth)
-    min_height_by_depth = jnp.maximum(curve_snow / 2, params.min_dz)
+    min_height_by_depth = jnp.maximum(curve_snow, params.min_dz)
+
+    # ice has stricter height requirement for numerical stability
+    dt_heat = params.dt / params.n_heat_steps
+    ice_stability_min = 2.0 * jnp.sqrt(
+        4 * params.k_ice * dt_heat / (params.Cp_ice * params.density_ice)
+    )
+    min_height_ice = jnp.maximum(ice_stability_min, params.min_dz)
 
     # define function to scan for layers to merge
-    def _scan_merge(current_state, idx):
+    def _scan_merge(carry, idx):
+        current_state, already_merged = carry
+
         # always fetch the most up-to-date heights and types from evolving state
         dz = current_state.lheight[:, idx]
         curr_type = current_state.ltype[:, idx]
@@ -865,28 +936,31 @@ def check_layer_sizes(state, params):
 
         # determine if layer is too thin for its position
         is_thin_snow = (curr_type == 0) & (dz < min_height_by_depth[idx])
-        is_thin_any = (dz < params.min_dz)
-        
+        is_thin_any = (dz < min_height_ice)
+
         # determine which spatial columns need a merge at this specific vertical index
         is_snow = curr_type == 0
         type_matches_below = curr_type == next_type
         force_small_snow = (curr_type == 0) & (next_type > 0) & (dz < params.min_dz)
-        
+
         # build the boolean merge mask (N_POINTS)
         # firn / ice layers only merge if they are below min_dz
         any_merge = is_thin_any & ~is_snow
         # snow layers merge if there is snow beneath; or if they are very small
         snow_merge = is_thin_snow & (type_matches_below | force_small_snow)
 
-        merge_mask = any_merge | snow_merge
+        # cap at one merge per point per call
+        merge_mask = (any_merge | snow_merge) & ~already_merged
 
         # merge layers, if there are layers to merge
         next_state = merge_existing_layers(current_state, merge_mask, idx, params)
+        next_already_merged = already_merged | merge_mask
 
-        return next_state, None 
-    
+        return (next_state, next_already_merged), None
+
     layers_idx = jnp.arange(n_layers - 1) # don't include bottom layer
-    state, _ = jax.lax.scan(_scan_merge, state, layers_idx)
+    init_carry = (state, jnp.zeros(n_points, dtype=bool))
+    (state, _), _ = jax.lax.scan(_scan_merge, init_carry, layers_idx)
 
     # split snow layers that have grown beyond twice their target size for their position
     def _scan_splits(current_state, idx):
@@ -899,6 +973,68 @@ def check_layer_sizes(state, params):
 
     return state, dead_mass
 
+
+def apply_dynamics_mass_change(state, mask, dmass, params):
+    """
+    Reconciles a per-point ice-dynamics-only mass change into state. 
+    dmass is the DYNAMICS-ONLY change in mass (excluding surface mass
+    balance, which is already accounted for in PEBSI's core.)
+
+    Mass GAINED from dynamics (dmass > 0) goes entirely into
+    basal_reservoir, uncapped.
+
+    Mass LOST from dynamics (dmass < 0) is taken from basal_reservoir
+    first, down to 0. Only once the reservoir is exhausted does the
+    remainder come out of the ice-typed layers themselves, which are
+    then redistributed with even heights.
+
+    Parameters
+    ==========
+    mask : jnp.Array (N_POINTS,)
+        Boolean mask for points to reconcile this coupling step
+    dmass : jnp.Array (N_POINTS,)
+        Ice-dynamics-only mass change, kg m-2 (positive = gain)
+    """
+    properties = state._asdict()
+    ice_mask = properties['ice_mask']
+    DENSITY_ICE = params.density_ice
+
+    gain = jnp.maximum(dmass, 0.0)
+    loss = jnp.maximum(-dmass, 0.0)
+
+    # gains: straight into the reservoir
+    reservoir = jnp.where(mask, properties['basal_reservoir'] + gain, properties['basal_reservoir'])
+
+    # losses: deplete the reservoir first (down to 0)
+    from_reservoir = jnp.minimum(loss, reservoir)
+    reservoir = jnp.where(mask, reservoir - from_reservoir, reservoir)
+    remaining_loss = loss - from_reservoir  # (N_POINTS,), 0 unless reservoir was exhausted
+
+    # remainder: thin the ice layers themselves, evenly redistributed
+    n_ice_layers = jnp.sum(ice_mask, axis=1)
+    point_ice_mass = jnp.sum(jnp.where(ice_mask, properties['lice'], 0.0), axis=1)
+    new_total_ice_mass = jnp.maximum(point_ice_mass - remaining_loss, 0.0)
+    per_layer_mass = new_total_ice_mass / jnp.maximum(n_ice_layers, 1)
+
+    thin_mask = mask & (remaining_loss > 0)
+    properties['lice'] = jnp.where(
+        thin_mask[:, None] & ice_mask, per_layer_mass[:, None], properties['lice']
+    )
+    properties['ldensity'] = jnp.where(
+        thin_mask[:, None] & ice_mask, DENSITY_ICE, properties['ldensity']
+    )
+    safe_density = jnp.where(properties['ldensity'] > 0, properties['ldensity'], 1.0)
+    properties['lheight'] = jnp.where(
+        thin_mask[:, None] & ice_mask,
+        properties['lice'] / safe_density,
+        properties['lheight']
+    )
+
+    properties['basal_reservoir'] = reservoir
+    state = state._replace(**properties)
+    state = update_layer_props(state, DENSITY_ICE)
+    return state
+
 def update_layer_props(state, DENSITY_ICE):
     """
     Recalculates nlayers, depths, and density. 
@@ -909,8 +1045,9 @@ def update_layer_props(state, DENSITY_ICE):
     do : list-like
         List of any combination of depth, density to be updated
     """
-    safe_lheight = jnp.where(state.lheight > 0, state.lheight, 1.0)
-    
+    # floor at a small-but-nonzero height
+    safe_lheight = jnp.where(state.lheight > 1e-6, state.lheight, 1e-6)
+
     new_ice_mask = state.ltype == 2
     new_density = jnp.where(
         new_ice_mask,

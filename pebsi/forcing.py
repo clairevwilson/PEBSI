@@ -8,15 +8,22 @@ All functions operate on JAX arrays and are called inside the time loop.
 @author: clairevwilson
 """
 import jax.numpy as jnp
+import jax
 
 def expand_forcings(forcings, point_attrs):
     """
     Expands all per-cell (N_UNIQUE,) forcing fields to (N_POINTS,)
     using point_attrs.cell_idx, then replaces the original fields.
-    Fields that are already (N_POINTS,) (terrain-derived: shadow_mask,
-    solar_azimuth, solar_zenith) are left untouched.
+    
+    Also gathers shadow_mask, solar_azimuth and solar_zenith for this
+    timestep from point_attrs's (N_UNIQUE_SHADE, N_SHADE_TIME) tables:
+    forcings.shading_idx selects this timestep's column and
+    point_attrs.loc_idx then expands that column from unique locations
+    to (N_POINTS,).
     """
     idx = point_attrs.cell_idx
+    loc = point_attrs.loc_idx
+    shade_idx = forcings.shading_idx
     return forcings._replace(
         temp=forcings.temp[idx],
         tp=forcings.tp[idx],
@@ -34,6 +41,10 @@ def expand_forcings(forcings, point_attrs):
         dustwet=forcings.dustwet[idx],
         dustdry=forcings.dustdry[idx],
         local_hour=forcings.local_hour[idx],
+        shadow_mask=point_attrs.shadow_mask_table[:, shade_idx][loc],
+        cos_theta=point_attrs.cos_theta_table[:, shade_idx][loc],
+        solar_azimuth=point_attrs.solar_azimuth_table[:, shade_idx][loc],
+        solar_zenith=point_attrs.solar_zenith_table[:, shade_idx][loc],
     )
 
 def adjust_temperature(forcings, point_attrs, params):
@@ -43,10 +54,42 @@ def adjust_temperature(forcings, point_attrs, params):
     temp = forcings.temp + lapse_rate * (point_attrs.elevation - temp_elev)
     return forcings._replace(temp=temp)
 
+def limit_high_elevation_precip(tp, point_attrs, params):
+    """
+    Tapers precipitation over the uppermost 25% of a tall glacier's
+    elevation range (GloGEM; Huss and Hock, 2015), representing the
+    drier air and wind scour that keep the highest accumulation areas
+    from receiving the precipitation an elevation gradient alone would
+    give them.
+
+    Every point above the threshold elevation is reset to the
+    precipitation at that threshold, decayed exponentially with height
+    above it,
+
+        tp = tp(z_75) * exp(-(z - z_75) / (z_max - z_75))
+
+    and then floored at params.preclimit_floor of the glacier's maximum
+    precipitation for this step, so the taper cannot drive the
+    accumulation area drier than the rest of the glacier. Which points
+    are tapered, what they anchor to and the decay factor itself are all
+    fixed by the geometry and precomputed in Terrain.get_precip_taper.
+    """
+    tapered = tp[point_attrs.precip_anchor_idx] * point_attrs.precip_taper
+    tp = jnp.where(point_attrs.precip_upper25, tapered, tp)
+
+    n_glaciers = point_attrs.glacier_point_counts.shape[0]
+    glacier_max = jax.ops.segment_max(tp, point_attrs.glacier_idx,
+                                      num_segments=n_glaciers)
+    floor = params.preclimit_floor * glacier_max[point_attrs.glacier_idx]
+
+    return jnp.where(point_attrs.precip_upper25, jnp.maximum(tp, floor), tp)
+
 def adjust_precipitation(forcings, point_attrs, params):
-    """Applies elevation gradient and kp factor to precipitation."""
+    """Applies elevation gradient to precipitation."""
     elev_change = point_attrs.elevation - point_attrs.median_elev
     tp = forcings.tp * (1 + params.precgrad * (elev_change))
+    if params.option_preclimit:
+        tp = limit_high_elevation_precip(tp, point_attrs, params)
     return forcings._replace(tp=tp)
 
 def adjust_pressure(forcings, point_attrs, params):
@@ -89,12 +132,35 @@ def adjust_longwave(forcings, point_attrs, params):
     return forcings._replace(longwave_in=forcings.longwave_in + delta)
 
 def apply_parameters(forcings, params):
-    """Applies per-point wind and dust scaling factors."""
+    """Applies per-point wind, precip, and dust scaling factors."""
     return forcings._replace(
         wind=forcings.wind * params.wind_factor,
         dustdry=forcings.dustdry * params.dust_factor,
         tp=forcings.tp * params.kp
     )
+
+def apply_wind_speedup(forcings, point_attrs):
+    """
+    Scales wind speed by the topographic speed-up factor for the current
+    wind direction, linearly interpolated between the two nearest direction bins.
+    Assumes uniform bin spacing (guaranteed by preprocess_wind_glaciers.py).
+    """
+    dirs = point_attrs.wind_directions   # (N_DIRS,)
+    spdup = point_attrs.wind_spdup       # (N_POINTS, N_DIRS)
+    winddir = forcings.winddir % 360.0   # (N_POINTS,)
+
+    n_dirs = dirs.shape[0]
+    step = dirs[1] - dirs[0]
+
+    frac = winddir / step
+    idx_lo = jnp.floor(frac).astype(jnp.int32) % n_dirs
+    idx_hi = (idx_lo + 1) % n_dirs
+    weight = frac - jnp.floor(frac)
+
+    pts = jnp.arange(spdup.shape[0])
+    spdup_interp = spdup[pts, idx_lo] + weight * (spdup[pts, idx_hi] - spdup[pts, idx_lo])
+
+    return forcings._replace(wind=forcings.wind * spdup_interp)
 
 def domain_expansion(forcings, point_attrs, params):
     """
@@ -107,4 +173,6 @@ def domain_expansion(forcings, point_attrs, params):
     forcings = adjust_pressure(forcings, point_attrs, params)
     forcings = adjust_longwave(forcings, point_attrs, params)
     forcings = apply_parameters(forcings, params)
+    if params.option_windmaps:
+        forcings = apply_wind_speedup(forcings, point_attrs)
     return forcings

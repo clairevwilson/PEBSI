@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from pyproj import Transformer
 
@@ -116,7 +117,7 @@ class Shading:
             di = -float(np.cos(az_rad))  # row step (north = row 0)
 
             grid_res = self.grid_resolution
-            res = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1])**2)
+            self.grid_res_m = np.sqrt((di * grid_res[0])**2 + (dj * grid_res[1])**2)
 
             z_np = np.asarray(self.z)
             max_zenith = np.zeros((self.ny, self.nx), dtype=np.float32)
@@ -168,7 +169,7 @@ class Shading:
         elev_deg = self.horizon_elev_deg(azimuth_deg)
         return (altitude_deg > elev_deg).astype(xp.int8)
 
-    def compute_shadow_masks(self, datetimes):
+    def compute_shadow_masks(self, datetimes, stride=1):
         """
         Compute shadow masks for a sequence of datetimes,
         which should be a leap year.
@@ -178,6 +179,10 @@ class Shading:
         datetimes : list of datetime.datetime
             Sequence of timezone-aware datetimes in
             UTC to evaluate.
+        stride : int
+            Keep every stride-th pixel of each mask, so a
+            downsampled (nt, ny, nx) array is never held at
+            full resolution.
 
         Returns
         -------
@@ -188,40 +193,57 @@ class Shading:
             for the centerpoint of the grid
         sky_view : xp.ndarray
             Sky-view factor on the grid (ny, nx)
+        pixel_slope, pixel_aspect : xp.ndarray
+            Slope and aspect on the grid (ny, nx), radians -- the same
+            convention as pebsi.io.terrain.load_dem_info. Time-invariant
+            like sky_view, so callers cell-average cos(solar incidence)
+            computed from these directly rather than from a cell-mean
+            slope/aspect (see pebsi/io/terrain.py, Terrain.load_cos_theta)
         """
         ny, nx = self.z.shape
         total_steps = len(datetimes)
-        
-        # preallocate a single 3D array for all masks
-        masks_cpu = np.zeros((total_steps, ny, nx), dtype=np.int8)
+
+        # preallocate a single 3D array for all masks, keeping every stride-th pixel
+        masks_cpu = np.zeros((total_steps, len(range(0, ny, stride)), len(range(0, nx, stride))),
+                             dtype=bool)
 
         # allocate 1D arrays for the solar position
         sun_zenith = np.zeros(total_steps, dtype=np.float32)
         sun_azimuth = np.zeros(total_steps, dtype=np.float32)
 
-        for idx, dt in enumerate(tqdm(datetimes, desc="shadow masks", unit="step")):
+        # slope/aspect calculation straight from DEM
+        dx, dy = xp.gradient(self.z, self.grid_resolution[0], self.grid_resolution[1])
+        pixel_slope = xp.arctan(xp.sqrt(dx ** 2 + dy ** 2))
+        pixel_aspect = xp.arctan2(-dy, -dx) % (2 * xp.pi)
+
+        # only use progress bar in interactive terminal
+        progress = tqdm(datetimes, desc="shadow masks", unit="step",
+                        disable=not sys.stderr.isatty(), mininterval=5.0)
+        for idx, dt in enumerate(progress):
             altitude, azimuth = self.solar_position(dt)
             sun_zenith[idx] = np.radians(90.0 - altitude)
             sun_azimuth[idx] = np.radians(azimuth)
-
 
             if altitude <= 0:
                 continue # sun below horizon, mask remains zero
             else:
                 mask_gpu = self.shadow_mask(altitude, azimuth)
+                mask_gpu = mask_gpu[::stride, ::stride]
                 masks_cpu[idx] = mask_gpu.get() if hasattr(mask_gpu, 'get') else np.asarray(mask_gpu)
 
                 # clear the gpu_mask from VRAM
                 del mask_gpu
 
-        # calculate time-invariant sky-view factor 
+        # calculate time-invariant sky-view factor
         sky_view = self.skyviewfactor()
-        return masks_cpu, sun_azimuth, sun_zenith, sky_view
+
+        slope_cpu = pixel_slope.get() if hasattr(pixel_slope, 'get') else pixel_slope
+        aspect_cpu = pixel_aspect.get() if hasattr(pixel_aspect, 'get') else pixel_aspect
+        return masks_cpu, sun_azimuth, sun_zenith, sky_view, slope_cpu, aspect_cpu
     
     def skyviewfactor(self, num_azimuths = 64):
         """
         Calculates sky-view factor for each pixel.
-        svf = cos^2(horizon angle / 
 
         Parameters
         ==========

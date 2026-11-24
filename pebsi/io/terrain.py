@@ -5,21 +5,28 @@ Contains functions that handle the spatial
 distribution of points, including loading
 their DEM information (elevation, slope)
 and executing the shading model.
+
+The geometry that turns a glacier outline into
+points lives in pebsi/io/mesh.py; this class
+chooses between those distributions and holds
+the result.
 """
 # Internal libraries
 import os
-import time 
-import psutil
+import time
 # External libraries
 import xarray as xr
 import rioxarray as rxr
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-from pyproj import CRS, Transformer
-import shapely.geometry as geom
+import shapely
+from pyproj import Transformer
+from scipy.spatial import cKDTree
+from scipy import sparse
 from rasterio.enums import Resampling
 # Local libraries
+from pebsi.io import mesh
 from pebsi.shading.shading import Shading
 
 class Terrain:
@@ -58,37 +65,65 @@ class Terrain:
             self.rgiid_n = np.array([gid], dtype=str)
             self.rgiid_unique = np.array([gid], dtype=str)
             self.N_POINTS = 1
-            self.elev_n = self.slope_n = self.aspect_n = None
+            self.elev_n = self.slope_n = self.aspect_n = self.weight_n = None
             return
 
-        if self.params.method_distribute == 'scatter':
-            lats, lons, glaciers = self.scatter_points()
-
+        if self.params.method_distribute in ('grid', 'adaptive', 'relief', 'mesh'):
+            # every distribution reads elevation, slope and aspect
+            # off the DEM later, in run_dem_functions
             self.elev_n = None
-            self.slope_n = None 
-            self.aspect_n = None 
+            self.slope_n = None
+            self.aspect_n = None
+
+            args = (self.rgi_df, self.rgi_gdf, self.params.rgi_ids)
+
+            # build the mesh 
+            if self.params.method_distribute == 'grid':
+                lats, lons, glaciers, weights = mesh.distribute_grid(
+                    *args, self.params.n_points)
+
+            elif self.params.method_distribute == 'adaptive':
+                lats, lons, glaciers, weights = mesh.distribute_rule(
+                    *args, self.params.sigma_table_fn,
+                    self.params.point_error_tolerance,
+                    self.params.point_error_coefficient,
+                    confidence=self.params.point_error_confidence)
+
+            elif self.params.method_distribute == 'relief':
+                lats, lons, glaciers, weights = mesh.distribute_relief(
+                    *args, self.params.point_spread_per_km,
+                    self.params.point_error_tolerance,
+                    self.params.point_error_coefficient,
+                    confidence=self.params.point_error_confidence)
+
+            else:
+                lats, lons, glaciers, weights = mesh.distribute_mesh(
+                    *args, spacing=self.params.point_spacing)
 
         elif self.params.method_distribute == 'sites':
             ns = len(self.params.sites)
             ng = len(self.params.rgi_ids)
             assert ns == ng, f'N sites (is {ns}) must equal N rgi_ids (is {ng})'
-            lats, lons, glaciers = [], [], []
+            lats, lons, glaciers, weights = [], [], [], None
             elevs, slopes, aspects = [], [], []
 
             metadata_fn = self.params.metadata_fn
-            metadata = pd.read_csv(metadata_fn, dtype=str, index_col='rgiid')
-            for gid, site in zip(self.params.rgi_ids, self.params.sites):
-                assert gid in metadata.index, \
-                    f'To index by site, glacier ID must be associated with name in glacier_metadata ({gid})'
+            metadata = pd.read_csv(metadata_fn, dtype=str)
+            metadata = metadata.set_index(['rgiid', 'site'])
 
-                gid_df = metadata.loc[[gid]].set_index('site')
+            missing_gids = set(self.params.rgi_ids) - set(metadata.index.get_level_values('rgiid'))
+            assert not missing_gids, \
+                f'To index by site, glacier ID must be associated with name in glacier_metadata ({missing_gids})'
 
-                lats.append(float(gid_df.loc[site, 'lat']))
-                lons.append(float(gid_df.loc[site, 'lon']))
-                elevs.append(float(gid_df.loc[site, 'elevation']))
-                slopes.append(float(gid_df.loc[site, 'slope']))
-                aspects.append(float(gid_df.loc[site, 'aspect']))
-                glaciers.append(gid)
+            keys = list(zip(self.params.rgi_ids, self.params.sites))
+            rows = metadata.loc[keys]
+
+            lats = rows['lat'].astype(float).tolist()
+            lons = rows['lon'].astype(float).tolist()
+            elevs = rows['elevation'].astype(float).tolist()
+            slopes = rows['slope'].astype(float).tolist()
+            aspects = rows['aspect'].astype(float).tolist()
+            glaciers = list(self.params.rgi_ids)
 
             self.elev_n = np.array(elevs)
             self.slope_n = np.array(slopes)
@@ -100,6 +135,7 @@ class Terrain:
         self.rgiid_n = np.array(glaciers, dtype=str)
         self.rgiid_unique = np.unique(self.rgiid_n)
         self.N_POINTS = len(self.lat_n)
+        self.weight_n = np.array(weights) if weights is not None else None
         return
     
     def get_rgi_data(self):
@@ -128,102 +164,96 @@ class Terrain:
         self.rgi_gdf = gdf
         return
 
-    def scatter_points(self, tolerance=0.05):
+    @staticmethod
+    def cell_mean(points, pixels, values, circular=False):
         """
-        Samples approximately n_points, evenly distributed 
-        inside a polygon shapefile using an adaptive grid 
-        spacing search. Glaciers are naturally weighted by
-        their area (bigger = more points).
+        Averages raster values over each point's Voronoi cell.
+
+        A Voronoi cell is exactly the set of locations nearest to that
+        point, so the cell a pixel belongs to is simply its nearest
+        point -- no polygon work is needed. This gives every point an
+        attribute describing the area it is weighted by, instead of the
+        single pixel it happens to sit on.
 
         Parameters
         ==========
-        tolerance : float
-            Acceptable deviation between actual points 
-            generated and n_points
+        points : (N, 2) array
+            Model point coordinates, in a metric CRS
+        pixels : (P, 2) array
+            Raster pixel centres, in the same CRS
+        values : (P,) array
+            Raster value at each pixel
+        circular : bool
+            Average as an angle in degrees (for aspect), by taking the
+            mean of the unit vectors rather than of the numbers
+
+        Returns
+        =======
+        mean : (N,) array
+            Cell mean per point, NaN where a cell caught no pixel
+        count : (N,) array
+            Pixels falling in each cell
         """
+        owner = cKDTree(points).query(pixels, workers=-1)[1]
+        count = np.bincount(owner, minlength=len(points))
 
-        # find the total number of parallel processes available 
-        N_PARALLEL = self.params.n_points
+        if circular:
+            radians = np.deg2rad(values)
+            sin_sum = np.bincount(owner, weights=np.sin(radians), minlength=len(points))
+            cos_sum = np.bincount(owner, weights=np.cos(radians), minlength=len(points))
+            mean = np.degrees(np.arctan2(sin_sum, cos_sum)) % 360
+        else:
+            total = np.bincount(owner, weights=values, minlength=len(points))
+            mean = total / np.maximum(count, 1)
 
-        # first find the number of points for each glacier
-        unique_ids = np.unique(self.params.rgi_ids)
-        ids_fmtd = ['RGI60-'+id for id in unique_ids]
-        rgi_df = self.rgi_df.loc[self.rgi_df['RGIId'].isin(ids_fmtd)]
-        total_area = rgi_df['Area'].sum()
-        rgi_df['exact_points'] = (rgi_df['Area'] / total_area) * N_PARALLEL
-        rgi_df['points'] = rgi_df['exact_points'].round().astype(int)
+        return np.where(count > 0, mean, np.nan), count
 
-        # load the geodataframe
-        rgi_gdf = self.rgi_gdf
-
-        # fix discrepancy to get exactly N_PARALLEL points
-        current_sum = rgi_df['points'].sum()
-        remainder = int(N_PARALLEL - current_sum)
-
-        if remainder != 0:
-            # find the indices of the largest rounding fractions to adjust
-            rgi_df['residual'] = rgi_df['exact_points'] - rgi_df['points']
-
-            if remainder > 0:
-                # need more points: add them to the ones that were rounded down the most
-                idx = rgi_df['residual'].nlargest(remainder).index
-                rgi_df.loc[idx, 'points'] += 1
-            elif remainder < 0:
-                # have too many points: subtract from the ones that were rounded up the most
-                idx = rgi_df['residual'].nsmallest(abs(remainder)).index
-                rgi_df.loc[idx, 'points'] -= 1
-
-        # loop through RGI IDs
-        lats, lons, glaciers = [], [], []
-        for gid in unique_ids:
-            target_n = rgi_df.loc[rgi_df['RGIId'] == 'RGI60-'+gid, 'points'].item()
-            current_glacier = rgi_gdf.loc[rgi_gdf['RGIId'] == 'RGI60-'+gid]
-            
-            polygon = current_glacier.unary_union
-            xmin, ymin, xmax, ymax = polygon.bounds
-            area = polygon.area
-            
-            # initial analytical guess for even grid spacing: sqrt(Area / N)
-            spacing = np.sqrt(area / target_n)
-            
-            # optimization loop to fine-tune spacing to hit your exact target N count
-            for _ in range(15):
-                x_coords = np.arange(xmin, xmax, spacing)
-                y_coords = np.arange(ymin, ymax, spacing)
-                
-                # create coordinate meshgrid matrix
-                xv, yv = np.meshgrid(x_coords, y_coords)
-                candidate_points = [geom.Point(x, y) for x, y in zip(xv.ravel(), yv.ravel())]
-                
-                # vectorized boundary clipping mask: Keep points strictly inside the polygon
-                points_inside = [p for p in candidate_points if polygon.contains(p)]
-                current_count = len(points_inside)
-                
-                # check if we are within acceptable tolerance of our target N count
-                if abs(current_count - target_n) / target_n <= tolerance:
-                    break
-                    
-                # adjust grid step density dynamically based on overshoot/undershoot
-                spacing *= np.sqrt(current_count / target_n)
-
-            # package coordinates as lists
-            points_gdf = gpd.GeoDataFrame(geometry=points_inside, crs=rgi_gdf.crs)
-            points_latlon = points_gdf.to_crs(epsg=4326)
-            xs = points_latlon.geometry.x.tolist()
-            ys = points_latlon.geometry.y.tolist()
-            
-            # append lats and lons to the global list
-            for lon, lat in zip(xs, ys):
-                lons.append(lon)
-                lats.append(lat)
-                glaciers.append(gid)
-            
-        return lats, lons, glaciers
-    
-    def load_dem_info(self, dem, lats_in, lons_in):
+    @staticmethod
+    def cell_mean_timeseries(points, pixels, values):
         """
-        Loads the DEM to get slope, aspect, and elevation 
+        Same idea as cell_mean, but for a (T, P) stack of raster values
+        sampled at the same P pixel locations over T timesteps -- e.g.
+        an hourly shadow mask. Ownership is computed once and reused
+        for every timestep with a single sparse matrix multiply, rather
+        than looping bincount over T.
+
+        Parameters
+        ==========
+        points : (N, 2) array
+            Model point coordinates, in a metric CRS
+        pixels : (P, 2) array
+            Raster pixel centres, in the same CRS
+        values : (T, P) array
+            Raster value at each pixel, for every timestep
+
+        Returns
+        =======
+        mean : (N, T) array
+            Cell mean per point and timestep, 0 where a cell caught no pixel
+        """
+        owner = cKDTree(points).query(pixels, workers=-1)[1]
+        n_points = len(points)
+        count = np.bincount(owner, minlength=n_points)
+
+        ownership = sparse.csr_matrix(
+            (np.ones(len(owner)), (owner, np.arange(len(owner)))),
+            shape=(n_points, len(owner)))
+        # in blocks of timesteps, so a boolean stack is only ever upcast one block at a time
+        total = np.concatenate([np.asarray(ownership @ values[t:t + 500].T)
+                                for t in range(0, len(values), 500)], axis=1)
+        return total / np.maximum(count, 1)[:, None]
+
+    def load_dem_info(self, dem, lats_in, lons_in, glaciers=None):
+        """
+        Loads the DEM to get slope, aspect, and elevation
         of each point.
+
+        Duplicate (lat, lon) pairs in the input are deduplicated before 
+        sampling and expanded back afterward, so a duplicated point does 
+        not repeat this raster work for no reason. Unlike the 
+        (lat, lon)-only dedup terrain-wide loaders use (unique_point_locations), 
+        this one is local to the block of points it is called with, since 
+        it is called once per DEM chunk with only the points that chunk covers.
 
         Parameters
         ==========
@@ -232,10 +262,17 @@ class Terrain:
         lats_in, lons_in : 1D arrays
             Latitude and longitude of points within this DEM
         """
+        lats_in = np.asarray(lats_in)
+        lons_in = np.asarray(lons_in)
+        lat_lon = np.stack([lats_in, lons_in], axis=1)
+        unique_ll, inverse = np.unique(lat_lon, axis=0, return_inverse=True)
+        inverse = inverse.ravel()
+        u_lats, u_lons = unique_ll[:, 0], unique_ll[:, 1]
+
         dem = dem['elevation']
 
         # mask nodata
-        nodata = dem.rio.nodata 
+        nodata = dem.rio.nodata
         if nodata is not None:
             dem = dem.where((dem != nodata) & np.isfinite(dem))
 
@@ -243,7 +280,7 @@ class Terrain:
         x_res, y_res = dem.rio.resolution()
 
         # calculate gradient and get the slope
-        dx, dy = np.gradient(dem, y_res, x_res)
+        dx, dy = np.gradient(dem.values, y_res, x_res)
         slope_vals = np.arctan(np.sqrt(dx**2 + dy**2))
         slope_vals = np.rad2deg(slope_vals)
 
@@ -251,23 +288,48 @@ class Terrain:
         aspect_vals = (aspect_vals + 2*np.pi) % (2*np.pi)
         aspect_vals = np.rad2deg(aspect_vals) % 360
 
-        # put data into DataArrays for clean indexing
-        slope = xr.DataArray(slope_vals, coords=dem.coords, dims=dem.dims)
-        aspect = xr.DataArray(aspect_vals, coords=dem.coords, dims=dem.dims)
-        lat_xr = xr.DataArray(lats_in, dims='points')
-        lon_xr = xr.DataArray(lons_in, dims='points')
+        # average each field over the point's own cell
+        transformer = Transformer.from_crs('EPSG:4326', dem.rio.crs, always_xy=True)
+        x_pts, y_pts = transformer.transform(u_lons, u_lats)
+        points = np.column_stack([x_pts, y_pts])
 
-        # reproject 2D datasets into lat/lon coordinates
-        dem = dem.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
-        slope = slope.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
-        aspect = aspect.rio.reproject('EPSG:4326')
+        grid_x, grid_y = np.meshgrid(dem.x.values, dem.y.values)
+        elev_grid = dem.values
+        usable = np.isfinite(elev_grid) & np.isfinite(slope_vals)
 
-        # extract spatial attributes at lat and lon points
-        elev_n = dem.sel(y=lat_xr, x=lon_xr, method='nearest').values 
-        slope_n = slope.sel(y=lat_xr, x=lon_xr, method='nearest').values
-        aspect_n = aspect.sel(y=lat_xr, x=lon_xr, method='nearest').values 
+        # clip to the glacier extent
+        if glaciers is not None:
+            ice = glaciers.to_crs(dem.rio.crs).union_all()
+            usable &= shapely.contains_xy(ice, grid_x, grid_y)
 
-        return elev_n, slope_n, aspect_n
+        elev_n = np.full(len(u_lats), np.nan)
+        slope_n = np.full(len(u_lats), np.nan)
+        aspect_n = np.full(len(u_lats), np.nan)
+
+        if usable.any():
+            pixels = np.column_stack([grid_x[usable], grid_y[usable]])
+            elev_n, count = self.cell_mean(points, pixels, elev_grid[usable])
+            slope_n, _ = self.cell_mean(points, pixels, slope_vals[usable])
+            aspect_n, _ = self.cell_mean(points, pixels, aspect_vals[usable], circular=True)
+
+        # fall back for small cells finer than the DEM resolution
+        empty = ~np.isfinite(elev_n)
+        if empty.any():
+            slope = xr.DataArray(slope_vals, coords=dem.coords, dims=dem.dims)
+            aspect = xr.DataArray(aspect_vals, coords=dem.coords, dims=dem.dims)
+            lat_xr = xr.DataArray(u_lats[empty], dims='points')
+            lon_xr = xr.DataArray(u_lons[empty], dims='points')
+
+            # bilinear resample to avoid striping artifacts
+            dem_ll = dem.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
+            slope_ll = slope.rio.reproject('EPSG:4326', resampling=Resampling.bilinear)
+            aspect_ll = aspect.rio.reproject('EPSG:4326')
+
+            elev_n[empty] = dem_ll.sel(y=lat_xr, x=lon_xr, method='nearest').values
+            slope_n[empty] = slope_ll.sel(y=lat_xr, x=lon_xr, method='nearest').values
+            aspect_n[empty] = aspect_ll.sel(y=lat_xr, x=lon_xr, method='nearest').values
+
+        return elev_n[inverse], slope_n[inverse], aspect_n[inverse]
     
     def get_median_elevation(self):
         """
@@ -306,6 +368,61 @@ class Terrain:
         self.median_elev_n = np.array(stretched_elevations)
         return
     
+    def get_precip_taper(self):
+        """
+        Precomputes the static pieces of the high-elevation precipitation
+        limit (GloGEM; Huss and Hock, 2015), which reduces precipitation
+        over the uppermost 25% of a tall glacier's elevation range to
+        account for drier air and wind scour at altitude.
+
+        Stores, per point: the integer glacier index (for glacier-wide
+        reductions in the time loop), whether the point sits above the
+        threshold elevation, the index of the point sitting at that
+        threshold, and the exponential decay factor applied above it.
+
+        Glaciers spanning less than params.preclimit_elev_range are left
+        alone -- their points anchor to themselves with a factor of one,
+        so the correction is a no-op there even when option_preclimit is
+        on.
+        """
+        n_points = self.N_POINTS
+        glacier_idx = np.zeros(n_points, dtype=np.int32)
+        anchor_idx = np.arange(n_points, dtype=np.int32)
+        taper = np.ones(n_points, dtype=float)
+        upper25 = np.zeros(n_points, dtype=bool)
+        counts = np.zeros(len(self.rgiid_unique), dtype=np.int32)
+
+        for gi, gid in enumerate(self.rgiid_unique):
+            points = np.where(self.rgiid_n == gid)[0]
+            glacier_idx[points] = gi
+            counts[gi] = len(points)
+
+            elev = self.elev_n[points]
+            elev_range = elev.max() - elev.min()
+            if elev_range <= self.params.preclimit_elev_range:
+                continue
+
+            # the lowest point at or above the threshold anchors the taper,
+            # matching PyGEM's height_75 rather than the threshold itself
+            threshold = elev.min() + self.params.preclimit_frac * elev_range
+            upper = points[elev >= threshold]
+            elev_upper = self.elev_n[upper]
+            height_75 = elev_upper.min()
+            span = elev_upper.max() - height_75
+            if span <= 0:
+                continue
+
+            anchor_idx[upper] = upper[np.argmin(elev_upper)]
+            taper[upper] = np.exp(-(elev_upper - height_75) / span)
+            upper25[upper] = True
+
+        self.glacier_idx_n = glacier_idx
+        self.glacier_point_counts = counts
+        self.precip_anchor_idx_n = anchor_idx
+        self.precip_taper_n = taper
+        self.precip_upper25_n = upper25
+        return
+
     def yield_dem_chunks(self, block_size_deg=0.5, buffer_meters=10_000):
         """
         Generator that yields sliced, buffered sub-DEM 
@@ -417,7 +534,7 @@ class Terrain:
         
     def _get_metric_crs(self, gdf):
         """
-        Derives a region-appropriate equal-area projection 
+        Derives a region-appropriate equal-area projection
         using the glacier centroid.
 
         Parameters
@@ -425,11 +542,7 @@ class Terrain:
         gdf : gpd.GeoDataFrame
             RGI dataframe clipped to the glacier(s) of interest
         """
-        centroid = gdf.to_crs(epsg=4326).union_all().centroid
-        return CRS(
-            f"+proj=laea +lat_0={centroid.y:.2f} +lon_0={centroid.x:.2f} "
-            f"+datum=WGS84 +units=m +no_defs"
-        )
+        return mesh.get_metric_crs(gdf)
 
     def run_dem_functions(self, block_size_deg=0.5, buffer_meters=10_000):
         """
@@ -485,7 +598,8 @@ class Terrain:
             # pass the points in this block to the DEM info loader
             lats_in = lat_n[block_mask]
             lons_in = lon_n[block_mask]
-            elev_b, slope_b, aspect_b = self.load_dem_info(sub_dem_ds, lats_in, lons_in)
+            elev_b, slope_b, aspect_b = self.load_dem_info(
+                sub_dem_ds, lats_in, lons_in, glaciers=glaciers_in_block)
 
             # store the outputs
             compiled_inputs['elev_n'][block_mask] = elev_b
@@ -523,19 +637,25 @@ class Terrain:
             shading_model.longitude = centroid_geo.x
             
             datetimes_utc = pd.date_range('2000-01-01 00:00', '2000-12-31 23:00', freq='h', tz='UTC')
-            masks_gpu, sun_az_rad, sun_zen_rad, svf = shading_model.compute_shadow_masks(datetimes_utc)
-            
-            # check size of dataset to avoid crashing RAM
-            nt, nx, ny = masks_gpu.shape
-            array_bytes = nt * ny * nx # int8 = 1 byte each cell
 
-            # leave ~4 GB of RAM free
-            available_ram = psutil.virtual_memory().available
-            threshold_bytes = available_ram - 4e9
+            # check size of dataset to avoid crashing RAM; the masks are downsampled
+            # as they are computed so the full-resolution array is never allocated
+            ny, nx = shading_model.z.shape
+            array_bytes = len(datetimes_utc) * ny * nx # 1 byte each cell
+
+            # use a fixed, conservative budget
+            threshold_bytes = 8e9
+            factor = 1
             if array_bytes > threshold_bytes:
                 factor = np.ceil(np.sqrt(array_bytes / threshold_bytes)).astype(int)
-                masks_gpu = masks_gpu[:, ::factor, ::factor]
+
+            masks_gpu, sun_az_rad, sun_zen_rad, svf, pixel_slope, pixel_aspect = \
+                shading_model.compute_shadow_masks(datetimes_utc, stride=factor)
+
+            if factor > 1:
                 svf = svf[::factor, ::factor]
+                pixel_slope = pixel_slope[::factor, ::factor]
+                pixel_aspect = pixel_aspect[::factor, ::factor]
                 y_coords = cropped_dem_ds['y'].values[::factor]
                 x_coords = cropped_dem_ds['x'].values[::factor]
                 print(f'Downsampled shadow mask by {factor} to fit in RAM')
@@ -548,16 +668,22 @@ class Terrain:
             # store shadow mask with UTC datetimes
             datetimes_clean = datetimes_utc.tz_localize(None)
             subregion_masks = xr.Dataset(
-                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool), {'units':'0=shade, 1=sun'}),
+                {'shadow_mask': (['time','y','x'], mask_3d_cpu.astype(bool, copy=False), {'units':'0=shade, 1=sun'}),
                  'solar_azimuth': (['time'], sun_az_rad, {'units': 'radians'}),
                  'solar_zenith': (['time'], sun_zen_rad, {'units': 'radians'}),
-                 'sky_view_factor': (['y','x'], svf, {'units':'-'})},
+                 'sky_view_factor': (['y','x'], svf, {'units':'-'}),
+                 'pixel_slope': (['y','x'], pixel_slope,
+                                {'units': 'radians', 'notes': 'for cos(solar incidence), '
+                                 'cell-average that computed from this per-pixel rather '
+                                 'than from a cell-mean slope/aspect'}),
+                 'pixel_aspect': (['y','x'], pixel_aspect, {'units': 'radians'})},
                 coords={'time': datetimes_clean, 'y': y_coords, 'x':x_coords}
             ).rio.write_crs(cropped_dem_ds.rio.crs)
 
             # crop shadows cleanly to individual glacier box
             for gid in missing_glaciers:
-                g_bounds = glacier.geometry.bounds
+                ids_in_block = glaciers_in_block['RGIId'].str.split('-').str[-1]
+                g_bounds = glaciers_in_block.loc[ids_in_block == gid].geometry.iloc[0].bounds
                 
                 glacier_masks = subregion_masks.sel(
                     x=slice(g_bounds[0], g_bounds[2]),
@@ -588,29 +714,177 @@ class Terrain:
                 pass
 
         # store compiled inputs to self, if they were not already specified
-        if self.elev_n is None:
-            self.elev_n = compiled_inputs['elev_n']
-        if self.aspect_n is None:
-            self.aspect_n = compiled_inputs['aspect_n']
-        if self.slope_n is None:
-            self.slope_n = compiled_inputs['slope_n']
+        for var in ['elev_n','aspect_n','slope_n']:
+            existing = getattr(self, var, None)
+            new = compiled_inputs[var] 
+
+            if existing is None:
+                setattr(self, var, new)
+            else:
+                idx_nan = np.isnan(existing)
+                existing[idx_nan] = new[idx_nan]
+                setattr(self, var, existing)
+
         return
-    
+
+    def load_cos_theta(self, time_chunk=500):
+        """
+        Builds a per-unique-location, per-timestep table of
+        cos(solar incidence angle), computed per pixel from the
+        pixel_slope/pixel_aspect fields in the shading .zarr and
+        cell-averaged across Voronoi cells.
+
+        Only called when params.option_precomputed_costheta is set.
+        Time is chunked so the pixel x timestep array is never
+        fully materialized.
+
+        Table is (N_UNIQUE_SHADE, N_TIME), matching self.shadow_mask/
+        solar_zenith/solar_azimuth from load_shading -- see
+        unique_point_locations, which this calls independently but
+        deterministically reproduces the same grouping load_shading
+        used, since both derive it from the same lat_n/lon_n/rgiid_n.
+        self.slope_n/aspect_n stay at full N_POINTS (out of scope
+        here), so unique_first routes a unique row back to one
+        representative point to read them from.
+
+        Parameters
+        ==========
+        time_chunk : int
+            Timesteps processed per pass
+        """
+        unique_first, unique_rgiid = self.unique_point_locations()
+        N_UNIQUE = len(unique_first)
+        unique_lat = self.lat_n[unique_first]
+        unique_lon = self.lon_n[unique_first]
+        N_TIME = self.shadow_mask.shape[1]
+        table = np.full((N_UNIQUE, N_TIME), 1.0, dtype=np.float64)
+
+        for gid in np.unique(unique_rgiid):
+            gid_idx = np.where(unique_rgiid == gid)[0]
+
+            fn = self.shade_fn.format(gid=gid)
+            ds = xr.open_zarr(fn)
+            ds = ds.rio.set_spatial_dims(x_dim='x', y_dim='y')
+            ds = ds.rio.write_crs(ds['spatial_ref'].attrs['crs_wkt'])
+
+            transformer = Transformer.from_crs('EPSG:4326', ds.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(unique_lon[gid_idx], unique_lat[gid_idx])
+            points = np.column_stack([x_pts, y_pts])
+
+            zen = self.solar_zenith[gid_idx[0], :]
+            az = self.solar_azimuth[gid_idx[0], :]
+
+            grid_x, grid_y = np.meshgrid(ds.x.values, ds.y.values)
+            if self.rgi_gdf is None:
+                # test glacier has no outline
+                on_ice = np.zeros(grid_x.shape, dtype=bool)
+            else:
+                ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                       .to_crs(ds.rio.crs).union_all())
+                on_ice = shapely.contains_xy(ice, grid_x, grid_y)
+
+            if 'pixel_slope' not in ds:
+                slope_r = np.deg2rad(self.slope_n[unique_first[gid_idx]])
+                aspect_r = np.deg2rad(self.aspect_n[unique_first[gid_idx]])
+                table[gid_idx, :] = (
+                    np.cos(zen)[None, :] * np.cos(slope_r)[:, None]
+                    + np.sin(zen)[None, :] * np.sin(slope_r)[:, None]
+                    * np.cos(az[None, :] - aspect_r[:, None]))
+                ds.close()
+                continue
+
+            if not on_ice.any():
+                target_x = xr.DataArray(x_pts, dims='points')
+                target_y = xr.DataArray(y_pts, dims='points')
+                nn = (ds[['pixel_slope', 'pixel_aspect']]
+                      .sel(y=target_y, x=target_x, method='nearest'))
+                s_nn = nn['pixel_slope'].values
+                a_nn = nn['pixel_aspect'].values
+                table[gid_idx, :] = (
+                    np.cos(zen)[None, :] * np.cos(s_nn)[:, None]
+                    + np.sin(zen)[None, :] * np.sin(s_nn)[:, None]
+                    * np.cos(az[None, :] - a_nn[:, None]))
+                ds.close()
+                continue
+
+            pixels = np.column_stack([grid_x[on_ice], grid_y[on_ice]])
+            pslope = ds['pixel_slope'].values[on_ice]
+            paspect = ds['pixel_aspect'].values[on_ice]
+
+            owner = cKDTree(points).query(pixels, workers=-1)[1]
+            count = np.bincount(owner, minlength=len(points))
+            ownership = sparse.csr_matrix(
+                (np.ones(len(owner)), (owner, np.arange(len(owner)))),
+                shape=(len(points), len(owner)))
+
+            for t0 in range(0, N_TIME, time_chunk):
+                t1 = min(t0 + time_chunk, N_TIME)
+                zen_b, az_b = zen[t0:t1], az[t0:t1]
+                ct_pix = (np.cos(zen_b)[None, :] * np.cos(pslope)[:, None]
+                         + np.sin(zen_b)[None, :] * np.sin(pslope)[:, None]
+                         * np.cos(az_b[None, :] - paspect[:, None]))
+                cell_sum = np.asarray(ownership @ ct_pix)
+                table[gid_idx, t0:t1] = cell_sum / np.maximum(count, 1)[:, None]
+
+            empty = count == 0
+            if empty.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                ct_nn = (np.cos(zen)[None, :] * np.cos(pslope[nn])[:, None]
+                        + np.sin(zen)[None, :] * np.sin(pslope[nn])[:, None]
+                        * np.cos(az[None, :] - paspect[nn][:, None]))
+                table[gid_idx[empty], :] = ct_nn
+
+            ds.close()
+
+        self.cos_theta_table = table
+        return
+
+    def unique_point_locations(self):
+        """
+        Deduplicates points by exact (lat, lon) match. 
+
+        Sets self.point_to_unique_idx (N_POINTS,): the row each point
+        reads in the (N_UNIQUE,) arrays or (N_UNIQUE, N_TIME) tables
+        each loader builds from the unique locations this returns.
+
+        Returns
+        =======
+        unique_first : (N_UNIQUE,) array
+            Index of one representative point per unique location
+        unique_rgiid : (N_UNIQUE,) array
+            That representative point's glacier ID
+        """
+        lat_lon = np.stack([self.lat_n, self.lon_n], axis=1)
+        _, unique_first, inverse = np.unique(
+            lat_lon, axis=0, return_index=True, return_inverse=True)
+        self.point_to_unique_idx = inverse.ravel()
+        return unique_first, self.rgiid_n[unique_first]
+
     def load_shading(self):
         """
-        Loads the full shading mask for the points in the
-        simulation from the preprocessed shading .zarr.
-        Stores all (dayofyear, hour) entries from the file so
-        pack_forcings can index by DOY+hour for any calendar year.
+        Loads the full shading mask for the unique point locations in
+        the simulation from the preprocessed shading .zarr. Stores all
+        (dayofyear, hour) entries from the file so pack_forcings can
+        index by DOY+hour for any calendar year.
+
+        Tables are (N_UNIQUE_SHADE, N_TIME), not (N_POINTS, N_TIME) --
+        see unique_point_locations. self.sky_view_factor is expanded
+        back to (N_POINTS,) before returning since it is small and
+        PointAttributes.sky_view_factor is read directly without a
+        cell_idx-style expansion step.
         """
-        N_POINTS = self.N_POINTS
+        unique_first, unique_rgiid = self.unique_point_locations()
+        N_UNIQUE = len(unique_first)
+        unique_lat = self.lat_n[unique_first]
+        unique_lon = self.lon_n[unique_first]
+
         shading_lookup = {}
         N_TIME = None
         masks = azimuth = zenith = None
-        sky_view_factor = np.ones(N_POINTS)
+        sky_view_factor = np.ones(N_UNIQUE)
 
-        for gid in np.unique(self.rgiid_n):
-            gid_idx = np.where(self.rgiid_n == gid)[0]
+        for gid in np.unique(unique_rgiid):
+            gid_idx = np.where(unique_rgiid == gid)[0]
 
             fn = self.shade_fn.format(gid=gid)
             ds = xr.open_zarr(fn)
@@ -625,31 +899,214 @@ class Terrain:
                 N_TIME = len(ds.time)
                 shading_lookup = {(int(doy), int(hour)): i
                                   for i, (doy, hour) in enumerate(zip(ds_doy, ds_hour))}
-                masks = np.full((N_POINTS, N_TIME), 2, dtype=np.int8)
-                azimuth = np.full((N_POINTS, N_TIME), np.pi)
-                zenith = np.zeros((N_POINTS, N_TIME))
+                masks = np.full((N_UNIQUE, N_TIME), 1.0, dtype=np.float64)
+                azimuth = np.full((N_UNIQUE, N_TIME), np.pi)
+                zenith = np.zeros((N_UNIQUE, N_TIME))
 
             transformer = Transformer.from_crs("EPSG:4326", ds.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(unique_lon[gid_idx], unique_lat[gid_idx])
+            points = np.column_stack([x_pts, y_pts])
+            target_x = xr.DataArray(x_pts, dims='points')
+            target_y = xr.DataArray(y_pts, dims='points')
+
+            # sun position barely varies across one glacier
+            azimuth[gid_idx, :] = ds['solar_azimuth'].values
+            zenith[gid_idx, :] = ds['solar_zenith'].values
+
+            # average shade and sky-view factor over voronoi cells
+            grid_x, grid_y = np.meshgrid(ds.x.values, ds.y.values)
+            if self.rgi_gdf is None:
+                # test glacier has no outline: falls back on nearest pixel
+                on_ice = np.zeros(grid_x.shape, dtype=bool)
+            else:
+                ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                       .to_crs(ds.rio.crs).union_all())
+                on_ice = shapely.contains_xy(ice, grid_x, grid_y)
+
+            if on_ice.any():
+                pixels = np.column_stack([grid_x[on_ice], grid_y[on_ice]])
+                shadow_pix = ds['shadow_mask'].values[:, on_ice]
+                svf_pix = ds['sky_view_factor'].values[on_ice]
+
+                masks[gid_idx, :] = self.cell_mean_timeseries(points, pixels, shadow_pix)
+                sky_view_factor[gid_idx], _ = self.cell_mean(points, pixels, svf_pix)
+            else:
+                # fallback for voronoi cells smaller than data resolution (nearest)
+                selected = (ds
+                    .sel(y=target_y, x=target_x, method='nearest')
+                    .transpose('points', 'time'))
+                masks[gid_idx, :] = selected['shadow_mask'].values
+                sky_view_factor[gid_idx] = selected['sky_view_factor'].values
+
+            ds.close()
+
+        self.sky_view_factor = sky_view_factor[self.point_to_unique_idx]
+        self.solar_zenith = zenith
+        self.solar_azimuth = azimuth
+        self.shadow_mask = masks
+        self.shading_lookup = shading_lookup
+        return
+
+    def get_wind_fields(self):
+        """
+        Samples each unique point location's wind speed-up from a
+        preprocessed, per-glacier .nc containing the wind factors.
+        Values are averaged over each Voronoi cell.
+
+        Stores spdup_n (N_POINTS, N_DIRECTIONS) and wind_directions
+        (N_DIRECTIONS,) to self.
+
+        Only called when params.option_windmaps is True.
+        """
+        unique_first, unique_rgiid = self.unique_point_locations()
+        N_UNIQUE = len(unique_first)
+        unique_lat = self.lat_n[unique_first]
+        unique_lon = self.lon_n[unique_first]
+        spdup_n = None
+
+        for gid in np.unique(unique_rgiid):
+            gid_idx = np.where(unique_rgiid == gid)[0]
+
+            fn = self.params.windmap_fn.format(gid=gid)
+            ds = xr.open_dataset(fn)
+
+            if spdup_n is None:
+                n_dirs = len(ds['direction'])
+                spdup_n = np.full((N_UNIQUE, n_dirs), np.nan)
+                self.wind_directions = ds['direction'].values
+
+            # work in the metric CRS to keep nearest-point distances undistorted
+            metric_crs = mesh.get_metric_crs(
+                self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid])
+            transformer = Transformer.from_crs('EPSG:4326', metric_crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(unique_lon[gid_idx], unique_lat[gid_idx])
+            points = np.column_stack([x_pts, y_pts])
+
+            # lon/lat are 1D coordinates on the x/y dims
+            grid_lon, grid_lat = np.meshgrid(ds['lon'].values, ds['lat'].values)
+            grid_x, grid_y = transformer.transform(grid_lon, grid_lat)
+            spdup = ds['spdup'].transpose('y', 'x', 'direction').values
+            usable = np.isfinite(spdup).all(axis=2)
+
+            # only ice belongs in the average
+            ice = (self.rgi_gdf.loc[self.rgi_gdf['RGIId'] == 'RGI60-' + gid]
+                   .to_crs(metric_crs).union_all())
+            usable &= shapely.contains_xy(ice, grid_x, grid_y)
+
+            sampled = np.full((len(gid_idx), n_dirs), np.nan)
+            if usable.any():
+                pixels = np.column_stack([grid_x[usable], grid_y[usable]])
+                for d in range(n_dirs):
+                    sampled[:, d], _ = self.cell_mean(points, pixels, spdup[:, :, d][usable])
+
+            # cells too fine to catch a grid cell take the nearest ice pixel
+            empty = ~np.isfinite(sampled).all(axis=1)
+            if empty.any() and usable.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                for d in range(n_dirs):
+                    sampled[empty, d] = spdup[:, :, d][usable][nn]
+            elif empty.any():
+                target_y = xr.DataArray(unique_lat[gid_idx][empty], dims='points')
+                target_x = xr.DataArray(unique_lon[gid_idx][empty], dims='points')
+                selected = ds.sel(lon=target_x, lat=target_y, method='nearest')
+                sampled[empty] = selected['spdup'].values.T
+
+            spdup_n[gid_idx] = sampled
+
+            ds.close()
+
+        missing = len(np.where(np.isnan(spdup_n).any(axis=1))[0])
+        assert missing == 0, f'Missing wind data for {missing} unique locations'
+
+        self.spdup_n = spdup_n[self.point_to_unique_idx]
+
+        if self.params.debug:
+            print('~ Loaded wind fields from preprocessed ncs')
+        return
+
+    def get_ice_albedo(self):
+        """
+        Samples each unique point location's ice albedo from a
+        per-glacier ice albedo GeoTIFF (params.ice_albedo_fn). The
+        value is the mean over the point's Voronoi cell.
+
+        Only called when params.option_ice_albedo_tif is True.
+        """
+        unique_first, unique_rgiid = self.unique_point_locations()
+        N_UNIQUE = len(unique_first)
+        unique_lat = self.lat_n[unique_first]
+        unique_lon = self.lon_n[unique_first]
+        ice_albedo_n = np.zeros(N_UNIQUE)
+
+        for gid in np.unique(unique_rgiid):
+            gid_idx = np.where(unique_rgiid == gid)[0]
+
+            fn = self.params.ice_albedo_fn.format(gid=gid)
+            da = rxr.open_rasterio(fn).squeeze().drop_vars('band')
+
+            transformer = Transformer.from_crs("EPSG:4326", da.rio.crs, always_xy=True)
+            x_pts, y_pts = transformer.transform(unique_lon[gid_idx], unique_lat[gid_idx])
+
+            values = da.values.astype(float)
+            nodata = da.rio.nodata
+            if nodata is not None:
+                values = np.where(values == nodata, np.nan, values)
+            grid_x, grid_y = np.meshgrid(da.x.values, da.y.values)
+            valid = np.isfinite(values)
+
+            points = np.column_stack([x_pts, y_pts])
+            sampled = np.full(len(gid_idx), np.nan)
+
+            if valid.any() and len(points):
+                pixels = np.column_stack([grid_x[valid], grid_y[valid]])
+                sampled, _ = self.cell_mean(points, pixels, values[valid])
+
+            # cells that catch no valid pixel take the nearest ice pixel
+            empty = ~np.isfinite(sampled)
+            if empty.any() and valid.any():
+                nn = cKDTree(pixels).query(points[empty], workers=-1)[1]
+                sampled[empty] = values[valid][nn]
+
+            ice_albedo_n[gid_idx] = np.nan_to_num(sampled, nan=self.params.albedo_ice)
+
+            da.close()
+
+        if self.params.debug:
+            print('~ Loaded ice albedo from preprocessed tifs')
+
+        return ice_albedo_n[self.point_to_unique_idx]
+
+    def get_initial_ice_thickness(self):
+        """
+        Samples each point's initial ice thickness from a per-glacier
+        ice-thickness GeoTIFF (params.thickness_fn) and derives a fixed 
+        bed elevation (elev_n - thickness_n).
+
+        Called when params.option_dynamics or params.option_ice_thickness_tif
+        is True.
+        """
+        N_POINTS = self.N_POINTS
+        thickness_n = np.zeros(N_POINTS)
+
+        for gid in np.unique(self.rgiid_n):
+            gid_idx = np.where(self.rgiid_n == gid)[0]
+
+            fn = self.params.thickness_fn.format(gid=gid)
+            da = rxr.open_rasterio(fn).squeeze().drop_vars('band')
+
+            transformer = Transformer.from_crs("EPSG:4326", da.rio.crs, always_xy=True)
             x_pts, y_pts = transformer.transform(self.lon_n[gid_idx], self.lat_n[gid_idx])
             target_x = xr.DataArray(x_pts, dims='points')
             target_y = xr.DataArray(y_pts, dims='points')
 
-            selected = (ds
-                .sel(y=target_y, x=target_x, method='nearest')
-                .transpose('points', 'time'))
+            selected = da.sel(x=target_x, y=target_y, method='nearest')
+            thickness_n[gid_idx] = np.nan_to_num(selected.values, nan=0.0)
 
-            masks[gid_idx, :] = selected['shadow_mask'].values
-            azimuth[gid_idx, :] = selected['solar_azimuth'].values
-            zenith[gid_idx, :] = selected['solar_zenith'].values
-            sky_view_factor[gid_idx] = selected['sky_view_factor'].values
+            da.close()
 
-            ds.close()
-
-        self.sky_view_factor = sky_view_factor
-        self.solar_zenith = zenith
-        self.solar_azimuth = azimuth
-        self.shadow_mask = masks.astype(bool)
-        self.shading_lookup = shading_lookup
+        # fixed for the whole run: initial ice volume and bedrock topography
+        self.thickness_n = np.maximum(thickness_n, 0.0)
+        self.bed_n = self.elev_n - self.thickness_n
         return
 
     def validate_terrain_data(self):
@@ -669,6 +1126,7 @@ class Terrain:
             assert len(input_array) == self.N_POINTS, wrong_len
 
         self.get_median_elevation()
+        self.get_precip_taper()
 
         # make sure passed parameter arrays are the correct length
         for k, v in vars(self.params).items():
