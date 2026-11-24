@@ -157,8 +157,7 @@ class Terrain:
         self.rgi_gdf = gdf
         return
 
-    @staticmethod
-    def cell_mean(points, pixels, values, circular=False):
+    def cell_mean(self, points, pixels, values, circular=False):
         """
         Averages raster values over each point's Voronoi cell.
 
@@ -167,6 +166,10 @@ class Terrain:
         point -- no polygon work is needed. This gives every point an
         attribute describing the area it is weighted by, instead of the
         single pixel it happens to sit on.
+
+        Sites represent a single location rather than an area, so
+        for method_distribute='sites' each point takes the value
+        of its nearest pixel instead.
 
         Parameters
         ==========
@@ -187,6 +190,10 @@ class Terrain:
         count : (N,) array
             Pixels falling in each cell
         """
+        if self.params.method_distribute == 'sites':
+            nn = cKDTree(pixels).query(points, workers=-1)[1]
+            return values[nn].astype(float), np.ones(len(points), dtype=int)
+
         owner = cKDTree(points).query(pixels, workers=-1)[1]
         count = np.bincount(owner, minlength=len(points))
 
@@ -201,14 +208,13 @@ class Terrain:
 
         return np.where(count > 0, mean, np.nan), count
 
-    @staticmethod
-    def cell_mean_timeseries(points, pixels, values):
+    def cell_mean_timeseries(self, points, pixels, values):
         """
         Same idea as cell_mean, but for a (T, P) stack of raster values
         sampled at the same P pixel locations over T timesteps -- e.g.
         an hourly shadow mask. Ownership is computed once and reused
         for every timestep with a single sparse matrix multiply, rather
-        than looping bincount over T.
+        than looping bincount over T. Sites take their nearest pixel.
 
         Parameters
         ==========
@@ -224,6 +230,10 @@ class Terrain:
         mean : (N, T) array
             Cell mean per point and timestep, 0 where a cell caught no pixel
         """
+        if self.params.method_distribute == 'sites':
+            nn = cKDTree(pixels).query(points, workers=-1)[1]
+            return values[:, nn].T.astype(float)
+
         owner = cKDTree(points).query(pixels, workers=-1)[1]
         n_points = len(points)
         count = np.bincount(owner, minlength=n_points)
@@ -804,20 +814,24 @@ class Terrain:
             pslope = ds['pixel_slope'].values[on_ice]
             paspect = ds['pixel_aspect'].values[on_ice]
 
-            owner = cKDTree(points).query(pixels, workers=-1)[1]
-            count = np.bincount(owner, minlength=len(points))
-            ownership = sparse.csr_matrix(
-                (np.ones(len(owner)), (owner, np.arange(len(owner)))),
-                shape=(len(points), len(owner)))
+            if self.params.method_distribute == 'sites':
+                # sites skip the cell average and take the nearest pixel below
+                count = np.zeros(len(points), dtype=int)
+            else:
+                owner = cKDTree(points).query(pixels, workers=-1)[1]
+                count = np.bincount(owner, minlength=len(points))
+                ownership = sparse.csr_matrix(
+                    (np.ones(len(owner)), (owner, np.arange(len(owner)))),
+                    shape=(len(points), len(owner)))
 
-            for t0 in range(0, N_TIME, time_chunk):
-                t1 = min(t0 + time_chunk, N_TIME)
-                zen_b, az_b = zen[t0:t1], az[t0:t1]
-                ct_pix = (np.cos(zen_b)[None, :] * np.cos(pslope)[:, None]
-                         + np.sin(zen_b)[None, :] * np.sin(pslope)[:, None]
-                         * np.cos(az_b[None, :] - paspect[:, None]))
-                cell_sum = np.asarray(ownership @ ct_pix)
-                table[gid_idx, t0:t1] = cell_sum / np.maximum(count, 1)[:, None]
+                for t0 in range(0, N_TIME, time_chunk):
+                    t1 = min(t0 + time_chunk, N_TIME)
+                    zen_b, az_b = zen[t0:t1], az[t0:t1]
+                    ct_pix = (np.cos(zen_b)[None, :] * np.cos(pslope)[:, None]
+                             + np.sin(zen_b)[None, :] * np.sin(pslope)[:, None]
+                             * np.cos(az_b[None, :] - paspect[:, None]))
+                    cell_sum = np.asarray(ownership @ ct_pix)
+                    table[gid_idx, t0:t1] = cell_sum / np.maximum(count, 1)[:, None]
 
             empty = count == 0
             if empty.any():
